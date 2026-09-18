@@ -52,6 +52,18 @@ LIST_NAME_MAX    = 14   # texts + calls name column
 CONTACT_NAME_MAX = 18   # contacts list name column
 PREVIEW_MAX      = 24   # texts list preview line
 
+# --- Thread (OS 0.2.1) ---
+THREAD_BUBBLES  = 3     # newest messages drawn per thread screen
+THREAD_NAME_MAX = 20
+COMPOSER_COLS   = 30    # 24px glyphs across the 552px composer
+COMPOSER_LINES  = 3
+
+# Sim only: what the fake radio does with a send. The phone has no cellular
+# service yet, so "not_sent" is what the real device does today; set
+# KYPHONE_SIM_SEND=sent to see the SENDING... -> SENT path in the emulator.
+SIM_SEND       = os.environ.get('KYPHONE_SIM_SEND', 'not_sent')   # 'sent' | 'not_sent'
+SIM_SEND_DELAY = 1.4    # seconds SENDING... stays on screen in the sim
+
 # --- Twilio Credentials ---
 ACCOUNT_SID   = os.environ.get('TWILIO_SID')
 AUTH_TOKEN    = os.environ.get('TWILIO_TOKEN')
@@ -162,6 +174,7 @@ state = {
     'thread_id':        None,       # sender phone number
     'thread_draft':     '',
     'thread_header_sel': None,      # None=typing | 'back' | 'info'
+    'thread_msg_sel':   -1,         # -1=composer | index into the shown bubbles (a not-sent one, for retry)
     'compose_to':       '',
     'compose_msg':      '',
     'compose_to_active': True,
@@ -260,15 +273,111 @@ def format_msg_time(ts):
         return dt.strftime("%-m/%-d/%y")
 
 
+# ─── Messages ─────────────────────────────────────────────────────────────────
+# Incoming:  {sender: <other party's number>, name, body, read, ts}
+# Outgoing:  {dir: 'out', peer: <other party's number>, name: 'You', body, read,
+#             ts, state: 'sending' | 'sent' | 'not_sent'}
+# A thread is keyed on the OTHER party's number. The phone never needs, and the
+# interface never shows, its own number.
+
+def is_outgoing(m):
+    if m.get('dir') == 'out':
+        return True
+    # OS 0.2 stored a sent message as sender=<own number> with no recipient.
+    return 'peer' not in m and bool(TWILIO_NUMBER) and m.get('sender') == TWILIO_NUMBER
+
+
+def peer_of(m):
+    """The other party's number — or None for an old sent message that never
+    recorded who it went to, which is left out of every thread."""
+    if 'peer' in m:
+        return m['peer']
+    return None if is_outgoing(m) else m.get('sender')
+
+
+# ─── Text the panel can draw ──────────────────────────────────────────────────
+# The panel draws printable ASCII and nothing else, and '|' and '·' are the SPI
+# field separators. A typed character that cannot be drawn is ignored; text we
+# receive is not under our control, so it is cleaned instead.
+_RESERVED = ('|', '\xb7')
+_TRANSLIT = {
+    '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-',
+    '—': '-', '…': '...', ' ': ' ', '\n': ' ', '\r': ' ', '\t': ' ',
+}
+
+
+def can_draw(ch):
+    return len(ch) == 1 and ' ' <= ch <= '~' and ch not in _RESERVED
+
+
+def sanitize(text):
+    """Make received text drawable: common typographic characters become their
+    ASCII look-alikes, anything else undrawable becomes '?'."""
+    out = []
+    for c in str(text):
+        c = _TRANSLIT.get(c, c)
+        out.append(c if all(can_draw(x) for x in c) else '?')
+    return ''.join(out)
+
+
+def wrap_words(text, cols):
+    """Greedy word wrap into lines of at most `cols` characters; a word longer
+    than a line is broken. The renderers wrap exactly like this, which is what
+    lets composer_view() promise how many lines a draft takes."""
+    lines, cur = [], ''
+    for word in text.split(' '):
+        while len(word) > cols:
+            if cur:
+                room = cols - len(cur) - 1            # fill the current line first
+                if room > 0:
+                    cur += ' ' + word[:room]
+                    word = word[room:]
+                lines.append(cur)
+                cur = ''
+            else:
+                lines.append(word[:cols])
+                word = word[cols:]
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= cols:
+            cur += ' ' + word
+        else:
+            lines.append(cur)
+            cur = word
+    lines.append(cur)
+    return lines
+
+
+def composer_view(draft):
+    """What the thread composer shows: the whole draft while it fits in three
+    lines, else its END behind a leading '...' so the cursor is always visible
+    and the user can always see what they are typing. The prompt '> ' and the
+    one-column cursor block are part of the wrapped text."""
+    def lines(t):
+        return wrap_words('> ' + t + '#', COMPOSER_COLS)      # '#' stands for the cursor
+
+    if len(lines(draft)) <= COMPOSER_LINES:
+        return draft
+    tail = draft[-(COMPOSER_COLS * COMPOSER_LINES):]
+    for keep in range(len(tail), 0, -1):
+        view = '...' + tail[-keep:]
+        if len(lines(view)) <= COMPOSER_LINES:
+            return view
+    return '...'
+
+
 def get_threads():
-    """Group flat messages by sender. Return every thread, newest first — the
-    texts list windows over them, so there is no maximum stored count."""
+    """Group flat messages by the other party. Return every thread, newest
+    first — the texts list windows over them, so there is no maximum stored
+    count."""
     with state['lock']:
         msgs = list(state['messages'])
 
     thread_map = {}
     for i, m in enumerate(msgs):
-        s = m['sender']
+        s = peer_of(m)
+        if s is None:
+            continue
         if s not in thread_map:
             thread_map[s] = {
                 'sender': s,
@@ -426,9 +535,12 @@ def push_texts():
     rows = []
     for t in threads[start:start + TEXTS_ROWS]:
         last    = t['messages'][-1] if t['messages'] else None
-        name    = t['name'][:LIST_NAME_MAX]
-        prefix  = 'You: ' if last and last['sender'] == TWILIO_NUMBER else ''
-        preview = (prefix + last['body'])[:PREVIEW_MAX] if last else ''
+        name    = sanitize(t['name'])[:LIST_NAME_MAX]
+        # 'You: ' for a message that left the phone, '! ' while the last one is unsent
+        prefix  = ''
+        if last and is_outgoing(last):
+            prefix = '! ' if last.get('state') == 'not_sent' else 'You: '
+        preview = sanitize(prefix + last['body'])[:PREVIEW_MAX] if last else ''
         unread  = '1' if t['unread'] else '0'
         time_str = format_msg_time(last.get('ts')) if last else ''
         rows.append([name, preview, unread, time_str])
@@ -436,22 +548,61 @@ def push_texts():
     push_screen(_list_command(["TEXTS", str(send_idx)], rows, shrink_order=(1, 0)))
 
 
+def _thread_messages(peer):
+    """Every message with `peer`, oldest first."""
+    with state['lock']:
+        return [m for m in state['messages'] if peer_of(m) == peer]
+
+
+# Bubble codes on the wire: R = received; Y0 sending, Y1 sent, Y2 not sent,
+# Y3 not sent AND selected (the retry prompt). The renderer builds the label.
+_BUBBLE_CODE = {'sending': 'Y0', 'sent': 'Y1', 'not_sent': 'Y2'}
+
+
+def _thread_command(head, entries):
+    """Join the thread fields into one command that fits the frame. When it is
+    tight the OLDEST bubble goes first (never the selected one); if the newest
+    alone is still too long its text is cut with '...'."""
+    def build():
+        return "|".join(head + ["\xb7".join(e) for e in entries])
+
+    cmd = build()
+    while len(cmd) > MAX_COMMAND_CHARS and len(entries) > 1:
+        drop = next((i for i, e in enumerate(entries[:-1]) if e[0] != 'Y3'), 0)
+        del entries[drop]
+        cmd = build()
+    if len(cmd) > MAX_COMMAND_CHARS and entries:
+        text = entries[-1][2]
+        keep = max(0, len(text) - (len(cmd) - MAX_COMMAND_CHARS) - 3)
+        entries[-1][2] = text[:keep] + '...'
+        cmd = build()
+    return cmd
+
+
 def push_thread2():
     with state['lock']:
         thread_id  = state['thread_id']
         draft      = state['thread_draft']
         header_sel = state['thread_header_sel']
-        thread_msgs = [m for m in state['messages'] if m['sender'] == thread_id]
+        msg_sel    = state['thread_msg_sel']
 
-    name = format_name(thread_id) if thread_id else ''
-    hdr  = {'back': 'B', 'info': 'I'}.get(header_sel, '')
-    parts = [name, draft[:40], hdr]
-    for m in thread_msgs[-4:]:
-        if not m['body'].strip():
+    shown = _thread_messages(thread_id)[-THREAD_BUBBLES:]
+    name  = sanitize(format_name(thread_id))[:THREAD_NAME_MAX] if thread_id else ''
+    hdr   = {'back': 'B', 'info': 'I'}.get(header_sel, '')
+
+    entries = []
+    for i, m in enumerate(shown):
+        if not str(m['body']).strip():
             continue
-        prefix = "Y" if m['sender'] == TWILIO_NUMBER else "R"
-        parts.append(f"{prefix}:{m['body'][:28]}")
-    push_screen("THREAD2|" + "|".join(parts))
+        if is_outgoing(m):
+            code = _BUBBLE_CODE.get(m.get('state'), 'Y1')
+            if code == 'Y2' and i == msg_sel:
+                code = 'Y3'
+        else:
+            code = 'R'
+        entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'])])
+
+    push_screen(_thread_command(["THREAD2", name, sanitize(composer_view(draft)), hdr], entries))
 
 
 def push_compose():
@@ -611,6 +762,8 @@ def handle_key(keycode):
             keycode = 'KEY_DOWN'
         elif keycode in ('CHAR:d', 'CHAR:D'):
             keycode = 'KEY_RIGHT'
+    elif keycode.startswith('CHAR:') and not can_draw(keycode[5:]):
+        return    # the panel cannot draw it (or it is a field separator): ignored, silently
 
     if screen == 'lock':
         _from_lock(keycode)
@@ -808,8 +961,9 @@ def _open_thread(sender):
         state['thread_id']         = sender
         state['thread_draft']      = ''
         state['thread_header_sel'] = None
+        state['thread_msg_sel']    = -1
         for m in state['messages']:
-            if m['sender'] == sender:
+            if peer_of(m) == sender:
                 m['read'] = True
     save_messages()
     push_thread2()
@@ -830,16 +984,51 @@ def _open_compose():
 def _from_thread(keycode):
     with state['lock']:
         header_sel = state['thread_header_sel']
+        msg_sel    = state['thread_msg_sel']
+        thread_id  = state['thread_id']
+    shown = _thread_messages(thread_id)[-THREAD_BUBBLES:]
+
+    # A typed key while a bubble is selected first returns to the composer, so
+    # nothing is ever typed into a composer that shows no cursor.
+    if msg_sel >= 0 and (keycode == 'KEY_BACKSPACE' or keycode.startswith('CHAR:')):
+        with state['lock']:
+            state['thread_msg_sel'] = msg_sel = -1
 
     if keycode == 'KEY_ESC':
         with state['lock']:
-            state['screen'] = 'texts_list'
+            state['screen']         = 'texts_list'
+            state['thread_msg_sel'] = -1
         push_texts()
+
+    elif msg_sel >= 0 and keycode == 'KEY_UP':
+        with state['lock']:
+            state['thread_msg_sel']    = -1
+            state['thread_header_sel'] = 'back'
+        push_thread2()
+
+    elif msg_sel >= 0 and keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['thread_msg_sel'] = -1
+        push_thread2()
+
+    elif msg_sel >= 0 and keycode == 'KEY_ENTER':
+        with state['lock']:
+            state['thread_msg_sel'] = -1
+        if msg_sel < len(shown):
+            retry_message(shown[msg_sel])
+        push_thread2()
 
     elif keycode == 'KEY_UP':
         if header_sel is None:
+            # A not-sent message is the only thing in a transcript worth
+            # selecting, so arrow up reaches the newest one before the header.
+            retryable = [i for i, m in enumerate(shown)
+                         if is_outgoing(m) and m.get('state') == 'not_sent']
             with state['lock']:
-                state['thread_header_sel'] = 'back'
+                if retryable:
+                    state['thread_msg_sel'] = retryable[-1]
+                else:
+                    state['thread_header_sel'] = 'back'
             push_thread2()
         # already at the header — nothing further up
 
@@ -868,8 +1057,6 @@ def _from_thread(keycode):
                 state['screen'] = 'texts_list'
             push_texts()
         else:  # 'info' — open the contact page for this thread
-            with state['lock']:
-                thread_id = state['thread_id']
             name = format_name(thread_id)
             with state['lock']:
                 state['screen']         = 'contact'
@@ -885,8 +1072,7 @@ def _from_thread(keycode):
 
     elif header_sel is None and keycode == 'KEY_ENTER':
         with state['lock']:
-            draft     = state['thread_draft'].strip()
-            thread_id = state['thread_id']
+            draft = state['thread_draft'].strip()
         if draft:
             with state['lock']:
                 state['thread_draft'] = ''
@@ -931,6 +1117,7 @@ def _send_compose():
         state['thread_id']         = to_val
         state['thread_draft']      = ''
         state['thread_header_sel'] = None
+        state['thread_msg_sel']    = -1
         state['compose_send_sel']  = False
     push_thread2()
 
@@ -1402,6 +1589,10 @@ def load_messages():
             data = json.load(f)
         state['messages'] = data.get('messages', [])
         state['last_sid']  = data.get('last_sid')
+        # A send that was still in flight when the phone last stopped never finished.
+        for m in state['messages']:
+            if m.get('state') == 'sending':
+                m['state'] = 'not_sent'
         print(f"Loaded {len(state['messages'])} messages.")
     except FileNotFoundError:
         pass
@@ -1420,23 +1611,81 @@ def save_messages():
 
 # ─── Twilio ───────────────────────────────────────────────────────────────────
 
-def send_reply(to_number, body):
-    if not SIM_MODE and client is not None:
+def _transport_send(to_number, body):
+    """Hand one text to the radio. Raises if it could not be sent.
+
+    There is no cellular modem yet and Twilio is switched off, so on the phone
+    this raises ('no service') and the message becomes NOT SENT. That is the
+    normal outcome for now, not an error case."""
+    if SIM_MODE:
+        time.sleep(SIM_SEND_DELAY)
+        if SIM_SEND != 'sent':
+            raise RuntimeError('simulated: no service')
+        return
+    if client is None:
+        raise RuntimeError('no service')
+    msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=to_number)
+    print(f"  → sent: {body} (SID: {msg.sid})")
+
+
+def _run_async(fn):
+    """Run `fn` off the input thread, so a slow radio never freezes the keyboard.
+    (Tests replace this with a direct call.)"""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+def _refresh_after_send(peer):
+    with state['lock']:
+        screen, thread_id = state['screen'], state['thread_id']
+    if screen == 'thread' and thread_id == peer:
+        push_thread2()
+    elif screen == 'texts_list':
+        push_texts()
+
+
+def _dispatch_send(msg):
+    def work():
         try:
-            msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=to_number)
-            print(f"  → sent: {body} (SID: {msg.sid})")
+            _transport_send(msg['peer'], msg['body'])
+            outcome = 'sent'
         except Exception as e:
             print(f"  → send failed: {e}")
-            return
+            outcome = 'not_sent'
+        with state['lock']:
+            msg['state'] = outcome
+        save_messages()
+        _refresh_after_send(msg['peer'])
+    _run_async(work)
+
+
+def send_reply(to_number, body):
+    """Send a text. The message joins the thread at once as SENDING..., and the
+    radio's answer settles it to SENT or NOT SENT. A new conversation joins the
+    texts list on the first send whether or not it succeeds."""
+    msg = {
+        'dir':   'out',
+        'peer':  to_number,
+        'name':  'You',
+        'body':  body,
+        'read':  True,
+        'ts':    datetime.now().isoformat(),
+        'state': 'sending',
+    }
     with state['lock']:
-        state['messages'].append({
-            'sender': TWILIO_NUMBER,
-            'name':   'You',
-            'body':   body,
-            'read':   True,
-            'ts':     datetime.now().isoformat(),
-        })
+        state['messages'].append(msg)
     save_messages()
+    _dispatch_send(msg)
+    return msg
+
+
+def retry_message(msg):
+    """Send a not-sent message again."""
+    with state['lock']:
+        if msg.get('state') != 'not_sent':
+            return
+        msg['state'] = 'sending'
+    save_messages()
+    _dispatch_send(msg)
 
 
 # ─── Background Loops ─────────────────────────────────────────────────────────

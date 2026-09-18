@@ -28,6 +28,33 @@ def _get_font(px_size, bold=False, clock=False):
     return _FONT_CACHE[key]
 
 
+def wrap_words(text, cols):
+    """Greedy word wrap to lines of at most `cols` characters; a word longer than
+    a line is broken. MUST match kyphone_os.wrap_words (a test asserts it)."""
+    lines, cur = [], ''
+    for word in text.split(' '):
+        while len(word) > cols:
+            if cur:
+                room = cols - len(cur) - 1            # fill the current line first
+                if room > 0:
+                    cur += ' ' + word[:room]
+                    word = word[room:]
+                lines.append(cur)
+                cur = ''
+            else:
+                lines.append(word[:cols])
+                word = word[cols:]
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= cols:
+            cur += ' ' + word
+        else:
+            lines.append(cur)
+            cur = word
+    lines.append(cur)
+    return lines
+
+
 class Simulator:
     WIDTH  = 600
     HEIGHT = 600
@@ -417,17 +444,16 @@ class Simulator:
             self._line(y + row_h - 1)
 
     def _draw_thread2(self, data):
-        # data = "name|draft|hdr|Y:time~body|R:time~body|..."  hdr: ''=typing 'B'=back 'I'=info
-        parts = data.split('|')
-        name  = parts[0] if parts else ''
-        draft = parts[1] if len(parts) > 1 else ''
-        hdr   = parts[2] if len(parts) > 2 else ''
-        msgs  = parts[3:] if len(parts) > 3 else []
+        # data = "name|draft|hdr|code·time·text|..."   hdr: ''=composer 'B'=back 'I'=info
+        # code: R received | Y0 sending | Y1 sent | Y2 not sent | Y3 not sent + selected (retry prompt)
+        parts   = data.split('|')
+        name    = parts[0] if parts else ''
+        draft   = parts[1] if len(parts) > 1 else ''
+        hdr     = parts[2] if len(parts) > 2 else ''
+        entries = [e for e in parts[3:] if e]
 
         box_w, box_h = 38, 34
-        back_sel = hdr == 'B'
-        info_sel = hdr == 'I'
-
+        back_sel, info_sel = hdr == 'B', hdr == 'I'
         if back_sel:
             pygame.draw.rect(self._surface, BLACK, (16, 6, box_w, box_h))
         self._text('<', 16 + (box_w - self._char_w(3)) // 2, 6 + (box_h - 24) // 2, 3,
@@ -438,102 +464,74 @@ class Simulator:
             pygame.draw.rect(self._surface, BLACK, (info_x, 6, box_w, box_h))
         self._text('i', info_x + (box_w - self._char_w(3)) // 2, 6 + (box_h - 24) // 2, 3,
                     WHITE if info_sel else BLACK, bold=True)
-        self._line(46, weight=2)
+        pygame.draw.rect(self._surface, BLACK, (0, 46, self.WIDTH, 2))
 
-        # Composer — pinned to the bottom 45px
-        composer_h = 45
-        reply_y    = self.HEIGHT - composer_h
-        self._line(reply_y, weight=2)
-        prompt   = '> '
-        field_y  = reply_y + (composer_h - 24) // 2
-        self._text(prompt, 24, field_y, 3)
-        draft_x  = 24 + len(prompt) * self._char_w(3)
-        self._text(draft, draft_x, field_y, 3)
-        cursor_x = draft_x + len(draft) * self._char_w(3)
-        pygame.draw.rect(self._surface, BLACK, (cursor_x, field_y, self._char_w(3), 24))
-
-        # Messages — 2px-bordered bubbles stacked from the bottom. Incoming
-        # left/paper with a stepped pixel tail and the sender's name above
-        # each incoming run; outgoing right/filled ink. Time sits under
-        # every bubble.
         parsed = []
-        for m in msgs:
-            if len(m) >= 2 and m[1] == ':':
-                align, rest = m[0], m[2:]
-            else:
-                align, rest = 'R', m
-            if '~' in rest:
-                time_str, body = rest.split('~', 1)
-            else:
-                time_str, body = '', rest
-            parsed.append((align, time_str, body))
+        for e in entries:
+            code, time_str, text = (e.split('\xb7', 2) + ['', '', ''])[:3]
+            parsed.append((code, time_str, text))
+        composer_active = not hdr and not any(c == 'Y3' for c, _, _ in parsed)
 
-        pad_x, pad_y   = 12, 8
-        bubble_line_h  = 35   # 24px text at line-height 1.45
-        max_bubble_w   = 400
-        inner_w        = max_bubble_w - 2 * pad_x
-        margin         = 16
-        tail_widths    = [4, 8, 14, 8, 4]
-        tail_seg_h     = 4
-        tail_span      = max(tail_widths) + 2
-        gap            = 16
-        top, bottom    = 62, self.HEIGHT - 62
+        # Composer: '> ' + the draft, word-wrapped to 30 columns, at most three
+        # lines (kyphone_os.composer_view already trimmed the draft to fit).
+        wrapped    = wrap_words('> ' + draft + '\0', 30)[:3]
+        composer_h = 45 + (len(wrapped) - 1) * 34
+        pygame.draw.rect(self._surface, BLACK, (0, self.HEIGHT - composer_h - 2, self.WIDTH, 2))
+        for i, line in enumerate(wrapped):
+            base = self.HEIGHT - composer_h + 8 + 34 * i + 26
+            shown = line.replace('\0', '')
+            self._text_bl(shown, 24, base, 3)
+            if '\0' in line and composer_active:
+                cx = 24 + self._font(3).size(shown)[0]
+                pygame.draw.rect(self._surface, BLACK, (cx, base - 19, 18, 24))
 
-        blocks, prev_align = [], None
-        for align, time_str, body in parsed:
-            lines     = self._wrap_lines(body, 3, inner_w)
-            show_name = align != 'Y' and prev_align != align
-            bubble_h  = pad_y * 2 + len(lines) * bubble_line_h
-            h = bubble_h + 8 * 2 + 4
-            if show_name:
-                h += 8 * 2 + 6
-            blocks.append({'align': align, 'time': time_str, 'lines': lines,
-                            'show_name': show_name, 'bubble_h': bubble_h, 'h': h})
-            prev_align = align
+        # Message area: bottom-anchored column of bubbles, 16px apart. An older
+        # bubble (or a long one) runs off the top edge, clipped.
+        area_top, area_bottom = 62, self.HEIGHT - composer_h - 17
+        tail_widths, tail_seg_h = [4, 8, 14, 8, 4], 4
+        line_h, pad_x, name_h, meta_h, gap = 35, 12, 27, 25, 16
+        blocks = []
+        for code, time_str, text in parsed:
+            outgoing = code.startswith('Y')
+            lines    = wrap_words(text, 20)
+            bubble_h = 4 + 16 + line_h * len(lines)
+            blocks.append({'code': code, 'time': time_str, 'lines': lines, 'outgoing': outgoing,
+                           'bubble_h': bubble_h,
+                           'h': (0 if outgoing else name_h) + bubble_h + meta_h})
 
-        # Keep the newest blocks that fit the message region, bottom-up.
-        fitted, used = [], 0
+        self._surface.set_clip(pygame.Rect(0, area_top, self.WIDTH, area_bottom - area_top))
+        y_bottom = area_bottom
         for b in reversed(blocks):
-            extra = b['h'] + (gap if fitted else 0)
-            if used + extra > bottom - top:
-                break
-            used += extra
-            fitted.insert(0, b)
-
-        y = bottom - used
-        for b in fitted:
-            block_top = y
-            y0 = y
-            if b['show_name']:
-                self._text(name.upper(), margin + tail_span, y0, 2, bold=True)
-                y0 += 8 * 2 + 6
-
-            line_w = max((len(l) for l in b['lines']), default=0) * self._char_w(3)
-            bw = min(max_bubble_w, line_w + 2 * pad_x)
-            outgoing = b['align'] == 'Y'
-            bx = (self.WIDTH - margin - bw) if outgoing else (margin + tail_span)
-
-            fill    = BLACK if outgoing else WHITE
-            text_fg = WHITE if outgoing else BLACK
-            pygame.draw.rect(self._surface, fill, (bx, y0, bw, b['bubble_h']))
+            top = y_bottom - b['h']
+            y0  = top
+            if not b['outgoing']:
+                self._text_bl(name.upper(), 30, top + 16, 2, bold=True)
+                y0 += name_h
+            widest = max((len(l) for l in b['lines']), default=0) * self._char_w(3)
+            bw = min(400, widest + 2 * pad_x + 4)
+            bx = (self.WIDTH - 16 - 14 - bw) if b['outgoing'] else 30
+            filled = b['code'] == 'Y1'
+            pygame.draw.rect(self._surface, BLACK if filled else WHITE, (bx, y0, bw, b['bubble_h']))
             pygame.draw.rect(self._surface, BLACK, (bx, y0, bw, b['bubble_h']), 2)
-            ly = y0 + pad_y
-            for line in b['lines']:
-                self._text(line, bx + pad_x, ly, 3, text_fg)
-                ly += bubble_line_h
-
-            tail_total_h = tail_seg_h * len(tail_widths)
-            tail_y       = y0 + (b['bubble_h'] - tail_total_h) // 2
+            if b['code'] == 'Y3':          # selection ring: 3px inside the border, inside the box
+                pygame.draw.rect(self._surface, BLACK, (bx + 5, y0 + 5, bw - 10, b['bubble_h'] - 10), 2)
+            for j, line in enumerate(b['lines']):
+                self._text_bl(line, bx + 2 + pad_x, y0 + 10 + line_h * j + 25, 3, WHITE if filled else BLACK)
+            tail_y = y0 + (b['bubble_h'] - tail_seg_h * len(tail_widths)) // 2
             for i, w in enumerate(tail_widths):
-                tx = (bx + bw + 2) if outgoing else (bx - 2 - w)
+                tx = (bx + bw) if b['outgoing'] else (bx - w)
                 pygame.draw.rect(self._surface, BLACK, (tx, tail_y + i * tail_seg_h, w, tail_seg_h))
 
-            time_y = y0 + b['bubble_h'] + 6
-            time_w = len(b['time']) * self._char_w(2)
-            time_x = (bx + bw - time_w) if outgoing else bx
-            self._text(b['time'], time_x, time_y, 2)
-
-            y = block_top + b['h'] + gap
+            meta = {'Y0': 'SENDING...', 'Y1': 'SENT ' + b['time'], 'Y2': 'NOT SENT',
+                    'Y3': 'NOT SENT - ENTER TO RETRY'}.get(b['code'], b['time'])
+            baseline = y0 + b['bubble_h'] + 20
+            bold = b['code'] in ('Y2', 'Y3')
+            if b['outgoing']:
+                self._text_right(meta, bx + bw, baseline, 2, bold=bold)
+            else:
+                self._text_bl(meta, bx, baseline, 2, bold=bold)
+            y_bottom = top - gap
+        self._surface.set_clip(None)
 
     def _draw_field_label(self, text, x, y, active):
         """A field label that inverts (fills ink, text flips to paper) while

@@ -49,6 +49,7 @@ def reset_state(**overrides):
         'thread_id': None,
         'thread_draft': '',
         'thread_header_sel': None,
+        'thread_msg_sel': -1,
         'compose_to': '',
         'compose_msg': '',
         'compose_to_active': True,
@@ -734,6 +735,301 @@ class TestCallsWindow(ListWindowBase):
         wire = self._push()
         self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
         self.assertEqual(len(_rows(wire, 2)), 6)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Messages, sending and retry (OS 0.2.1)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import json  # noqa: E402
+import random  # noqa: E402
+import tempfile  # noqa: E402
+import time as _time  # noqa: E402
+
+ALICE = '+15550100001'
+
+
+def _inbound(body='Are we still on for lunch?', peer=ALICE, read=True):
+    return {'sender': peer, 'name': 'Alice', 'body': body, 'read': read, 'ts': datetime.now().isoformat()}
+
+
+def _entries(wire):
+    """The bubble entries of a THREAD2 command: [code, time, text]."""
+    return [e.split(CELL, 2) for e in wire.split('|')[4:] if e]
+
+
+class SendBase(ListWindowBase):
+    """Thread tests: the radio is a mock and 'in the background' runs inline."""
+    def setUp(self):
+        super().setUp()
+        self.radio = patch.object(kyphone_os, '_transport_send')
+        self.transport = self.radio.start()
+        self.inline = patch.object(kyphone_os, '_run_async', new=lambda fn: fn())
+        self.inline.start()
+        reset_state(screen='thread', thread_id=ALICE, messages=[_inbound()])
+
+    def tearDown(self):
+        self.radio.stop()
+        self.inline.stop()
+        super().tearDown()
+
+    def type_text(self, text):
+        with patch.object(kyphone_os, 'push_screen'):
+            for ch in text:
+                kyphone_os.handle_key('CHAR:' + ch)
+
+    def key(self, *keys):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            for k in keys:
+                kyphone_os.handle_key(k)
+        return _wire(ps)
+
+    def thread_wire(self):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_thread2()
+        return _wire(ps)
+
+    def texts_wire(self):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_texts()
+        return _wire(ps)
+
+
+class TestSendingAndStates(SendBase):
+    def test_a_sent_reply_stays_in_the_conversation(self):
+        self.type_text('hello')
+        self.key('KEY_ENTER')
+        self.transport.assert_called_once_with(ALICE, 'hello')
+        entries = _entries(self.thread_wire())
+        self.assertEqual([e[0] for e in entries], ['R', 'Y1'])
+        self.assertEqual(entries[-1][2], 'hello')
+
+    def test_sent_messages_are_keyed_on_the_other_party_not_the_phone(self):
+        self.type_text('hello')
+        self.key('KEY_ENTER')
+        threads = kyphone_os.get_threads()
+        self.assertEqual([t['sender'] for t in threads], [ALICE])   # no phantom thread
+        sent = [m for m in kyphone_os.state['messages'] if m.get('dir') == 'out'][0]
+        self.assertEqual(sent['peer'], ALICE)
+        self.assertEqual(sent['state'], 'sent')
+
+    def test_failed_send_is_kept_and_marked_not_sent(self):
+        self.transport.side_effect = RuntimeError('no service')
+        self.type_text('hello')
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['thread_draft'], '')
+        self.assertEqual([e[0] for e in _entries(self.thread_wire())], ['R', 'Y2'])
+
+    def test_texts_list_preview_says_you_or_bang(self):
+        self.type_text('hello')
+        self.key('KEY_ENTER')
+        self.assertIn(f'You: hello{CELL}', self.texts_wire())
+        self.transport.side_effect = RuntimeError('no service')
+        self.type_text('again')
+        self.key('KEY_ENTER')
+        self.assertIn(f'! again{CELL}', self.texts_wire())
+
+    def test_message_to_a_new_number_joins_the_list_even_if_not_sent(self):
+        self.transport.side_effect = RuntimeError('no service')
+        reset_state(screen='compose', compose_to='+15550109999', compose_msg='hi', messages=[_inbound()])
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os._send_compose()
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.assertIn('+15550109999', [t['sender'] for t in kyphone_os.get_threads()])
+        self.assertEqual(_entries(self.thread_wire())[-1][:1], ['Y2'])
+
+    def test_old_sent_messages_without_a_recipient_are_hidden_not_shown_as_a_conversation(self):
+        legacy = {'sender': kyphone_os.TWILIO_NUMBER, 'name': 'You', 'body': 'old reply', 'read': True,
+                  'ts': datetime.now().isoformat()}
+        reset_state(screen='thread', thread_id=ALICE, messages=[_inbound(), legacy])
+        self.assertEqual([t['sender'] for t in kyphone_os.get_threads()], [ALICE])
+        self.assertNotIn('old reply', self.thread_wire())
+
+    def test_sending_is_a_visible_state_before_the_radio_answers(self):
+        pending = []
+        with patch.object(kyphone_os, '_run_async', new=pending.append):
+            self.type_text('hello')
+            self.key('KEY_ENTER')
+        self.assertEqual(_entries(self.thread_wire())[-1][0], 'Y0')          # SENDING...
+        pending[0]()                                                        # the radio answers
+        self.assertEqual(_entries(self.thread_wire())[-1][0], 'Y1')
+
+    def test_send_does_not_block_the_keyboard(self):
+        release = threading.Event()
+        self.transport.side_effect = lambda to, body: release.wait(5)
+        with patch.object(kyphone_os, '_run_async', new=lambda fn: threading.Thread(target=fn, daemon=True).start()):
+            self.type_text('hello')
+            t0 = _time.monotonic()
+            self.key('KEY_ENTER')
+            took = _time.monotonic() - t0
+        self.assertLess(took, 0.5)
+        self.assertEqual(_entries(self.thread_wire())[-1][0], 'Y0')
+        release.set()
+        for _ in range(100):
+            if kyphone_os.state['messages'][-1]['state'] == 'sent':
+                break
+            _time.sleep(0.02)
+        self.assertEqual(kyphone_os.state['messages'][-1]['state'], 'sent')
+
+    def test_a_send_interrupted_by_a_restart_loads_as_not_sent(self):
+        path = os.path.join(tempfile.mkdtemp(), 'messages.json')
+        with open(path, 'w') as f:
+            json.dump({'messages': [{'dir': 'out', 'peer': ALICE, 'name': 'You', 'body': 'x', 'read': True,
+                                     'ts': datetime.now().isoformat(), 'state': 'sending'}], 'last_sid': None}, f)
+        with patch.object(kyphone_os, 'MESSAGES_FILE', path):
+            kyphone_os.load_messages()
+        self.assertEqual(kyphone_os.state['messages'][0]['state'], 'not_sent')
+
+
+class TestRetry(SendBase):
+    def setUp(self):
+        super().setUp()
+        self.transport.side_effect = RuntimeError('no service')
+        self.type_text('lost')
+        self.key('KEY_ENTER')
+        self.transport.reset_mock()
+
+    def test_arrow_up_selects_the_newest_not_sent_message_before_the_header(self):
+        wire = self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], 1)
+        self.assertIsNone(kyphone_os.state['thread_header_sel'])
+        self.assertEqual(_entries(wire)[-1][0], 'Y3')                       # the retry prompt
+
+    def test_enter_on_the_selected_message_sends_it_again(self):
+        self.transport.side_effect = None
+        self.key('KEY_UP')
+        wire = self.key('KEY_ENTER')
+        self.transport.assert_called_once_with(ALICE, 'lost')
+        self.assertEqual(_entries(wire)[-1][0], 'Y1')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+        self.assertEqual(len([m for m in kyphone_os.state['messages'] if m.get('dir') == 'out']), 1)   # same message
+
+    def test_retry_that_fails_again_stays_not_sent(self):
+        self.key('KEY_UP')
+        wire = self.key('KEY_ENTER')
+        self.assertEqual(_entries(wire)[-1][0], 'Y2')
+
+    def test_arrow_up_again_reaches_the_header_and_down_returns_to_the_composer(self):
+        self.key('KEY_UP')
+        self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+        self.assertEqual(kyphone_os.state['thread_header_sel'], 'back')
+        self.key('KEY_DOWN')
+        self.assertIsNone(kyphone_os.state['thread_header_sel'])
+
+    def test_arrow_down_from_a_selected_message_returns_to_the_composer(self):
+        self.key('KEY_UP')
+        self.key('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+        self.assertIsNone(kyphone_os.state['thread_header_sel'])
+
+    def test_typing_while_a_message_is_selected_goes_to_the_composer(self):
+        self.key('KEY_UP')
+        self.type_text('x')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+        self.assertEqual(kyphone_os.state['thread_draft'], 'x')
+
+    def test_with_nothing_to_retry_arrow_up_goes_straight_to_the_header(self):
+        reset_state(screen='thread', thread_id=ALICE, messages=[_inbound()])
+        self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['thread_header_sel'], 'back')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# What the panel can draw
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDrawableText(SendBase):
+    def test_reserved_and_undrawable_typed_keys_are_ignored(self):
+        self.type_text('a|b·cé\U0001F600d')
+        self.assertEqual(kyphone_os.state['thread_draft'], 'abcd')
+
+    def test_received_typographic_characters_become_their_ascii_look_alikes(self):
+        self.assertEqual(kyphone_os.sanitize('it’s “fine” — ok…'), 'it\'s "fine" - ok...')
+
+    def test_received_undrawable_characters_become_question_marks(self):
+        self.assertEqual(kyphone_os.sanitize('hi \U0001F600 a|b·c'), 'hi ? a?b?c')
+        self.assertEqual(kyphone_os.sanitize('line one\nline two'), 'line one line two')
+
+    def test_nothing_the_panel_cannot_draw_reaches_the_wire(self):
+        reset_state(screen='thread', thread_id=ALICE,
+                    messages=[_inbound('it’s fine \U0001F600 | ok · done')])
+        wire = self.thread_wire()
+        for ch in wire:
+            self.assertTrue(ch == CELL or ' ' <= ch <= '~', repr(ch))
+        self.assertEqual(max(kyphone_os.build_payload(wire)), max(ord(c) for c in wire))
+        self.assertLessEqual(max(kyphone_os.build_payload(wire)), 255)
+
+
+class TestComposerView(unittest.TestCase):
+    view = staticmethod(kyphone_os.composer_view)
+
+    def _lines(self, text):
+        return kyphone_os.wrap_words('> ' + text + '#', kyphone_os.COMPOSER_COLS)
+
+    def test_short_draft_is_shown_whole(self):
+        self.assertEqual(self.view('hello'), 'hello')
+        self.assertEqual(self.view(''), '')
+
+    def test_a_draft_that_fills_three_lines_is_still_shown_whole(self):
+        draft = 'x' * 87       # 2-char prompt + 87 + 1-column cursor = 90 = three full lines
+        self.assertEqual(self.view(draft), draft)
+
+    def test_a_longer_draft_shows_its_end_behind_three_dots(self):
+        draft = 'start ' + 'w' * 200 + ' the very end'
+        shown = self.view(draft)
+        self.assertTrue(shown.startswith('...'))
+        self.assertTrue(shown.endswith('the very end'))
+        self.assertLessEqual(len(self._lines(shown)), 3)
+
+    def test_the_cursor_is_always_visible_for_any_draft(self):
+        rng = random.Random(7)
+        alphabet = 'abc de fgh ijklmnop  qrstuvwxyz0123456789'
+        for _ in range(300):
+            draft = ''.join(rng.choice(alphabet) for _ in range(rng.randint(0, 400)))
+            shown = self.view(draft)
+            self.assertLessEqual(len(self._lines(shown)), kyphone_os.COMPOSER_LINES, draft)
+            if shown != draft:
+                self.assertTrue(draft.endswith(shown[3:]))          # it is the END of the draft
+
+    def test_wrap_words_hard_breaks_a_word_longer_than_a_line(self):
+        # the long word fills the rest of the line it starts on, then continues below
+        self.assertEqual(kyphone_os.wrap_words('a ' + 'b' * 25, 10), ['a ' + 'b' * 8, 'b' * 10, 'b' * 7])
+
+
+class TestThreadFitsTheFrame(SendBase):
+    def test_three_ordinary_messages_all_fit(self):
+        msgs = [_inbound('are you close?'), _inbound('yeah leaving now'), _inbound('still here?')]
+        reset_state(screen='thread', thread_id=ALICE, messages=msgs)
+        wire = self.thread_wire()
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(len(_entries(wire)), 3)
+
+    def test_a_long_message_pushes_the_older_bubbles_out_and_is_cut_with_dots(self):
+        msgs = [_inbound('older one'), _inbound('older two'), _inbound('L' * 400)]
+        reset_state(screen='thread', thread_id=ALICE, messages=msgs)
+        wire = self.thread_wire()
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        entries = _entries(wire)
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0][2].endswith('...'))
+
+    def test_a_three_line_draft_and_three_messages_still_fit_and_keep_the_newest(self):
+        msgs = [_inbound('m' * 60), _inbound('n' * 60), _inbound('newest message here')]
+        reset_state(screen='thread', thread_id=ALICE, messages=msgs, thread_draft='d' * 200)
+        wire = self.thread_wire()
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(_entries(wire)[-1][2], 'newest message here')
+
+    def test_the_selected_retry_bubble_is_never_the_one_dropped(self):
+        reset_state(screen='thread', thread_id=ALICE, messages=[_inbound('a' * 90), _inbound('b' * 90)])
+        self.transport.side_effect = RuntimeError('no service')
+        self.type_text('pick me')
+        self.key('KEY_ENTER')
+        self.key('KEY_UP')
+        entries = _entries(self.thread_wire())
+        self.assertIn('Y3', [e[0] for e in entries])
 
 
 if __name__ == '__main__':
