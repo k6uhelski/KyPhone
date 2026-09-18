@@ -573,7 +573,7 @@ class TestTextsWindow(ListWindowBase):
         self.assertEqual(kyphone_os.state['texts_index'], 11)
         self.assertEqual(kyphone_os.state['texts_start'], 7)
         self.assertTrue(wire.startswith('TEXTS|4|'))
-        self.assertTrue(_rows(wire, 2)[-1].startswith('+15550000000'[:14]))   # thread 0 is the oldest
+        self.assertTrue(_rows(wire, 2)[-1].startswith('(555) 000-0000'))     # thread 0 is the oldest, number formatted
 
     def test_down_on_last_row_does_nothing(self):
         self._key('KEY_DOWN', 11)
@@ -665,7 +665,8 @@ class TestContactsWindow(ListWindowBase):
         self._key('KEY_DOWN', 9)
         self._key('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'contact')
-        self.assertEqual(kyphone_os.state['contact_for'], 'Name10')
+        self.assertEqual(kyphone_os.state['contact_idx'], 9)
+        self.assertEqual(kyphone_os.dispname(kyphone_os.CONTACTS[9]), 'Name10')
 
     def test_typing_filters_and_counts_the_matches(self):
         for ch in 'name1':
@@ -1030,6 +1031,232 @@ class TestThreadFitsTheFrame(SendBase):
         self.key('KEY_UP')
         entries = _entries(self.thread_wire())
         self.assertIn('Y3', [e[0] for e in entries])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phone numbers and the contact page (OS 0.2.1 step 4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPhoneNumbers(unittest.TestCase):
+    def test_ten_digits_and_eleven_starting_with_one_format_the_same_way(self):
+        for n in ('5550199002', '15550199002', '+15550199002', '(555) 019-9002', '555-019-9002', '1 555 019 9002'):
+            self.assertEqual(kyphone_os.format_number(n), '(555) 019-9002', n)
+
+    def test_anything_else_is_shown_as_typed(self):
+        self.assertEqual(kyphone_os.format_number('12345'), '12345')
+        self.assertEqual(kyphone_os.format_number('+44 20 7946 0958'), '+44 20 7946 0958')
+        self.assertEqual(kyphone_os.format_number(''), '')
+
+    def test_formatted_number_is_exactly_the_name_column_width(self):
+        self.assertEqual(len(kyphone_os.format_number('5550199002')), kyphone_os.LIST_NAME_MAX)
+
+    def test_same_number_ignores_how_it_was_typed(self):
+        self.assertTrue(kyphone_os.same_number('+15550100001', '(555) 010-0001'))
+        self.assertTrue(kyphone_os.same_number('5550100001', '1 555 010 0001'))
+        self.assertFalse(kyphone_os.same_number('+15550100001', '+15550100002'))
+        self.assertFalse(kyphone_os.same_number('', ''))
+        self.assertFalse(kyphone_os.same_number('', '5550100001'))
+
+    def test_number_valid(self):
+        for ok in ('5550100001', '15550100001', '(555) 010-0001', '+1 555 010 0001'):
+            self.assertTrue(kyphone_os.number_valid(ok), ok)
+        for bad in ('', '555', '55501000012', '25550100001', 'abc'):
+            self.assertFalse(kyphone_os.number_valid(bad), bad)
+
+    def test_normalize_number(self):
+        self.assertEqual(kyphone_os.normalize_number('(555) 010-0001'), '+15550100001')
+        self.assertEqual(kyphone_os.normalize_number('15550100001'), '+15550100001')
+        self.assertEqual(kyphone_os.normalize_number('12345'), '12345')
+
+
+class ContactBase(ListWindowBase):
+    def setUp(self):
+        super().setUp()
+        kyphone_os.CONTACTS[:] = [
+            {'first': 'Alice', 'last': 'Test', 'number': '+15550100001'},
+            {'first': 'Bob', 'last': '', 'number': '(555) 010-0002'},
+            {'first': 'Sam', 'last': 'Whitfield', 'number': ''},
+            {'first': 'Bob', 'last': '', 'number': '+15550100004'},          # a second "Bob"
+        ]
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+
+    def key(self, *keys):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            for k in keys:
+                kyphone_os.handle_key(k)
+        return _wire(ps)
+
+    def open_contact(self, row):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        return self.key(*(['KEY_DOWN'] * row), 'KEY_ENTER')
+
+
+class TestNamesFromNumbers(ContactBase):
+    def test_a_saved_contact_is_recognised_however_its_number_was_typed(self):
+        self.assertEqual(kyphone_os.format_name('+15550100002'), 'Bob')          # saved as (555) 010-0002
+
+    def test_an_unsaved_number_is_shown_formatted_never_truncated(self):
+        self.assertEqual(kyphone_os.format_name('+15550199002'), '(555) 019-9002')
+
+    def test_two_unsaved_senders_do_not_look_the_same_in_the_texts_list(self):
+        reset_state(screen='texts_list', messages=[_inbound('a', peer='+15550199001'), _inbound('b', peer='+15550199002')])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_texts()
+        names = [r.split(CELL)[0] for r in _rows(_wire(ps), 2)]
+        self.assertEqual(sorted(names), ['(555) 019-9001', '(555) 019-9002'])
+
+    def test_contacts_list_shows_formatted_numbers(self):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_contacts()
+        rows = _rows(_wire(ps), 4)
+        self.assertEqual(rows[0], f'Alice Test{CELL}(555) 010-0001')
+        self.assertEqual(rows[2], f'Sam Whitfield{CELL}')                       # no number: renderer shows NO NUMBER
+
+    def test_typing_a_number_in_compose_shows_it_as_typed_until_it_is_a_contact(self):
+        reset_state(screen='compose', compose_to='555019', compose_to_active=True)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_compose()
+        self.assertTrue(_wire(ps).startswith('COMPOSE|555019|'))
+        reset_state(screen='compose', compose_to='+15550100001', compose_to_active=False)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_compose()
+        self.assertTrue(_wire(ps).startswith('COMPOSE|Alice Test|'))
+
+
+class TestContactPage(ContactBase):
+    def test_saved_contact_with_a_number(self):
+        wire = self.open_contact(0)
+        self.assertEqual(wire, 'CONTACT|Alice Test|(555) 010-0001|S|C')
+
+    def test_saved_contact_without_a_number_offers_only_add_number(self):
+        wire = self.open_contact(2)
+        self.assertEqual(wire, 'CONTACT|Sam Whitfield|NO NUMBER SAVED|N|A')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'addnum')
+        self.key('KEY_RIGHT')                                               # nothing else on the row
+        self.assertEqual(kyphone_os.state['contact_sel'], 'addnum')
+
+    def test_unsaved_number_shows_it_formatted_with_call_text_and_save(self):
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # header -> info
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertIsNone(kyphone_os.state['contact_idx'])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_contact()
+        self.assertEqual(_wire(ps), 'CONTACT|(555) 019-9002|NOT IN CONTACTS|U|C')
+
+    def test_navigation_between_the_top_row_and_the_action_row(self):
+        self.open_contact(0)                                                # saved: back, edit / call, text
+        self.key('KEY_RIGHT'); self.assertEqual(kyphone_os.state['contact_sel'], 'text')
+        self.key('KEY_RIGHT'); self.assertEqual(kyphone_os.state['contact_sel'], 'text')   # end of the row
+        self.key('KEY_UP');    self.assertEqual(kyphone_os.state['contact_sel'], 'edit')   # text is under edit
+        self.key('KEY_LEFT');  self.assertEqual(kyphone_os.state['contact_sel'], 'back')
+        self.key('KEY_UP');    self.assertEqual(kyphone_os.state['contact_sel'], 'back')   # nothing above
+        self.key('KEY_DOWN');  self.assertEqual(kyphone_os.state['contact_sel'], 'call')
+        self.key('KEY_DOWN');  self.assertEqual(kyphone_os.state['contact_sel'], 'call')
+
+    def test_unsaved_page_row_has_three_buttons(self):
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
+        self.key('KEY_RIGHT', 'KEY_RIGHT')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'save')
+        self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'back')           # no EDIT on an unsaved page
+
+    def test_esc_returns_to_where_the_page_was_opened_from(self):
+        self.open_contact(0)
+        self.key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+
+    def test_text_opens_the_existing_thread_however_the_number_was_typed(self):
+        reset_state(screen='contacts_pick', contacts_index=1, contacts_return='home',
+                    messages=[_inbound('hi', peer='+15550100002')])          # contact saved as (555) 010-0002
+        self.key('KEY_ENTER', 'KEY_RIGHT', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.assertEqual(kyphone_os.state['thread_id'], '+15550100002')
+
+    def test_text_with_no_thread_starts_a_message_to_that_number(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home', messages=[])
+        self.key('KEY_ENTER', 'KEY_RIGHT', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        self.assertEqual(kyphone_os.state['compose_to'], '+15550100001')
+
+    def test_call_uses_the_name_or_the_formatted_number(self):
+        self.open_contact(0)
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['call_name'], 'Alice Test')
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['call_name'], '(555) 019-9002')
+
+
+class TestSameNameContacts(ContactBase):
+    def test_picking_the_second_bob_opens_the_second_bob(self):
+        wire = self.open_contact(3)
+        self.assertEqual(kyphone_os.state['contact_idx'], 3)
+        self.assertEqual(wire, 'CONTACT|Bob|(555) 010-0004|S|C')             # not the first Bob's number
+
+    def test_editing_the_second_bob_changes_only_the_second_bob(self):
+        self.open_contact(3)
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # edit
+        self.key('KEY_DOWN')                                                # last name
+        for ch in 'Ray':
+            self.key(f'CHAR:{ch}')
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')                       # number -> save
+        self.assertEqual(kyphone_os.CONTACTS[3]['last'], 'Ray')
+        self.assertEqual(kyphone_os.CONTACTS[1]['last'], '')                # the first Bob is untouched
+        self.assertEqual(kyphone_os.CONTACTS[1]['number'], '(555) 010-0002')
+
+
+class TestSaveAnUnsavedNumber(ContactBase):
+    def setUp(self):
+        super().setUp()
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # info -> unsaved contact page
+        self.key('KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')                     # SAVE
+
+    def test_save_opens_a_blank_form_with_the_number_filled_in_and_formatted(self):
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual(kyphone_os.state['edit_first'], '')
+        self.assertEqual(kyphone_os.state['edit_number'], '(555) 019-9002')
+        self.assertEqual(kyphone_os.state['edit_index'], 0)                 # cursor in FIRST NAME
+        self.assertIsNone(kyphone_os.state['edit_idx'])
+
+    def test_saving_adds_the_contact_and_shows_its_page(self):
+        for ch in 'Dave':
+            self.key(f'CHAR:{ch}')
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')
+        self.assertEqual(len(kyphone_os.CONTACTS), 5)
+        self.assertEqual(kyphone_os.CONTACTS[-1]['first'], 'Dave')
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertEqual(kyphone_os.state['contact_idx'], 4)
+        self.assertEqual(kyphone_os.format_name('+15550199002'), 'Dave')    # the thread now shows the name
+
+    def test_cancelling_returns_to_the_unsaved_page(self):
+        self.key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertIsNone(kyphone_os.state['contact_idx'])
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+
+
+class TestRepliesLandInTheSameThread(SendBase):
+    def test_a_message_to_a_number_typed_differently_joins_the_existing_thread(self):
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.send_reply('(555) 010-0001', 'hi')
+        peers = {kyphone_os.peer_of(m) for m in kyphone_os.state['messages']}
+        self.assertEqual(peers, {ALICE})                                    # not a second conversation
+        self.transport.assert_called_once_with(ALICE, 'hi')
+
+    def test_a_message_to_a_new_number_is_stored_normalized(self):
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.send_reply('(555) 019-9002', 'hi')
+        self.assertEqual(kyphone_os.state['messages'][-1]['peer'], '+15550199002')
+
+    def test_compose_opens_the_thread_the_message_was_stored_under(self):
+        reset_state(screen='compose', compose_to='5550199002', compose_msg='hi', messages=[_inbound()])
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os._send_compose()
+        self.assertEqual(kyphone_os.state['thread_id'], '+15550199002')
+        self.assertEqual(_entries(self.thread_wire())[-1][2], 'hi')
 
 
 if __name__ == '__main__':

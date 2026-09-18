@@ -709,11 +709,11 @@ class Simulator:
             self._text_right(position, self.WIDTH - 28, 583, 2)
 
     def _draw_contact(self, data):
-        # data = "name|number|sel"  sel: B=back C=call T=text E=edit
-        parts  = data.split('|')
-        name   = parts[0] if len(parts) > 0 else ''
-        number = parts[1] if len(parts) > 1 else 'NO NUMBER SAVED'
-        sel    = parts[2] if len(parts) > 2 else 'C'
+        # data = "title|sub|kind|sel"
+        # kind: S saved | N saved with no number | U number not in the address book
+        # sel:  B back, E edit, C call, T text, V save, A add number
+        parts = (data.split('|') + ['', '', 'S', 'C'])[:4]
+        title, sub, kind, sel = parts
         box_w, box_h = 38, 34
 
         back_sel = sel == 'B'
@@ -723,35 +723,31 @@ class Simulator:
                     WHITE if back_sel else BLACK, bold=True)
         self._text_centered('CONTACT', 10, 3, bold=True)
 
-        edit_sel = sel == 'E'
-        edit_label = 'EDIT'
-        edit_w, edit_h = len(edit_label) * self._char_w(2) + 20, 34
-        edit_x = self.WIDTH - 16 - edit_w
-        if edit_sel:
-            pygame.draw.rect(self._surface, BLACK, (edit_x, 6, edit_w, edit_h))
-        self._text(edit_label, edit_x + 10, 6 + (edit_h - 16) // 2, 2, WHITE if edit_sel else BLACK, bold=True)
+        if kind in ('S', 'N'):                       # EDIT is only there for a saved contact
+            edit_sel = sel == 'E'
+            edit_w, edit_h = len('EDIT') * self._char_w(2) + 20, 34
+            edit_x = self.WIDTH - 16 - edit_w
+            if edit_sel:
+                pygame.draw.rect(self._surface, BLACK, (edit_x, 6, edit_w, edit_h))
+            self._text_bl('EDIT', edit_x + 10, 6 + edit_h // 2 + 6, 2, WHITE if edit_sel else BLACK, bold=True)
         self._line(43)
 
-        self._text(name, 28, 150, 6, bold=True)
-        self._text(number, 28, 150 + 48 + 18, 3)
-        self._line(330)
+        self._text_bl(title, 28, 187, 6, bold=True)
+        self._text_bl(sub, 28, 234, 3)
+        pygame.draw.rect(self._surface, BLACK, (28, 330, self.WIDTH - 56, 2))
 
-        call_sel, text_sel = sel == 'C', sel == 'T'
-        btn_y, btn_h = 360, 24 + 16
-        call_label = 'CALL'
-        call_w = len(call_label) * self._char_w(3) + 44
-        if call_sel:
-            pygame.draw.rect(self._surface, BLACK, (28, btn_y, call_w, btn_h))
-        pygame.draw.rect(self._surface, BLACK, (28, btn_y, call_w, btn_h), 3)
-        self._text(call_label, 28 + 22, btn_y + 8, 3, WHITE if call_sel else BLACK, bold=True)
-
-        text_x = 28 + call_w + 16
-        text_label = 'TEXT'
-        text_w = len(text_label) * self._char_w(3) + 44
-        if text_sel:
-            pygame.draw.rect(self._surface, BLACK, (text_x, btn_y, text_w, btn_h))
-        pygame.draw.rect(self._surface, BLACK, (text_x, btn_y, text_w, btn_h), 3)
-        self._text(text_label, text_x + 22, btn_y + 8, 3, WHITE if text_sel else BLACK, bold=True)
+        actions = {'S': [('CALL', 'C'), ('TEXT', 'T')],
+                   'N': [('ADD NUMBER', 'A')],
+                   'U': [('CALL', 'C'), ('TEXT', 'T'), ('SAVE', 'V')]}.get(kind, [])
+        x = 28
+        for label, code in actions:
+            w = len(label) * self._char_w(3) + 44 + 6          # 22px padding a side + 3px border a side
+            picked = sel == code
+            if picked:
+                pygame.draw.rect(self._surface, BLACK, (x, 360, w, 46))
+            pygame.draw.rect(self._surface, BLACK, (x, 360, w, 46), 3)
+            self._text_bl(label, x + 25, 391, 3, WHITE if picked else BLACK, bold=True)
+            x += w + 16
 
     def _draw_contact_edit(self, data):
         # data = "first|last|number|idx"  idx: -1=cancel, 0/1/2=field, 3=save

@@ -133,6 +133,36 @@ class SimulatorPixels(unittest.TestCase):
         self.assertEqual(self.px(300, 30), WHITE)                     # nothing bleeds into the header strip
         self.assertEqual(self.px(4, 50), WHITE)
 
+    # ── contact page ─────────────────────────────────────────────────────────
+    def region_has_ink(self, x0, y0, x1, y1):
+        return any(self.px(x, y) == BLACK for x in range(x0, x1) for y in range(y0, y1))
+
+    def test_edit_control_is_only_on_a_saved_contact(self):
+        self.draw('CONTACT|Alice Test|(555) 010-0001|S|C')
+        self.assertTrue(self.region_has_ink(500, 6, 585, 40))
+        self.draw('CONTACT|Sam Whitfield|NO NUMBER SAVED|N|A')
+        self.assertTrue(self.region_has_ink(500, 6, 585, 40))
+        self.draw('CONTACT|(555) 019-9002|NOT IN CONTACTS|U|C')
+        self.assertFalse(self.region_has_ink(500, 6, 585, 40))                # nothing to edit yet
+
+    def test_the_action_row_holds_call_text_save_for_an_unsaved_number(self):
+        # buttons are 46px tall at y=360, 16px apart; widths are 18px per letter + 50
+        call_x, text_x, save_x = 28, 28 + 122 + 16, 28 + 122 + 16 + 122 + 16
+        for sel, filled_x in (('C', call_x), ('T', text_x), ('V', save_x)):
+            self.draw(f'CONTACT|(555) 019-9002|NOT IN CONTACTS|U|{sel}')
+            for x in (call_x, text_x, save_x):
+                inner = self.px(x + 6, 366)                                   # just inside the 3px border
+                self.assertEqual(inner, BLACK if x == filled_x else WHITE, (sel, x))
+
+    def test_a_saved_contact_without_a_number_has_one_add_number_button(self):
+        self.draw('CONTACT|Sam Whitfield|NO NUMBER SAVED|N|A')
+        self.assertEqual(self.px(34, 366), BLACK)                             # ADD NUMBER, selected, filled
+        self.assertEqual(self.px(28 + 230 + 16 + 8, 380), WHITE)              # no second button after it
+
+    def test_the_rule_above_the_actions_is_2px_at_y330(self):
+        self.draw('CONTACT|Alice Test|(555) 010-0001|S|C')
+        self.assertEqual((self.px(300, 330), self.px(300, 331), self.px(300, 332)), (BLACK, BLACK, WHITE))
+
 
 class WrapParity(unittest.TestCase):
     """The simulator draws with its own copy of wrap_words; it must match the OS's."""

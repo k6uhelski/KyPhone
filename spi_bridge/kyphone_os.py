@@ -117,12 +117,61 @@ def dispname(c):
     return f"{c.get('first', '')} {c.get('last', '')}".strip()
 
 
+# ─── Phone numbers ────────────────────────────────────────────────────────────
+
+def digits(n):
+    return re.sub(r'\D', '', str(n or ''))
+
+
+def number_valid(n):
+    """Dialable: ten digits, or eleven starting with 1. Spaces, dashes and
+    brackets are fine."""
+    d = digits(n)
+    return len(d) == 10 or (len(d) == 11 and d[0] == '1')
+
+
+def format_number(n):
+    """(555) 019-9002 for a dialable number; anything else is shown as typed.
+    Never truncated: it is 14 characters, the width of the name column."""
+    d = digits(n)
+    core = d[1:] if len(d) == 11 and d[0] == '1' else d
+    if len(core) == 10:
+        return f"({core[:3]}) {core[3:6]}-{core[6:]}"
+    return str(n or '')
+
+
+def same_number(a, b):
+    """Two numbers are the same person if their last ten digits agree, however
+    they were typed: +15550100001, 1 555 010 0001 and (555) 010-0001."""
+    da, db = digits(a), digits(b)
+    return bool(da) and bool(db) and da[-10:] == db[-10:]
+
+
+def normalize_number(n):
+    """+1XXXXXXXXXX for a dialable number, so a reply lands in the same thread
+    as the person's own texts; anything else is left as given."""
+    d = digits(n)
+    if len(d) == 10:
+        return '+1' + d
+    if len(d) == 11 and d[0] == '1':
+        return '+' + d
+    return str(n or '')
+
+
 def find_contact(number=None, name=None):
     for c in CONTACTS:
-        if number is not None and c.get('number') == number:
+        if number is not None and same_number(c.get('number'), number):
             return c
         if name is not None and (dispname(c) == name or c.get('first') == name):
             return c
+    return None
+
+
+def contact_index_for(number):
+    """Position in CONTACTS of the contact with this number, or None."""
+    for i, c in enumerate(CONTACTS):
+        if same_number(c.get('number'), number):
+            return i
     return None
 
 # --- Persistence Paths ---
@@ -194,10 +243,12 @@ state = {
     'contacts_header_sel': 'back',  # 'back' | 'plus'
     'contacts_return':     'home',  # 'home' | 'compose' — where Esc/back leads
 
-    'contact_for':    None,         # display name of the contact being viewed
+    'contact_idx':    None,         # position in CONTACTS of the contact being viewed; None = a number that is not saved
+    'contact_number': '',           # that number, when it is not saved
     'contact_sel':    'call',       # 'back' | 'call' | 'text' | 'edit'
     'contact_return': 'contacts_pick',
 
+    'edit_idx':    None,            # position of the contact being edited; None = a new one
     'edit_first':  '',
     'edit_last':   '',
     'edit_number': '',
@@ -247,8 +298,10 @@ if SIM_MODE:
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def format_name(number):
+    """A saved contact's name, else the number formatted — never truncated, so
+    two unsaved senders never look the same."""
     c = find_contact(number=number)
-    return dispname(c) if c else number
+    return dispname(c) if c else format_number(number)
 
 
 def format_msg_time(ts):
@@ -616,7 +669,8 @@ def push_compose():
     # A number that resolves to a saved contact displays as their name —
     # "the interactive reference drops the name into the TO field" — while
     # sending still uses the underlying number captured in compose_to.
-    to_display = (format_name(to_raw) if to_raw else '')[:40]
+    to_c = find_contact(number=to_raw) if to_raw else None
+    to_display = (dispname(to_c) if to_c else to_raw)[:40]
     push_screen(f"COMPOSE|{to_display}|{msg}|{to_active}|{hdr}|{plus_sel}|{send_sel}")
 
 
@@ -656,20 +710,63 @@ def push_contacts():
 
     # Footer counter, e.g. "3 / 14"; empty when there is nothing to count.
     position = f"{max(1, idx + 1)} / {len(filtered)}" if filtered else ''
-    rows = [[dispname(c)[:CONTACT_NAME_MAX], c.get('number', '')]
+    rows = [[sanitize(dispname(c))[:CONTACT_NAME_MAX], format_number(c.get('number', ''))]
             for c in filtered[start:start + CONTACTS_ROWS]]
     # No rows = the renderer shows NO MATCH (a query is set) or NO CONTACTS.
     push_screen(_list_command(["CONTACTSPICK", str(send_idx), query, position], rows, shrink_order=(0,)))
 
 
-def push_contact():
+def _contact_view():
+    """(record, number, kind) for the contact page. kind: 'S' saved, 'N' saved
+    with no number, 'U' a number that is not in the address book."""
     with state['lock']:
-        name = state['contact_for'] or ''
-        sel  = state['contact_sel']
-    c = find_contact(name=name)
-    number = c.get('number') if c else 'NO NUMBER SAVED'
-    sel_code = {'back': 'B', 'call': 'C', 'text': 'T', 'edit': 'E'}.get(sel, 'C')
-    push_screen(f"CONTACT|{name}|{number}|{sel_code}")
+        idx    = state['contact_idx']
+        number = state['contact_number']
+    if idx is not None and 0 <= idx < len(CONTACTS):
+        rec = CONTACTS[idx]
+        num = rec.get('number', '')
+        return rec, num, ('S' if num else 'N')
+    return None, number, 'U'
+
+
+def _contact_label():
+    """Name (or formatted number) of the contact being viewed."""
+    rec, number, _ = _contact_view()
+    return dispname(rec) if rec else format_number(number)
+
+
+# Contact page controls: the top row, then the action row underneath.
+_CONTACT_TOP = {'S': ['back', 'edit'], 'N': ['back', 'edit'], 'U': ['back']}
+_CONTACT_ROW = {'S': ['call', 'text'], 'N': ['addnum'], 'U': ['call', 'text', 'save']}
+_CONTACT_CODE = {'back': 'B', 'edit': 'E', 'call': 'C', 'text': 'T', 'save': 'V', 'addnum': 'A'}
+
+
+def _open_contact_page(idx, number, ret):
+    """Show the contact page for CONTACTS[idx], or for an unsaved `number`."""
+    with state['lock']:
+        state['contact_idx']    = idx
+        state['contact_number'] = number if idx is None else ''
+        state['contact_return'] = ret
+        state['screen']         = 'contact'
+    _, _, kind = _contact_view()
+    with state['lock']:
+        state['contact_sel'] = _CONTACT_ROW[kind][0]
+    push_contact()
+
+
+def push_contact():
+    rec, number, kind = _contact_view()
+    with state['lock']:
+        sel = state['contact_sel']
+    if rec:
+        title = dispname(rec)
+        sub   = format_number(number) if number else 'NO NUMBER SAVED'
+    else:
+        title, sub = format_number(number), 'NOT IN CONTACTS'
+    if sel not in _CONTACT_TOP[kind] + _CONTACT_ROW[kind]:
+        sel = _CONTACT_ROW[kind][0]
+    # 48px title: at most 15 cells across the panel
+    push_screen(f"CONTACT|{sanitize(title)[:15]}|{sanitize(sub)}|{kind}|{_CONTACT_CODE[sel]}")
 
 
 def push_contact_edit():
@@ -1057,13 +1154,7 @@ def _from_thread(keycode):
                 state['screen'] = 'texts_list'
             push_texts()
         else:  # 'info' — open the contact page for this thread
-            name = format_name(thread_id)
-            with state['lock']:
-                state['screen']         = 'contact'
-                state['contact_for']    = name
-                state['contact_sel']    = 'call'
-                state['contact_return'] = 'thread'
-            push_contact()
+            _open_contact_page(contact_index_for(thread_id), thread_id, 'thread')
 
     elif header_sel is None and keycode == 'KEY_BACKSPACE':
         with state['lock']:
@@ -1112,9 +1203,10 @@ def _send_compose():
     if not (to_val and msg_val):
         return
     send_reply(to_val, msg_val)
+    peer = resolve_peer(to_val)          # takes the state lock, so not inside the block below
     with state['lock']:
         state['screen']            = 'thread'
-        state['thread_id']         = to_val
+        state['thread_id']         = peer
         state['thread_draft']      = ''
         state['thread_header_sel'] = None
         state['thread_msg_sel']    = -1
@@ -1307,12 +1399,8 @@ def _from_contacts_pick(keycode):
         elif idx < len(filtered):
             picked = filtered[idx]
             if ret == 'home':
-                with state['lock']:
-                    state['screen']         = 'contact'
-                    state['contact_for']    = dispname(picked)
-                    state['contact_sel']    = 'call'
-                    state['contact_return'] = 'contacts_pick'
-                push_contact()
+                pos = next(i for i, c in enumerate(CONTACTS) if c is picked)
+                _open_contact_page(pos, '', 'contacts_pick')
             else:
                 with state['lock']:
                     state['screen']            = 'compose'
@@ -1331,12 +1419,10 @@ def _from_contacts_pick(keycode):
         push_contacts()
 
 
-def _open_text_for(name):
-    """Open the existing thread for a contact, or start composing to them
-    if there is none yet — mirrors the Contact page's TEXT button."""
-    c = find_contact(name=name)
-    number = c.get('number') if c else name
-    existing = next((t for t in get_threads() if t['name'] == name or t['sender'] == number), None)
+def _open_text_for(number):
+    """Open the existing thread with this number, or start composing to it if
+    there is none yet — the contact page's TEXT button."""
+    existing = next((t for t in get_threads() if same_number(t['sender'], number)), None)
     if existing:
         _open_thread(existing['sender'])
     else:
@@ -1352,82 +1438,95 @@ def _open_text_for(name):
 
 
 def _from_contact(keycode):
+    rec, number, kind = _contact_view()
+    top, row = _CONTACT_TOP[kind], _CONTACT_ROW[kind]
     with state['lock']:
-        sel            = state['contact_sel']
-        contact_for    = state['contact_for']
-        contact_return = state['contact_return']
+        sel = state['contact_sel']
+        ret = state['contact_return']
+    if sel not in top + row:
+        sel = row[0]
+    in_top = sel in top
+
+    def go(new_sel):
+        with state['lock']:
+            state['contact_sel'] = new_sel
+        push_contact()
 
     if keycode == 'KEY_ESC':
         with state['lock']:
-            state['screen'] = contact_return
-        _push_for_screen(contact_return)
+            state['screen'] = ret
+        _push_for_screen(ret)
     elif keycode == 'KEY_UP':
-        with state['lock']:
-            state['contact_sel'] = 'edit' if sel == 'text' else 'back'
-        push_contact()
+        go(sel if in_top else top[min(row.index(sel), len(top) - 1)])
     elif keycode == 'KEY_DOWN':
-        with state['lock']:
-            state['contact_sel'] = 'text' if sel == 'edit' else 'call'
-        push_contact()
-    elif keycode == 'KEY_LEFT':
-        with state['lock']:
-            state['contact_sel'] = 'back' if sel == 'edit' else 'call'
-        push_contact()
-    elif keycode == 'KEY_RIGHT':
-        with state['lock']:
-            state['contact_sel'] = 'edit' if sel == 'back' else 'text'
-        push_contact()
+        go(row[min(top.index(sel), len(row) - 1)] if in_top else sel)
+    elif keycode in ('KEY_LEFT', 'KEY_RIGHT'):
+        line = top if in_top else row
+        step = -1 if keycode == 'KEY_LEFT' else 1
+        go(line[max(0, min(len(line) - 1, line.index(sel) + step))])
     elif keycode == 'KEY_ENTER':
         if sel == 'back':
             with state['lock']:
-                state['screen'] = contact_return
-            _push_for_screen(contact_return)
+                state['screen'] = ret
+            _push_for_screen(ret)
         elif sel == 'text':
-            _open_text_for(contact_for)
+            _open_text_for(number)
         elif sel == 'call':
+            label = _contact_label()         # takes the state lock, so not inside the block below
             with state['lock']:
                 state['screen']    = 'outgoing'
-                state['call_name'] = contact_for
+                state['call_name'] = label
             push_call_screen()
-        else:  # edit
-            _open_contact_edit()
+        elif sel == 'save':
+            _open_contact_edit(new=True)
+        else:  # edit, addnum
+            _open_contact_edit(new=False)
 
 
 EDIT_FIELDS = ['first', 'last', 'number']
 
 
-def _open_contact_edit():
+def _open_contact_edit(new):
+    """The edit form. `new` = a blank contact for a number that is not saved
+    yet (the number is filled in, formatted); otherwise the viewed contact."""
+    rec, number, _ = _contact_view()
     with state['lock']:
-        contact_for = state['contact_for']
-    c = find_contact(name=contact_for) or {'first': contact_for or '', 'last': '', 'number': ''}
+        cidx = state['contact_idx']
+    if new or rec is None:
+        edit_idx, first, last, num = None, '', '', format_number(number)
+    else:
+        edit_idx, first, last, num = cidx, rec.get('first', ''), rec.get('last', ''), rec.get('number', '')
     with state['lock']:
         state['screen']      = 'contact_edit'
-        state['edit_first']  = c.get('first', '')
-        state['edit_last']   = c.get('last', '')
-        state['edit_number'] = c.get('number', '')
+        state['edit_idx']    = edit_idx
+        state['edit_first']  = first
+        state['edit_last']   = last
+        state['edit_number'] = num
         state['edit_index']  = 0
     push_contact_edit()
 
 
 def _save_contact_edit():
     with state['lock']:
-        first       = state['edit_first'].strip()
-        last        = state['edit_last'].strip()
-        number      = state['edit_number'].strip()
-        contact_for = state['contact_for']
+        first    = state['edit_first'].strip()
+        last     = state['edit_last'].strip()
+        number   = state['edit_number'].strip()
+        edit_idx = state['edit_idx']
     if not first and not last:
         return
-    record   = {'first': first, 'last': last, 'number': number}
-    existing = find_contact(name=contact_for)
-    if existing:
-        existing.update(record)
+    record = {'first': first, 'last': last, 'number': number}
+    if edit_idx is not None and 0 <= edit_idx < len(CONTACTS):
+        CONTACTS[edit_idx].update(record)
+        pos = edit_idx
     else:
         CONTACTS.append(record)
+        pos = len(CONTACTS) - 1
     _save_contacts(CONTACTS)
     with state['lock']:
-        state['contact_for'] = dispname(record)
-        state['screen']      = 'contact'
-        state['contact_sel'] = 'edit'
+        state['contact_idx']    = pos
+        state['contact_number'] = ''
+        state['screen']         = 'contact'
+        state['contact_sel']    = 'edit'
     push_contact()
 
 
@@ -1624,7 +1723,7 @@ def _transport_send(to_number, body):
         return
     if client is None:
         raise RuntimeError('no service')
-    msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=to_number)
+    msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=normalize_number(to_number))
     print(f"  → sent: {body} (SID: {msg.sid})")
 
 
@@ -1658,13 +1757,22 @@ def _dispatch_send(msg):
     _run_async(work)
 
 
+def resolve_peer(number):
+    """The key a conversation with this person is stored under: the key of an
+    existing thread with the same number however it was typed, else the number
+    normalized to +1XXXXXXXXXX."""
+    with state['lock']:
+        keys = [peer_of(m) for m in state['messages']]
+    return next((k for k in keys if k and same_number(k, number)), None) or normalize_number(number)
+
+
 def send_reply(to_number, body):
     """Send a text. The message joins the thread at once as SENDING..., and the
     radio's answer settles it to SENT or NOT SENT. A new conversation joins the
     texts list on the first send whether or not it succeeds."""
     msg = {
         'dir':   'out',
-        'peer':  to_number,
+        'peer':  resolve_peer(to_number),
         'name':  'You',
         'body':  body,
         'read':  True,
