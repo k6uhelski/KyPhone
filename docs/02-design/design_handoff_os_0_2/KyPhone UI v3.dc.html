@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&amp;display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; padding: 0; background: oklch(0.93 0.004 95); }
+    * { box-sizing: border-box; }
+    a { color: #1e1e1e; }
+    a:hover { color: #1e1e1e; }
+  </style>
+</helmet>
+
+<div style="width:100%; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:48px; font-family:'VT323', ui-monospace, monospace; letter-spacing:0.05em;">
+  <div style="display:flex; flex-direction:column; align-items:center; gap:18px;">
+
+    <div style="background:#242422; border-radius:22px; padding:34px 34px 26px 34px; box-shadow:0 30px 60px -20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05); position:relative;">
+      <div style="position:absolute; top:14px; left:50%; transform:translateX(-50%); color:#8a8a86; font-size:10px;">KYPHONE · ROCK 3A + INKPLATE 4</div>
+
+      <div style="width:600px; height:600px; background:#ffffff; border:3px solid #050505; position:relative; overflow:hidden; outline:8px solid #050505; outline-offset:2px;" tabindex="0">
+
+        <sc-if value="{{ isLock }}" hint-placeholder-val="{{ true }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; bottom:8px; left:10px; font-size:18px; font-weight:600;">OS 0.2</div>
+            <div style="position: absolute; top: 159px; left: 0; right: 0; text-align: center; font-size: 64px; font-weight: 700; white-space: nowrap">{{ clockLabel }}</div>
+            <div style="position: absolute; top: 243px; left: 0; right: 0; text-align: center; font-size: 24px">{{ dateLabel }}</div>
+            <div style="position:absolute; top:356px; left:60px; right:60px; text-align:center;">
+              
+              
+            <div style="font-size:24px; line-height:34px; text-wrap:pretty;">{{ quoteText }}</div><div style="font-size:18px; margin-top:12px;">— THICH NHAT HANH</div></div>
+            <div style="position:absolute; bottom:6px; right:8px; font-family:ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size:15px; font-weight:700; line-height:1.45; white-space:pre; text-align:left; letter-spacing:normal;">{{ catArt }}</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isHome }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:60px; background:{{ homeHeaderBg }}; color:{{ homeHeaderFg }}; display:flex; justify-content:space-between; align-items:center; padding:0 24px;">
+              <span style="font-size:24px; white-space:nowrap;">{{ clockLabel }}</span>
+              <span style="display:flex; align-items:center; gap:14px;">
+                <span style="display:flex; align-items:center; gap:2px;">
+                  <span style="width:34px; height:18px; border:2px solid {{ homeHeaderFg }}; padding:2px; display:flex;">
+                    <span style="width:{{ battFill }}; height:100%; background:{{ homeHeaderFg }};"></span>
+                  </span>
+                  <span style="width:3px; height:8px; background:{{ homeHeaderFg }};"></span>
+                </span>
+                <span style="font-size:24px; white-space:nowrap;">{{ battPct }}%</span>
+                <span style="display:flex; align-items:flex-end; gap:3px;">
+                  <span style="width:4px; height:5px; background:{{ homeHeaderFg }};"></span>
+                  <span style="width:4px; height:9px; background:{{ homeHeaderFg }};"></span>
+                  <span style="width:4px; height:13px; background:{{ homeHeaderFg }};"></span>
+                  <span style="width:4px; height:17px; border:1px solid {{ homeHeaderFg }}; box-sizing:border-box;"></span>
+                </span>
+              </span>
+            </div>
+            <div style="position:absolute; top:60px; left:0; right:0; border-top:2px solid #111;"></div>
+
+            <div style="position:absolute; top:62px; left:0; right:0; bottom:0; overflow:hidden;">
+            <div style="position:absolute; top:{{ menuShift }}; left:0; right:0;">
+            <sc-for list="{{ homeMenu }}" as="item" hint-placeholder-count="4">
+              <div style="position:absolute; left:0; right:0; top:{{ item.top }}px; height:135px; display:flex; align-items:center; justify-content:center; gap:28px; background:{{ item.bg }}; color:{{ item.fg }}; border-bottom:1px solid #111;">
+                <span style="position:relative; display:flex; align-items:center; gap:28px;">
+                <sc-if value="{{ homeShowIcon }}" hint-placeholder-val="{{ true }}">
+                  <span style="display:flex; align-items:center; justify-content:center;">
+                  <sc-if value="{{ item.isText }}" hint-placeholder-val="{{ false }}"><svg width="56" height="56" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><path d="M20 2H4v2h16zm0 14H6v2h14zm2-12h-2v12h2zM4 4H2v18h2zm2 14H4v2h2zm0-6h4v2H6zm0-4h8v2H6z"></path></svg></sc-if>
+                  <sc-if value="{{ item.isCall }}" hint-placeholder-val="{{ false }}"><svg width="56" height="56" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><path d="M4 1h5v2H4zm5 2h2v4H9zM7 7h2v4H7zm-3 5h2v2H4zM2 3h2v9H2zm7 8h2v2H9zm2 2h2v2h-2zm2 2h4v2h-4zm4-2h4v2h-4zm4 2h2v5h-2zM6 14h2v2H6zm2 2h2v2H8zm2 2h2v2h-2zm2 2h9v2h-9z"></path></svg></sc-if>
+                  <sc-if value="{{ item.isRead }}" hint-placeholder-val="{{ false }}"><svg width="56" height="56" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><path d="M2 3h9v2H2zM0 19h11v2H0zM13 3h9v2h-9zm0 16h11v2H13zM11 5h2v18h-2zM0 5h2v14H0zm22 0h2v14h-2zm-7 2h5v2h-5zm0 4h5v2h-5zm0 4h2v2h-2z"></path></svg></sc-if>
+                  <sc-if value="{{ item.isListen }}" hint-placeholder-val="{{ false }}"><svg width="56" height="56" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><path d="M4 12h4v2H4zm-2 2h2v4H2zm2 4h4v2H4zM8 6h2v12H8zm10 0h2v12h-2zm-6 8h2v4h-2zm2-2h4v2h-4zm0 6h4v2h-4zM10 4h8v2h-8z"></path></svg></sc-if>
+                  <sc-if value="{{ item.isContacts }}" hint-placeholder-val="{{ false }}"><svg width="56" height="56" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><path d="M2 2h20v2H2zM0 4h2v16H0zm22 0h2v16h-2zM2 20h20v2H2zM14 7h6v2h-6zm0 4h6v2h-6zm0 4h4v2h-4zM6 7h4v4H6zm0 6h4v2H6zm4 2h2v2h-2zm-6 0h2v2H4z"></path></svg></sc-if>
+                  </span>
+                </sc-if>
+                <sc-if value="{{ homeShowLabel }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:48px; font-weight:700;">{{ item.label }}</span>
+                </sc-if>
+                <sc-if value="{{ item.showNum }}" hint-placeholder-val="{{ false }}">
+                  <span style="position:absolute; left:100%; margin-left:24px; top:50%; transform:translateY(-50%); font-size:24px;">01</span>
+                </sc-if>
+                </span>
+              </div>
+            </sc-for>
+            </div>
+            </div>
+            <sc-if value="{{ menuMoreBelow }}" hint-placeholder-val="{{ true }}">
+              <div style="position:absolute; bottom:6px; right:12px; display:flex; flex-direction:column; align-items:center; gap:2px;">
+                <span style="width:14px; height:3px; background:#111;"></span>
+                <span style="width:8px; height:3px; background:#111;"></span>
+                <span style="width:3px; height:3px; background:#111;"></span>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isStub }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:10px; left:24px; font-size:24px; font-weight:700;">{{ stubTitle }}</div>
+            <div style="position:absolute; top:44px; left:0; right:0; border-top:2px solid #111;"></div>
+            <div style="position:absolute; top:212px; left:56px; right:56px; display:flex; gap:22px; align-items:flex-start;">
+              <div style="width:46px; height:46px; flex:none; border:2px solid #111; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700;">!</div>
+              <div style="font-size:24px; line-height:34px; text-wrap:pretty;">{{ stubBody }}</div>
+            </div>
+            <div style="position:absolute; bottom:24px; right:24px; border:3px solid #111; padding:6px 18px; font-size:18px; font-weight:700;">OK</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isConfirmDiscard }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:10px; left:24px; font-size:24px; font-weight:700;">NEW MESSAGE</div>
+            <div style="position:absolute; top:44px; left:0; right:0; border-top:2px solid #111;"></div>
+            <div style="position:absolute; top:196px; left:56px; right:56px; display:flex; gap:22px; align-items:flex-start;">
+              <div style="width:46px; height:46px; flex:none; border:2px solid #111; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700;">!</div>
+              <div style="font-size:24px; line-height:34px; text-wrap:pretty;">DISCARD THIS MESSAGE? IT HAS NOT BEEN SENT, AND THE PHONE KEEPS NO DRAFTS, SO THE TEXT CANNOT BE BROUGHT BACK.</div>
+            </div>
+            <div style="position:absolute; bottom:24px; left:56px; right:24px; display:flex; justify-content:space-between; align-items:center;">
+              <span style="border:2px solid #111; padding:7px 18px; font-size:18px; background:{{ discardBtnBg }}; color:{{ discardBtnFg }};">DISCARD</span>
+              <span style="border:3px solid #111; padding:6px 18px; font-size:18px; font-weight:700; background:{{ keepBtnBg }}; color:{{ keepBtnFg }};">KEEP EDITING</span>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isTextsList }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:44px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ backBtnBg }}; color:{{ backBtnFg }};">&lt;</span>
+              <span style="font-size:24px; font-weight:700;">TEXT</span>
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ composeBtnBg }}; color:{{ composeBtnFg }};">+</span>
+            </div>
+            <div style="position:absolute; top:43px; left:0; right:0; border-top:1px solid #111;"></div>
+            <sc-for list="{{ textsRows }}" as="row" hint-placeholder-count="5">
+              <div style="position:absolute; left:0; right:0; top:{{ row.top }}px; height:88px; padding:10px 28px; background:{{ row.bg }}; color:{{ row.fg }}; border-bottom:1px solid #111; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                  <span style="font-size:24px; font-weight:{{ row.weight }};">{{ row.name }}</span>
+                  <span style="font-size:18px; display:flex; gap:10px; align-items:baseline;">{{ row.time }}<span>&gt;</span></span>
+                </div>
+                <div style="font-size:18px; margin-top:14px; white-space:nowrap; overflow:hidden;">{{ row.preview }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isThread }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:46px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ threadBackBg }}; color:{{ threadBackFg }};">&lt;</span>
+              <span style="font-size:24px; font-weight:700;">{{ threadName }}</span>
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ threadInfoBg }}; color:{{ threadInfoFg }};">i</span>
+            </div>
+            <div style="position:absolute; top:46px; left:0; right:0; border-top:2px solid #111;"></div>
+
+            <div style="position:absolute; top:62px; left:16px; right:16px; bottom:62px; display:flex; flex-direction:column; justify-content:flex-end; gap:16px; overflow:hidden;">
+              <sc-for list="{{ threadMessages }}" as="m" hint-placeholder-count="3">
+                <div style="display:flex; flex-direction:column; align-items:{{ m.align }};">
+                  <sc-if value="{{ m.showName }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:18px; font-weight:700; margin:0 14px 6px 14px;">{{ m.name }}</div>
+                  </sc-if>
+                  <div style="display:flex; align-items:center;">
+                    <sc-if value="{{ m.tailLeft }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; flex-direction:column; align-items:flex-end;">
+                        <div style="width:4px; height:4px; background:#111;"></div>
+                        <div style="width:8px; height:4px; background:#111;"></div>
+                        <div style="width:14px; height:4px; background:#111;"></div>
+                        <div style="width:8px; height:4px; background:#111;"></div>
+                        <div style="width:4px; height:4px; background:#111;"></div>
+                      </div>
+                    </sc-if>
+                    <div style="max-width:400px; border:2px solid #111; background:{{ m.bg }}; color:{{ m.fg }}; padding:8px 12px;">
+                      <div style="font-size:24px; line-height:1.45; text-wrap:pretty;">{{ m.text }}</div>
+                    </div>
+                    <sc-if value="{{ m.tailRight }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; flex-direction:column; align-items:flex-start;">
+                        <div style="width:4px; height:4px; background:#111;"></div>
+                        <div style="width:8px; height:4px; background:#111;"></div>
+                        <div style="width:14px; height:4px; background:#111;"></div>
+                        <div style="width:8px; height:4px; background:#111;"></div>
+                        <div style="width:4px; height:4px; background:#111;"></div>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="font-size:18px; margin:6px 14px 0 14px;">{{ m.time }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="position:absolute; bottom:45px; left:0; right:0; border-top:2px solid #111;"></div>
+            <div style="position:absolute; bottom:0; left:0; right:0; height:45px; display:flex; align-items:center; padding:0 24px;">
+              <span style="font-size:24px;">&gt;&nbsp;{{ threadDraft }}</span>
+              <span style="display:inline-block; width:18px; height:24px; background:#111;"></span>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isContactEdit }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:44px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ editCancelBg }}; color:{{ editCancelFg }};">X</span>
+              <span style="font-size:24px; font-weight:700;">EDIT CONTACT</span>
+              <span style="width:38px; height:34px; display:flex; align-items:center; justify-content:center;"></span>
+            </div>
+            <div style="position:absolute; top:43px; left:0; right:0; border-top:1px solid #111;"></div>
+
+            <div style="position:absolute; top:70px; left:24px; font-size:18px; padding:2px 4px; background:{{ editFirstLabelBg }}; color:{{ editFirstLabelFg }};">FIRST NAME:</div>
+            <div style="position:absolute; top:100px; left:24px; right:24px; font-size:24px; display:flex; align-items:center;">{{ editFirst }}<sc-if value="{{ editFirstCursor }}" hint-placeholder-val="{{ true }}"><span style="display:inline-block; width:18px; height:24px; background:#111;"></span></sc-if></div>
+            <div style="position:absolute; top:138px; left:0; right:0; border-top:1px solid #111;"></div>
+
+            <div style="position:absolute; top:158px; left:24px; font-size:18px; padding:2px 4px; background:{{ editLastLabelBg }}; color:{{ editLastLabelFg }};">LAST NAME:</div>
+            <div style="position:absolute; top:188px; left:24px; right:24px; font-size:24px; display:flex; align-items:center;">{{ editLast }}<sc-if value="{{ editLastCursor }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block; width:18px; height:24px; background:#111;"></span></sc-if></div>
+            <div style="position:absolute; top:226px; left:0; right:0; border-top:1px solid #111;"></div>
+
+            <div style="position:absolute; top:246px; left:24px; font-size:18px; padding:2px 4px; background:{{ editNumberLabelBg }}; color:{{ editNumberLabelFg }};">PHONE NUMBER:</div>
+            <div style="position:absolute; top:276px; left:24px; right:24px; font-size:24px; display:flex; align-items:center;">{{ editNumber }}<sc-if value="{{ editNumberCursor }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block; width:18px; height:24px; background:#111;"></span></sc-if></div>
+            <div style="position:absolute; top:314px; left:0; right:0; border-top:1px solid #111;"></div>
+
+            <div style="position:absolute; bottom:14px; right:24px; border:3px solid #111; padding:6px 18px; font-size:18px; font-weight:700; background:{{ editSaveBg }}; color:{{ editSaveFg }};">SAVE</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isContact }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:44px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ contactBackBg }}; color:{{ contactBackFg }};">&lt;</span>
+              <span style="font-size:24px; font-weight:700;">CONTACT</span>
+              <span style="font-size:18px; font-weight:700; height:34px; padding:0 10px; display:flex; align-items:center; justify-content:center; background:{{ contactEditBg }}; color:{{ contactEditFg }};">EDIT</span>
+            </div>
+            <div style="position:absolute; top:43px; left:0; right:0; border-top:1px solid #111;"></div>
+            <div style="position:absolute; top:150px; left:28px; right:28px;">
+              <div style="font-size:48px; font-weight:700;">{{ contactName }}</div>
+              <div style="font-size:24px; margin-top:18px;">{{ contactNumber }}</div>
+            </div>
+            <div style="position:absolute; top:330px; left:28px; right:28px; border-top:2px solid #111;"></div>
+            <div style="position:absolute; top:360px; left:28px; display:flex; gap:16px;">
+              <span style="border:3px solid #111; padding:8px 22px; font-size:24px; font-weight:700; background:{{ contactCallBg }}; color:{{ contactCallFg }};">CALL</span>
+              <span style="border:3px solid #111; padding:8px 22px; font-size:24px; font-weight:700; background:{{ contactTextBg }}; color:{{ contactTextFg }};">TEXT</span>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isCompose }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:10px; left:24px; font-size:24px; font-weight:700;">NEW MESSAGE</div>
+            <div style="position:absolute; top:8px; right:16px; font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ composeXBg }}; color:{{ composeXFg }};">X</div>
+            <div style="position:absolute; top:44px; left:0; right:0; border-top:2px solid #111;"></div>
+
+            <div style="position:absolute; top:56px; left:24px; font-size:18px; padding:2px 4px; background:{{ composeToLabelBg }}; color:{{ composeToLabelFg }};">TO:</div>
+            <div style="position:absolute; top:84px; left:24px; right:24px; display:flex; align-items:center; justify-content:space-between; gap:16px;">
+              <span style="font-size:24px; display:flex; align-items:center;">{{ composeTo }}<sc-if value="{{ composeToCursor }}" hint-placeholder-val="{{ true }}"><span style="display:inline-block; width:18px; height:24px; background:#111;"></span></sc-if></span>
+              <sc-if value="{{ composeToEmptyHint }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ composePlusBg }}; color:{{ composePlusFg }};">+</span>
+              </sc-if>
+            </div>
+            <div style="position:absolute; top:122px; left:0; right:0; border-top:1px solid #111;"></div>
+
+            <div style="position:absolute; top:134px; left:24px; font-size:18px; padding:2px 4px; background:{{ composeMsgLabelBg }}; color:{{ composeMsgLabelFg }};">MESSAGE:</div>
+            <div style="position:absolute; top:162px; left:24px; right:24px; font-size:24px; line-height:34px; text-wrap:pretty;">{{ composeMsg }}<sc-if value="{{ composeMsgActive }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block; width:12px; height:16px; background:#111; vertical-align:text-bottom;"></span></sc-if></div>
+
+            <div style="position:absolute; bottom:14px; right:24px; border:3px solid #111; padding:6px 18px; font-size:18px; font-weight:700; background:{{ composeSendBg }}; color:{{ composeSendFg }};">SEND</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isContactsPick }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:44px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ contactsBackBg }}; color:{{ contactsBackFg }};">&lt;</span>
+              <span style="font-size:24px; font-weight:700;">CONTACTS</span>
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ contactsPlusBg }}; color:{{ contactsPlusFg }};">+</span>
+            </div>
+            <div style="position:absolute; top:43px; left:0; right:0; border-top:1px solid #111;"></div>
+            <sc-for list="{{ contactsRows }}" as="row" hint-placeholder-count="5">
+              <div style="position:absolute; left:0; right:0; top:{{ row.top }}px; height:64px; padding:0 28px; background:{{ row.bg }}; color:{{ row.fg }}; border-bottom:1px solid #111; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:24px; font-weight:600;">{{ row.name }}</span>
+                <span style="font-size:18px;">{{ row.number }}</span>
+              </div>
+            </sc-for>
+            <div style="position:absolute; bottom:45px; left:0; right:0; border-top:2px solid #111;"></div>
+            <div style="position:absolute; bottom:0; left:0; right:0; height:45px; padding:0 28px; display:flex; align-items:center; gap:14px;">
+              <span style="font-size:18px;">LOOK UP:</span>
+              <span style="font-size:24px; display:flex; align-items:center;">{{ contactsQuery }}<span style="display:inline-block; width:18px; height:24px; background:#111;"></span></span>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isCallsList }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:0; left:0; right:0; height:44px; display:flex; justify-content:space-between; align-items:center; padding:0 16px;">
+              <span style="font-size:24px; font-weight:700; width:38px; height:34px; display:flex; align-items:center; justify-content:center; background:{{ callsBackBg }}; color:{{ callsBackFg }};">&lt;</span>
+              <span style="font-size:24px; font-weight:700;">CALL</span>
+              <span style="font-size:24px; font-weight:700; opacity:0;">&lt;</span>
+            </div>
+            <div style="position:absolute; top:43px; left:0; right:0; border-top:1px solid #111;"></div>
+            <sc-for list="{{ callsRows }}" as="row" hint-placeholder-count="5">
+              <div style="position:absolute; left:0; right:0; top:{{ row.top }}px; height:76px; padding:0 28px; background:{{ row.bg }}; color:{{ row.fg }}; border-bottom:1px solid #111; display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; align-items:center; gap:12px;">
+                  <span style="font-size:24px; font-weight:600;">{{ row.name }}</span>
+                  <span style="font-size:18px; border:1px solid {{ row.fg }}; padding:0 6px;">{{ row.tag }}</span>
+                </div>
+                <div style="text-align:right; font-size:18px; line-height:22px;">
+                  <div>{{ row.time }}</div>
+                  <div>{{ row.duration }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDial }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111;">
+            <div style="position:absolute; top:40px; left:0; right:0; text-align:center; font-size:18px;">DIAL</div>
+            <div style="position:absolute; top:70px; left:28px; right:28px; text-align:center; font-size:48px; font-weight:700; padding-bottom:16px; display:flex; align-items:center; justify-content:center;">{{ dialBuffer }}<span style="display:inline-block; width:28px; height:48px; background:#111;"></span></div>
+            <div style="position:absolute; top:170px; left:0; right:0; border-top:2px solid #111;"></div>
+            <div style="position:absolute; top:186px; left:28px; right:28px; font-size:18px;">RECENT</div>
+            <sc-for list="{{ dialQuick }}" as="q" hint-placeholder-count="4">
+              <div style="position:absolute; left:28px; right:28px; top:{{ q.top }}px; height:56px; display:flex; align-items:center; padding:0 4px; background:{{ q.bg }}; color:{{ q.fg }}; border-bottom:1px solid #111;">
+                <span style="font-size:24px; font-weight:600;">{{ q.name }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isOutgoing }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:18px;">CALLING…</div>
+            <div style="font-size:48px; font-weight:700; margin-top:18px; text-align:center;">{{ callName }}</div>
+            <div style="position:absolute; bottom:26px; font-size:18px;">ESC HANG UP</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isIncoming }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; background:#111; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:18px;">INCOMING CALL</div>
+            <div style="font-size:48px; font-weight:700; margin-top:20px; text-align:center;">{{ callName }}</div>
+            <div style="position:absolute; bottom:34px; font-size:18px;">ENTER ACCEPT · ESC DECLINE</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isInCall }}" hint-placeholder-val="{{ false }}">
+          <div style="width:100%; height:100%; position:relative; color:#111; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:18px;">IN CALL</div>
+            <div style="font-size:48px; font-weight:700; margin-top:18px; text-align:center;">{{ callName }}</div>
+            <div style="font-size:24px; margin-top:20px;">{{ callTimer }}</div>
+            <div style="position:absolute; bottom:26px; font-size:18px;">ESC HANG UP</div>
+          </div>
+        </sc-if>
+
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:22px; margin-top:2px;">
+      <div style="width:70px; height:70px; position:relative;">
+        <div style="position:absolute; top:0; left:24px; width:22px; height:22px; background:#3a3a37; border-radius:3px;"></div>
+        <div style="position:absolute; bottom:0; left:24px; width:22px; height:22px; background:#3a3a37; border-radius:3px;"></div>
+        <div style="position:absolute; top:24px; left:0; width:22px; height:22px; background:#3a3a37; border-radius:3px;"></div>
+        <div style="position:absolute; top:24px; right:0; width:22px; height:22px; background:#3a3a37; border-radius:3px;"></div>
+        <div style="position:absolute; top:24px; left:24px; width:22px; height:22px; background:#57564f; border-radius:3px;"></div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <div style="width:26px; height:26px; background:#3a3a37; border-radius:4px;"></div>
+        <div style="width:26px; height:26px; background:#3a3a37; border-radius:4px;"></div>
+        <div style="width:26px; height:26px; background:#3a3a37; border-radius:4px;"></div>
+      </div>
+      <div style="font-size:11px; color:#8a8a86; max-width:300px; line-height:1.5;">any key wakes the lock screen · WASD mirrors the arrows and Q acts as back, except where you are typing</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 780, &quot;height&quot;: 900}, &quot;clockFormat&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;12h&quot;, &quot;options&quot;: [&quot;12h&quot;, &quot;24h&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Behavior&quot;}, &quot;homeStyle&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;icons&quot;, &quot;options&quot;: [&quot;icons&quot;, &quot;icons and words&quot;, &quot;words&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Home menu&quot;}}">
+const HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS'];
+const HEADER_H = 60;
+const ROW_H = 135;  // four rows fill the screen; the rest scroll into view
+const MENU_VIEW_H = 532;  // 600px panel, less its 3px borders (border-box), less the 62px header
+
+// Typeface: the Inkplate firmware draws the built-in Adafruit GFX bitmap font —
+// a 5x7 glyph in a 6x8 cell, so the advance is 0.75em and font-size 8N maps to
+// textSize N. VT323 stands in for it here; its natural advance is 0.4em, so the
+// root carries to put every glyph back on the device cell.
+// (An earlier build spaced every glyph out to the full 6px cell; it read as
+// too loose on screen, so the spacing is now a light 0.05em optical nudge.)
+// GFX has no bold face — the firmware fakes it by drawing twice one pixel apart,
+// which is what the synthesized 600/700 weights below stand for.
+
+// Type scale. GFX only draws integer multiples of its 8px cell, so the scale
+// is built from those multiples and nothing else, the way the Macintosh had a
+// handful of fixed bitmap sizes instead of a continuous range:
+//   18px — secondary: timestamps, previews, field labels, hints. Off the cell
+//     grid on purpose; the firmware will round it to textSize 2 (16px).
+//   24px (textSize 3) — system: titles, row names, status bar, prose, buttons
+//   48px (textSize 6) — display: home menu, call names, dial buffer
+//   64px (textSize 8) — the lock clock, the one largest thing on the phone
+// 8px (textSize 1) is legible on the panel but is not used: where it fit, the
+// secondary size fit too, so nothing on screen is smaller than that.
+
+// Home menu icons are pixelarticons (MIT, Gerrit Halfmann), drawn on a true
+// 24x24 pixel grid at 1px outline weight, which is what a 1-bit panel can
+// print cleanly. No icon assets exist in the firmware yet — the repo backlog
+// still lists "Bitmap icon system (1-bit, Adafruit GFX byte arrays)" as open —
+// so these are ahead of the device and will need converting to GFX byte arrays.
+
+// Header controls. Every list screen carries the same three-part header: back
+// on the left, the screen name centered, and the one additive action on the
+// right — + for new message on TEXT, + for new contact on CONTACTS. Each control
+// is a 38x34 hit box that inverts when selected, so the highlight reads as a
+// filled block rather than a tinted glyph. Arrow up from the first row moves
+// onto the header; left and right move between the two controls. Additive
+// actions never appear as list rows.
+
+// Payload limits enforced by kyphone_os.py — the design honors them so long
+// names and long previews are designed for rather than discovered on device.
+const LIMIT = { name: 10, preview: 44, composeTo: 40, composeMsg: 60, threads: 7 };
+
+const initialTexts = [
+  { id: 1, name: 'Pip', unread: true, messages: [
+    { who: 'them', text: 'you close?', time: '6:52 PM' },
+    { who: 'me', text: 'yeah leaving now', time: '6:53 PM' },
+    { who: 'them', text: 'omw, 5 min', time: '6:57 PM' },
+  ]},
+  { id: 2, name: 'Therapist', unread: false, messages: [
+    { who: 'me', text: 'Can we do Thursday instead?', time: '2:10 PM' },
+    { who: 'them', text: 'See you Thursday at 3.', time: '2:14 PM' },
+  ]},
+  { id: 3, name: 'Bestie', unread: true, messages: [
+    { who: 'them', text: 'STOP EVERYTHING. call me now', time: 'Yesterday' },
+  ]},
+  { id: 4, name: 'Mom', unread: false, messages: [
+    { who: 'them', text: 'Did you eat today?', time: 'Tuesday' },
+    { who: 'me', text: 'yes mom', time: 'Tuesday' },
+  ]},
+  { id: 5, name: 'Jordan', unread: false, messages: [
+    { who: 'me', text: 'sent', time: 'Monday' },
+    { who: 'them', text: 'np', time: 'Monday' },
+  ]},
+];
+
+const initialCalls = [
+  { id: 1, name: 'Pip', tag: 'OUT', duration: '12:04', time: 'Today 4:03 PM' },
+  { id: 2, name: 'Unknown', tag: 'MISS', duration: '', time: 'Today 11:47 AM' },
+  { id: 3, name: 'Mom', tag: 'IN', duration: '3:12', time: 'Yesterday' },
+  { id: 4, name: 'Therapist', tag: 'OUT', duration: '22:41', time: 'Monday' },
+];
+
+const QUICK_DIAL = ['Pip', 'Mom', 'Bestie', 'Therapist'];
+
+const CONTACTS = [
+  { first: 'Bestie', last: '', number: '(917) 555-0142' },
+  { first: 'Jordan', last: 'Reyes', number: '(646) 555-0118' },
+  { first: 'Mom', last: '', number: '(203) 555-0187' },
+  { first: 'Pip', last: 'Okonkwo', number: '(917) 555-0101' },
+  { first: 'Therapist', last: '', number: '(212) 555-0199' },
+];
+const dispName = (c) => (c.first + ' ' + c.last).trim();
+const matchName = (c, n) => dispName(c) === n || c.first === n;
+const EDIT_FIELDS = ['first', 'last', 'number'];
+
+// Matches the QUOTES list in kyphone_os.py verbatim.
+const QUOTES = [
+  'Smile, breathe, and go slowly.',
+  'Because you are alive, everything is possible.',
+  'The most precious gift we can offer others is our presence.',
+  'Life can be found only in the present moment.',
+  'Walk as if you are kissing the Earth with your feet.',
+  'Our own life has to be our message.',
+  'Drink your tea slowly and reverently.',
+  'There is no path to peace — peace is the path.',
+  'Letting go gives us freedom, and freedom is the only condition for happiness.',
+  'We are more than our pain.',
+];
+
+// An unbuilt feature is a stop alert, so each one says what happened, why it
+// happened, and what the user can do instead, rather than only "COMING SOON".
+const STUB_INFO = {
+  READ: { title: 'READ', body: 'READ CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO BOOKS ARE ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.' },
+  LISTEN: { title: 'LISTEN', body: 'LISTEN CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO AUDIO IS ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.' },
+  NEWCONTACT: { title: 'NEW CONTACT', body: 'A CONTACT CANNOT BE SAVED YET. THE PHONE HAS ROOM TO STORE ONE, BUT THIS SCREEN IS NOT BUILT. TYPE THE NUMBER INTO THE TO FIELD FOR NOW.' },
+};
+
+const WASD = { q: 'Escape', w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight' };
+const TYPING_SCREENS = ['thread', 'compose', 'contacts_pick'];
+
+class Component extends DCLogic {
+  state = {
+    screen: 'lock',
+    quoteIndex: 0,
+    homeIndex: 0,
+    texts: initialTexts,
+    textsIndex: 0,
+    textsHeaderSel: 'back',
+    threadId: null,
+    threadDraft: '',
+    threadHeaderSel: null,
+    composeTo: '',
+    composeMsg: '',
+    composeToActive: true,
+    composeHeaderSel: null,
+    composePlusSel: false,
+    composeSendSel: false,
+    contactsQuery: '',
+    contactsIndex: 0,
+    contactsHeaderSel: 'back',
+    stubReturn: 'home',
+    calls: initialCalls,
+    callsIndex: 0,
+    dialBuffer: '',
+    dialQuickIndex: -1,
+    callName: '',
+    callTimer: 0,
+    stubKey: null,
+    confirmSel: 'keep',
+    contacts: CONTACTS,
+    contactFor: null,
+    contactSel: 'call',
+    contactReturn: 'thread',
+    contactsReturn: 'compose',
+    editFirst: '',
+    editLast: '',
+    editNumber: '',
+    editIndex: 0,
+    editCancelSel: false,
+    now: new Date(),
+  };
+
+  componentDidMount() {
+    this._onKey = (e) => this.handleKey(e);
+    window.addEventListener('keydown', this._onKey);
+    this._clock = setInterval(() => this.setState({ now: new Date() }), 15000);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this._onKey);
+    clearInterval(this._clock);
+    clearInterval(this._callInterval);
+  }
+
+  startCallTimer() {
+    clearInterval(this._callInterval);
+    this.setState({ callTimer: 0 });
+    this._callInterval = setInterval(() => {
+      this.setState((s) => ({ callTimer: s.callTimer + 1 }));
+    }, 1000);
+  }
+
+  stopCallTimer() {
+    clearInterval(this._callInterval);
+  }
+
+  isTypingChar(e) {
+    return e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+  }
+
+  handleKey(e) {
+    const s = this.state;
+    const preventNavKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'Backspace', 'Tab'];
+    if (preventNavKeys.includes(e.key)) e.preventDefault();
+
+    // Q as back and WASD as the arrows, except where they are real typed characters.
+    let key = e.key;
+    if (!TYPING_SCREENS.includes(s.screen) && key.length === 1) {
+      const mapped = WASD[key.toLowerCase()];
+      if (mapped) key = mapped;
+    }
+
+    if (s.screen === 'lock') {
+      this.setState({ screen: 'home', homeIndex: 0 });
+      return;
+    }
+
+    if (s.screen === 'home') {
+      if (key === 'ArrowUp' || key === 'ArrowLeft') this.setState((s) => ({ homeIndex: Math.max(-1, s.homeIndex - 1) }));
+      else if (key === 'ArrowDown' || key === 'ArrowRight') this.setState((s) => ({ homeIndex: Math.min(HOME_MENU.length - 1, s.homeIndex + 1) }));
+      else if (key === 'Enter') {
+        if (s.homeIndex === -1) {
+          this.setState((s) => ({ screen: 'lock', quoteIndex: (s.quoteIndex + 1) % QUOTES.length }));
+          return;
+        }
+        const sel = HOME_MENU[s.homeIndex];
+        if (sel === 'TEXT') this.setState({ screen: 'texts_list', textsIndex: 0, textsHeaderSel: 'back' });
+        else if (sel === 'CALL') this.setState({ screen: 'calls_list', callsIndex: 0 });
+        else if (sel === 'CONTACTS') this.setState({ screen: 'contacts_pick', contactsQuery: '', contactsIndex: 0, contactsHeaderSel: 'back', contactsReturn: 'home' });
+        else this.setState({ screen: 'stub', stubKey: sel, stubReturn: 'home' });
+      } else if (key === 'i') {
+        this.setState({ screen: 'incoming', callName: 'Mom' });
+      } else if (key === 'Escape') {
+        this.setState((s) => ({ screen: 'lock', quoteIndex: (s.quoteIndex + 1) % QUOTES.length }));
+      }
+      return;
+    }
+
+    if (s.screen === 'stub') {
+      if (key === 'Escape' || key === 'Enter') this.setState({ screen: s.stubReturn || 'home' });
+      return;
+    }
+
+    if (s.screen === 'confirm_discard') {
+      if (key === 'ArrowLeft') this.setState({ confirmSel: 'discard' });
+      else if (key === 'ArrowRight') this.setState({ confirmSel: 'keep' });
+      else if (key === 'Escape') this.setState({ screen: 'compose', confirmSel: 'keep' });
+      else if (key === 'Enter') {
+        if (s.confirmSel === 'discard') this.setState({ screen: 'texts_list', composeTo: '', composeMsg: '', composeHeaderSel: null, confirmSel: 'keep' });
+        else this.setState({ screen: 'compose', confirmSel: 'keep' });
+      }
+      return;
+    }
+
+    if (s.screen === 'texts_list') {
+      if (key === 'ArrowDown') {
+        if (s.textsIndex === -1) this.setState({ textsIndex: 0 });
+        else this.setState((s) => ({ textsIndex: Math.min(s.texts.length - 1, s.textsIndex + 1) }));
+      } else if (key === 'ArrowUp') {
+        if (s.textsIndex === 0) this.setState({ textsIndex: -1, textsHeaderSel: 'back' });
+        else if (s.textsIndex > 0) this.setState((s) => ({ textsIndex: s.textsIndex - 1 }));
+      } else if (key === 'ArrowLeft' && s.textsIndex === -1) {
+        this.setState({ textsHeaderSel: 'back' });
+      } else if (key === 'ArrowRight' && s.textsIndex === -1) {
+        this.setState({ textsHeaderSel: 'plus' });
+      } else if (key === 'Enter') {
+        if (s.textsIndex === -1) {
+          if (s.textsHeaderSel === 'back') this.setState({ screen: 'home', homeIndex: 0 });
+          else this.openCompose();
+          return;
+        }
+        const t = s.texts[s.textsIndex];
+        this.setState((s) => ({
+          screen: 'thread',
+          threadId: t.id,
+          threadDraft: '',
+          threadHeaderSel: null,
+          texts: s.texts.map((x) => (x.id === t.id ? { ...x, unread: false } : x)),
+        }));
+      } else if (key === '+') {
+        this.openCompose();
+      } else if (key === 'Escape' || key === 'Backspace') {
+        this.setState({ screen: 'home', homeIndex: 0 });
+      }
+      return;
+    }
+
+    if (s.screen === 'thread') {
+      const hdr = s.threadHeaderSel;
+      const openThread = s.texts.find((t) => t.id === s.threadId);
+      const threadName = openThread ? openThread.name : '';
+      if (key === 'Escape') {
+        this.setState({ screen: 'texts_list', threadHeaderSel: null });
+      } else if (!hdr && key === 'ArrowUp') {
+        this.setState({ threadHeaderSel: 'back' });
+      } else if (hdr && key === 'ArrowDown') {
+        this.setState({ threadHeaderSel: null });
+      } else if (hdr && key === 'ArrowRight') {
+        this.setState({ threadHeaderSel: 'info' });
+      } else if (hdr && key === 'ArrowLeft') {
+        this.setState({ threadHeaderSel: 'back' });
+      } else if (hdr && key === 'Enter') {
+        // Every control that can be reached does something: info has no page
+        // yet, so it reports that rather than silently doing nothing.
+        if (hdr === 'back') this.setState({ screen: 'texts_list', threadHeaderSel: null });
+        else this.setState({ screen: 'contact', contactFor: threadName, contactSel: 'call', contactReturn: 'thread' });
+      } else if (!hdr && key === 'Enter') {
+        if (!s.threadDraft.trim()) return;
+        this.setState((s) => ({
+          texts: s.texts.map((t) => t.id === s.threadId
+            ? { ...t, messages: [...t.messages, { who: 'me', text: s.threadDraft, time: 'Just now' }] }
+            : t),
+          threadDraft: '',
+        }));
+      } else if (!hdr && key === 'Backspace') {
+        this.setState((s) => ({ threadDraft: s.threadDraft.slice(0, -1) }));
+      } else if (!hdr && this.isTypingChar(e)) {
+        this.setState((s) => ({ threadDraft: s.threadDraft + e.key }));
+      }
+      return;
+    }
+
+    if (s.screen === 'contact') {
+      const sel = s.contactSel;
+      if (key === 'Escape') this.setState({ screen: s.contactReturn });
+      else if (key === 'ArrowUp') this.setState({ contactSel: sel === 'text' ? 'edit' : 'back' });
+      else if (key === 'ArrowDown') this.setState({ contactSel: sel === 'edit' ? 'text' : 'call' });
+      else if (key === 'ArrowLeft') this.setState({ contactSel: sel === 'edit' ? 'back' : 'call' });
+      else if (key === 'ArrowRight') this.setState({ contactSel: sel === 'back' ? 'edit' : 'text' });
+      else if (key === 'Enter') {
+        if (sel === 'back') this.setState({ screen: s.contactReturn });
+        else if (sel === 'text') this.openTextFor(s.contactFor);
+        else if (sel === 'call') this.setState({ screen: 'outgoing', callName: s.contactFor });
+        else this.openContactEdit();
+      }
+      return;
+    }
+
+    if (s.screen === 'contact_edit') {
+      if (key === 'Escape') { this.setState({ screen: 'contact', editCancelSel: false }); return; }
+      if (key === 'ArrowUp') this.setState((s) => ({ editIndex: Math.max(-1, s.editIndex - 1) }));
+      else if (key === 'ArrowDown') this.setState((s) => ({ editIndex: Math.min(EDIT_FIELDS.length, s.editIndex + 1) }));
+      else if (key === 'Enter') {
+        if (s.editIndex === -1) this.setState({ screen: 'contact' });
+        else if (s.editIndex === EDIT_FIELDS.length) this.saveContactEdit();
+        else this.setState((s) => ({ editIndex: s.editIndex + 1 }));
+      } else if (key === 'Backspace') {
+        const key2 = EDIT_FIELDS[s.editIndex];
+        if (key2 === 'first') this.setState((s) => ({ editFirst: s.editFirst.slice(0, -1) }));
+        else if (key2 === 'last') this.setState((s) => ({ editLast: s.editLast.slice(0, -1) }));
+        else if (key2 === 'number') this.setState((s) => ({ editNumber: s.editNumber.slice(0, -1) }));
+      } else if (this.isTypingChar(e)) {
+        const field = EDIT_FIELDS[s.editIndex];
+        if (field === 'first') this.setState((s) => ({ editFirst: (s.editFirst + e.key).slice(0, LIMIT.name) }));
+        else if (field === 'last') this.setState((s) => ({ editLast: (s.editLast + e.key).slice(0, LIMIT.name) }));
+        else if (field === 'number' && /^[0-9()+\-. ]$/.test(e.key)) this.setState((s) => ({ editNumber: (s.editNumber + e.key).slice(0, 18) }));
+      }
+      return;
+    }
+
+    if (s.screen === 'compose') {
+      const hdr = s.composeHeaderSel;
+      // Leaving compose is only irreversible if something was typed, so the
+      // warning appears then and not on an empty form.
+      const hasDraft = !!(s.composeTo.trim() || s.composeMsg.trim());
+      const leave = () => hasDraft
+        ? this.setState({ screen: 'confirm_discard', confirmSel: 'keep', composeHeaderSel: null })
+        : this.setState({ screen: 'texts_list', composeHeaderSel: null });
+      if (key === 'Escape') {
+        leave();
+      } else if (!hdr && key === 'ArrowUp') {
+        this.setState({ composeHeaderSel: 'x' });
+      } else if (hdr && key === 'ArrowDown') {
+        this.setState({ composeHeaderSel: null });
+      } else if (hdr && key === 'Enter') {
+        leave();
+      } else if (!hdr && s.composeToActive && !s.composeTo && key === 'ArrowRight') {
+        this.setState({ composePlusSel: true });
+      } else if (!hdr && s.composePlusSel && key === 'ArrowLeft') {
+        this.setState({ composePlusSel: false });
+      } else if (!hdr && s.composePlusSel && key === 'Enter') {
+        this.setState({ screen: 'contacts_pick', contactsQuery: '', contactsIndex: 0, composePlusSel: false });
+      } else if (!hdr && !s.composeToActive && !s.composeSendSel && key === 'ArrowDown') {
+        this.setState({ composeSendSel: true });
+      } else if (!hdr && s.composeSendSel && key === 'ArrowUp') {
+        this.setState({ composeSendSel: false });
+      } else if (!hdr && s.composeSendSel && key === 'Enter') {
+        this.sendCompose();
+      } else if (!hdr && key === 'Tab') {
+        this.setState((s) => ({ composeToActive: !s.composeToActive }));
+      } else if (!hdr && key === 'Enter') {
+        if (s.composeToActive) {
+          if (s.composeTo.trim()) this.setState({ composeToActive: false });
+          else this.setState({ screen: 'contacts_pick', contactsQuery: '', contactsIndex: 0 });
+        } else {
+          this.sendCompose();
+        }
+      } else if (!hdr && key === 'Backspace') {
+        if (s.composeToActive) this.setState((s) => ({ composeTo: s.composeTo.slice(0, -1) }));
+        else this.setState((s) => ({ composeMsg: s.composeMsg.slice(0, -1) }));
+      } else if (!hdr && this.isTypingChar(e)) {
+        if (s.composeToActive) this.setState((s) => ({ composeTo: (s.composeTo + e.key).slice(0, LIMIT.composeTo), composeSendSel: false }));
+        else this.setState((s) => ({ composeMsg: (s.composeMsg + e.key).slice(0, LIMIT.composeMsg), composeSendSel: false }));
+      }
+      return;
+    }
+
+    if (s.screen === 'contacts_pick') {
+      const filtered = s.contacts.filter((c) => dispName(c).toLowerCase().startsWith(s.contactsQuery.toLowerCase()));
+      const onHeader = s.contactsIndex === -1;
+      const leaveContacts = () => s.contactsReturn === 'home'
+        ? this.setState({ screen: 'home', homeIndex: HOME_MENU.indexOf('CONTACTS') })
+        : this.setState({ screen: 'compose', composeToActive: true });
+      if (key === 'Escape') leaveContacts();
+      else if (key === 'ArrowUp') this.setState((s) => ({ contactsIndex: Math.max(-1, s.contactsIndex - 1) }));
+      else if (key === 'ArrowDown') this.setState((s) => ({ contactsIndex: Math.min(filtered.length - 1, s.contactsIndex + 1) }));
+      else if (onHeader && key === 'ArrowLeft') this.setState({ contactsHeaderSel: 'back' });
+      else if (onHeader && key === 'ArrowRight') this.setState({ contactsHeaderSel: 'plus' });
+      else if (key === 'Enter') {
+        if (onHeader) {
+          if (s.contactsHeaderSel === 'back') leaveContacts();
+          else this.setState({ screen: 'stub', stubKey: 'NEWCONTACT', stubReturn: 'contacts_pick' });
+        } else if (s.contactsIndex < filtered.length) {
+          const picked = filtered[s.contactsIndex];
+          if (s.contactsReturn === 'home') this.setState({ screen: 'contact', contactFor: dispName(picked), contactSel: 'call', contactReturn: 'contacts_pick' });
+          else this.setState({ screen: 'compose', composeTo: dispName(picked), composeToActive: false });
+        }
+      } else if (key === 'Backspace') {
+        this.setState((s) => ({ contactsQuery: s.contactsQuery.slice(0, -1), contactsIndex: 0 }));
+      } else if (this.isTypingChar(e)) {
+        this.setState((s) => ({ contactsQuery: s.contactsQuery + e.key, contactsIndex: 0 }));
+      }
+      return;
+    }
+
+    if (s.screen === 'calls_list') {
+      const total = s.calls.length + 1;
+      if (key === 'ArrowUp') this.setState((s) => ({ callsIndex: Math.max(-1, s.callsIndex - 1) }));
+      else if (key === 'ArrowDown') this.setState((s) => ({ callsIndex: Math.min(total - 1, s.callsIndex + 1) }));
+      else if (key === 'Enter') {
+        if (s.callsIndex === -1) this.setState({ screen: 'home', homeIndex: 0 });
+        else if (s.callsIndex === 0) this.setState({ screen: 'dial', dialBuffer: '', dialQuickIndex: -1 });
+        else this.setState({ screen: 'outgoing', callName: s.calls[s.callsIndex - 1].name });
+      } else if (key === 'Escape' || key === 'Backspace') {
+        this.setState({ screen: 'home', homeIndex: 0 });
+      }
+      return;
+    }
+
+    if (s.screen === 'dial') {
+      if (key === 'Escape') this.setState({ screen: 'calls_list' });
+      else if (key === 'ArrowDown') this.setState((s) => ({ dialQuickIndex: Math.min(QUICK_DIAL.length - 1, s.dialQuickIndex + 1) }));
+      else if (key === 'ArrowUp') this.setState((s) => ({ dialQuickIndex: Math.max(-1, s.dialQuickIndex - 1) }));
+      else if (key === 'Enter') {
+        if (s.dialQuickIndex >= 0) this.setState({ screen: 'outgoing', callName: QUICK_DIAL[s.dialQuickIndex] });
+        else if (s.dialBuffer.trim()) this.setState({ screen: 'outgoing', callName: s.dialBuffer });
+      } else if (key === 'Backspace' && s.dialQuickIndex === -1) {
+        this.setState((s) => ({ dialBuffer: s.dialBuffer.slice(0, -1) }));
+      } else if (s.dialQuickIndex === -1 && /^[0-9#*]$/.test(e.key)) {
+        this.setState((s) => ({ dialBuffer: s.dialBuffer + e.key }));
+      }
+      return;
+    }
+
+    if (s.screen === 'outgoing') {
+      if (key === 'Escape') this.setState({ screen: 'calls_list' });
+      else if (key === 'Enter') {
+        this.startCallTimer();
+        this.setState({ screen: 'in_call' });
+      }
+      return;
+    }
+
+    if (s.screen === 'incoming') {
+      if (key === 'Escape') this.setState({ screen: 'home', homeIndex: 0 });
+      else if (key === 'Enter') {
+        this.startCallTimer();
+        this.setState({ screen: 'in_call' });
+      }
+      return;
+    }
+
+    if (s.screen === 'in_call') {
+      if (key === 'Escape') {
+        this.stopCallTimer();
+        this.setState({ screen: 'calls_list' });
+      }
+      return;
+    }
+  }
+
+  openTextFor(name) {
+    const first = (name || '').split(' ')[0];
+    const t = this.state.texts.find((t) => t.name === first || t.name === name);
+    if (t) this.setState({ screen: 'thread', threadId: t.id, threadDraft: '', threadHeaderSel: null });
+    else this.setState({ screen: 'compose', composeTo: name, composeMsg: '', composeToActive: false, composeHeaderSel: null, composePlusSel: false, composeSendSel: false });
+  }
+
+  openContactEdit() {
+    const s = this.state;
+    const c = s.contacts.find((c) => matchName(c, s.contactFor)) || { first: s.contactFor || '', last: '', number: '' };
+    this.setState({ screen: 'contact_edit', editFirst: c.first, editLast: c.last, editNumber: c.number, editIndex: 0 });
+  }
+
+  saveContactEdit() {
+    const s = this.state;
+    const next = { first: s.editFirst.trim(), last: s.editLast.trim(), number: s.editNumber.trim() };
+    if (!next.first && !next.last) return;
+    const name = dispName(next);
+    const exists = s.contacts.some((c) => matchName(c, s.contactFor));
+    this.setState({
+      contacts: exists
+        ? s.contacts.map((c) => (matchName(c, s.contactFor) ? next : c))
+        : [...s.contacts, next],
+      texts: s.texts.map((t) => (t.name === s.contactFor ? { ...t, name: next.first } : t)),
+      contactFor: name,
+      screen: 'contact',
+      contactSel: 'edit',
+    });
+  }
+
+  sendCompose() {
+    const s = this.state;
+    if (!s.composeMsg.trim() || !s.composeTo.trim()) return;
+    const newId = Math.max(0, ...s.texts.map((t) => t.id)) + 1;
+    const name = s.composeTo;
+    this.setState((s) => ({
+      texts: [{ id: newId, name, unread: false, messages: [{ who: 'me', text: s.composeMsg, time: 'Just now' }] }, ...s.texts],
+      screen: 'thread',
+      threadId: newId,
+      threadDraft: '',
+      threadHeaderSel: null,
+      composeSendSel: false,
+    }));
+  }
+
+  openCompose() {
+    this.setState({ contactsReturn: 'compose' });
+    this.setState({ screen: 'compose', composeTo: '', composeMsg: '', composeToActive: true, composeHeaderSel: null, composePlusSel: false, composeSendSel: false });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const clockFormat = this.props.clockFormat ?? '12h';
+    const homeStyle = this.props.homeStyle ?? 'icons';
+
+    let hours = s.now.getHours();
+    const minutes = s.now.getMinutes().toString().padStart(2, '0');
+    let clockLabel;
+    if (clockFormat === '24h') {
+      clockLabel = `${hours.toString().padStart(2, '0')}:${minutes}`;
+    } else {
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12 || 12;
+      clockLabel = `${hours}:${minutes} ${ampm}`;
+    }
+    const dateLabel = s.now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase();
+
+    const unreadCount = s.texts.filter((t) => t.unread).length;
+    const headerSelected = s.homeIndex === -1;
+
+    const homeMenu = HOME_MENU.map((label, i) => {
+      const selected = i === s.homeIndex;
+      return {
+        label,
+        top: i * ROW_H,
+        bg: selected ? '#111' : 'transparent',
+        fg: selected ? '#fff' : '#111',
+        showNum: label === 'TEXT' && unreadCount > 0,
+        isText: label === 'TEXT',
+        isCall: label === 'CALL',
+        isRead: label === 'READ',
+        isListen: label === 'LISTEN',
+        isContacts: label === 'CONTACTS',
+      };
+    });
+
+    const visibleThreads = s.texts.slice(0, LIMIT.threads);
+    const textsRows = visibleThreads.map((t, i) => {
+      const last = t.messages[t.messages.length - 1];
+      const selected = i === s.textsIndex;
+      const preview = (last.who === 'me' ? 'You: ' : '') + last.text;
+      return {
+        top: 44 + i * 88,
+        name: t.name.slice(0, LIMIT.name),
+        preview: preview.slice(0, LIMIT.preview),
+        time: last.time,
+        weight: t.unread ? 700 : 500,
+        bg: selected ? '#111' : 'transparent',
+        fg: selected ? '#fff' : '#111',
+      };
+    });
+
+    const thread = s.texts.find((t) => t.id === s.threadId);
+    const threadName = thread ? thread.name : '';
+    const threadMessages = thread ? thread.messages.map((m) => ({
+      text: m.text,
+      time: m.time,
+      align: m.who === 'me' ? 'flex-end' : 'flex-start',
+      bg: m.who === 'me' ? '#111' : '#fff',
+      fg: m.who === 'me' ? '#fff' : '#111',
+      showName: m.who !== 'me',
+      name: thread.name.toUpperCase(),
+      tailRight: m.who === 'me',
+      tailLeft: m.who !== 'me',
+    })) : [];
+
+    const callsRows = [
+      { top: 44, name: 'DIAL A NUMBER', tag: 'NEW', time: '', duration: '', bg: s.callsIndex === 0 ? '#111' : 'transparent', fg: s.callsIndex === 0 ? '#fff' : '#111' },
+      ...s.calls.map((c, i) => {
+        const selected = s.callsIndex === i + 1;
+        return {
+          top: 44 + (i + 1) * 76,
+          name: c.name,
+          tag: c.tag,
+          time: c.time,
+          duration: c.duration,
+          bg: selected ? '#111' : 'transparent',
+          fg: selected ? '#fff' : '#111',
+        };
+      }),
+    ];
+
+    const dialQuick = QUICK_DIAL.map((name, i) => ({
+      name,
+      top: 210 + i * 56,
+      bg: s.dialQuickIndex === i ? '#111' : 'transparent',
+      fg: s.dialQuickIndex === i ? '#fff' : '#111',
+    }));
+
+    const contactsFiltered = s.contacts.filter((c) => dispName(c).toLowerCase().startsWith(s.contactsQuery.toLowerCase()));
+    const contactsRows = contactsFiltered.map((c, i) => {
+      const selected = s.contactsIndex === i;
+      return {
+        top: 44 + i * 64,
+        name: dispName(c),
+        number: c.number,
+        bg: selected ? '#111' : 'transparent',
+        fg: selected ? '#fff' : '#111',
+      };
+    });
+
+    const contactRec = s.contacts.find((c) => matchName(c, s.contactFor));
+    const stub = s.stubKey ? STUB_INFO[s.stubKey] : null;
+    const callMin = Math.floor(s.callTimer / 60).toString().padStart(2, '0');
+    const callSec = (s.callTimer % 60).toString().padStart(2, '0');
+
+    const headerSel = s.textsIndex === -1 ? s.textsHeaderSel : null;
+    const threadHdr = s.threadHeaderSel;
+
+    return {
+      homeShowIcon: homeStyle !== 'words',
+      homeShowLabel: homeStyle !== 'icons',
+      menuShift: -Math.max(0, (Math.max(0, s.homeIndex) + 1) * ROW_H - MENU_VIEW_H) + 'px',
+      menuMoreBelow: HOME_MENU.length > 4 && s.homeIndex <= 3,
+      battPct: 82,
+      battFill: '82%',
+      signalGlyph: '\u25cf\u25cf\u25cf\u25cb',
+      homeHeaderBg: headerSelected ? '#111' : 'transparent',
+      homeHeaderFg: headerSelected ? '#fff' : '#111',
+      backBtnBg: headerSel === 'back' ? '#111' : 'transparent',
+      backBtnFg: headerSel === 'back' ? '#fff' : '#111',
+      composeBtnBg: headerSel === 'plus' ? '#111' : 'transparent',
+      composeBtnFg: headerSel === 'plus' ? '#fff' : '#111',
+      threadBackBg: threadHdr === 'back' ? '#111' : 'transparent',
+      threadBackFg: threadHdr === 'back' ? '#fff' : '#111',
+      threadInfoBg: threadHdr === 'info' ? '#111' : 'transparent',
+      threadInfoFg: threadHdr === 'info' ? '#fff' : '#111',
+      composeXBg: s.composeHeaderSel === 'x' ? '#111' : 'transparent',
+      composeXFg: s.composeHeaderSel === 'x' ? '#fff' : '#111',
+      isLock: s.screen === 'lock',
+      quoteText: QUOTES[s.quoteIndex],
+      isHome: s.screen === 'home',
+      isStub: s.screen === 'stub',
+      isTextsList: s.screen === 'texts_list',
+      isThread: s.screen === 'thread',
+      isContact: s.screen === 'contact',
+      contactName: contactRec ? dispName(contactRec) : (s.contactFor || ''),
+      contactNumber: (contactRec || {}).number || 'NO NUMBER SAVED',
+      contactBackBg: s.contactSel === 'back' ? '#111' : 'transparent',
+      contactBackFg: s.contactSel === 'back' ? '#fff' : '#111',
+      contactCallBg: s.contactSel === 'call' ? '#111' : 'transparent',
+      contactCallFg: s.contactSel === 'call' ? '#fff' : '#111',
+      contactTextBg: s.contactSel === 'text' ? '#111' : 'transparent',
+      contactTextFg: s.contactSel === 'text' ? '#fff' : '#111',
+      contactEditBg: s.contactSel === 'edit' ? '#111' : 'transparent',
+      contactEditFg: s.contactSel === 'edit' ? '#fff' : '#111',
+      isContactEdit: s.screen === 'contact_edit',
+      editFirst: s.editFirst,
+      editLast: s.editLast,
+      editNumber: s.editNumber,
+      editFirstCursor: s.editIndex === 0,
+      editLastCursor: s.editIndex === 1,
+      editNumberCursor: s.editIndex === 2,
+      editFirstLabelBg: s.editIndex === 0 ? '#111' : 'transparent',
+      editFirstLabelFg: s.editIndex === 0 ? '#fff' : '#111',
+      editLastLabelBg: s.editIndex === 1 ? '#111' : 'transparent',
+      editLastLabelFg: s.editIndex === 1 ? '#fff' : '#111',
+      editNumberLabelBg: s.editIndex === 2 ? '#111' : 'transparent',
+      editNumberLabelFg: s.editIndex === 2 ? '#fff' : '#111',
+      editSaveBg: s.editIndex === EDIT_FIELDS.length ? '#111' : 'transparent',
+      editSaveFg: s.editIndex === EDIT_FIELDS.length ? '#fff' : '#111',
+      editCancelBg: s.editIndex === -1 ? '#111' : 'transparent',
+      editCancelFg: s.editIndex === -1 ? '#fff' : '#111',
+      isCompose: s.screen === 'compose',
+      isConfirmDiscard: s.screen === 'confirm_discard',
+      discardBtnBg: s.confirmSel === 'discard' ? '#111' : 'transparent',
+      discardBtnFg: s.confirmSel === 'discard' ? '#fff' : '#111',
+      keepBtnBg: s.confirmSel === 'keep' ? '#111' : 'transparent',
+      keepBtnFg: s.confirmSel === 'keep' ? '#fff' : '#111',
+      composeToLabelBg: s.composeToActive ? '#111' : 'transparent',
+      composeToLabelFg: s.composeToActive ? '#fff' : '#111',
+      composeMsgLabelBg: s.composeToActive ? 'transparent' : '#111',
+      composeMsgLabelFg: s.composeToActive ? '#111' : '#fff',
+      isContactsPick: s.screen === 'contacts_pick',
+      composeToEmptyHint: s.composeToActive && !s.composeTo,
+      composePlusBg: s.composePlusSel ? '#111' : 'transparent',
+      composePlusFg: s.composePlusSel ? '#fff' : '#111',
+      contactsRows,
+      contactsQuery: s.contactsQuery,
+      contactsBackBg: s.contactsIndex === -1 && s.contactsHeaderSel === 'back' ? '#111' : 'transparent',
+      contactsBackFg: s.contactsIndex === -1 && s.contactsHeaderSel === 'back' ? '#fff' : '#111',
+      contactsPlusBg: s.contactsIndex === -1 && s.contactsHeaderSel === 'plus' ? '#111' : 'transparent',
+      contactsPlusFg: s.contactsIndex === -1 && s.contactsHeaderSel === 'plus' ? '#fff' : '#111',
+      callsBackBg: s.callsIndex === -1 ? '#111' : 'transparent',
+      callsBackFg: s.callsIndex === -1 ? '#fff' : '#111',
+      isCallsList: s.screen === 'calls_list',
+      isDial: s.screen === 'dial',
+      isOutgoing: s.screen === 'outgoing',
+      isIncoming: s.screen === 'incoming',
+      isInCall: s.screen === 'in_call',
+      clockLabel,
+      dateLabel,
+      catArt: '   )\\._.,--....,\'``.\n  /,   _.. \\   _\\  (`._ ,.\n `._.-(,_..\'--(,_..\'`-.;.\'',
+      homeMenu,
+      stubTitle: stub ? stub.title : '',
+      stubBody: stub ? stub.body : '',
+      textsRows,
+      threadName,
+      threadMessages,
+      threadDraft: s.threadDraft.slice(-28),
+      composeTo: s.composeTo.slice(-28),
+      composeMsg: s.composeMsg,
+      composeToActive: s.composeToActive,
+      composeToCursor: s.composeToActive && !s.composePlusSel,
+      composeMsgActive: !s.composeToActive && !s.composeSendSel,
+      composeSendBg: s.composeSendSel ? '#111' : 'transparent',
+      composeSendFg: s.composeSendSel ? '#fff' : '#111',
+      callsRows,
+      dialBuffer: s.dialBuffer,
+      dialQuick,
+      callName: s.callName,
+      callTimer: `${callMin}:${callSec}`,
+    };
+  }
+}
+</script>
+</body>
+</html>

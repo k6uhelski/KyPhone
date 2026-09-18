@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Spline+Sans+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: oklch(0.93 0.004 95); }
+    doc-page:not(:defined) { visibility: hidden; }
+    a { color: #1e1e1e; }
+    a:hover { color: #1e1e1e; }
+  </style>
+  <script src="./doc-page.js"></script>
+</helmet>
+
+<doc-page margin="0.85in">
+  <div style="font-family:'Spline Sans Mono', ui-monospace, monospace; color:#1e1e1e; font-size:10.5pt; line-height:1.6;">
+
+    <div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:2px solid #1e1e1e; padding-bottom:10px;">
+      <span style="font-size:9pt; letter-spacing:0.18em; font-weight:700;">KYPHONE OS 0.2.1</span>
+      <span style="font-size:9pt;">Design specification · September 2026</span>
+    </div>
+
+    <h1 style="font-size:26pt; font-weight:700; line-height:1.1; margin:34px 0 10px 0; text-wrap:balance;">A minimal phone prototype designed to get out of the way.</h1>
+    <p style="font-size:12pt; margin:0 0 30px 0; max-width:34em;">OS 0.2.1 covers the full interface for the Radxa Rock 3A driving an Inkplate 4 over SPI: a 600&times;600 1-bit panel, a hardware keyboard, and no touch input. It revises 0.2 against emulator testing, which found nine places where the interface had no defined behavior. Each one is now specified.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">What changed since 0.2</h2>
+    <ul style="margin:0 0 6px 0; padding-left:1.3em;">
+      <li>Every list is windowed to a stated row count, so no row is unreachable and the selection is always visible.</li>
+      <li>Sent messages appear in the thread with three states: sending, sent, and not sent, the last with a retry.</li>
+      <li>The message composer wraps to three lines and shows the end of a long draft; Message length is uncapped.</li>
+      <li>An unsaved number reads as a formatted number rather than a truncated one, and its contact page offers SAVE.</li>
+      <li>A new-contact screen replaced the alert, with four validation messages.</li>
+      <li>A contact can be deleted, with a confirmation.</li>
+      <li>CONTACTS moved to third on the home menu, so it is on screen without scrolling.</li>
+      <li>Undrawable characters are rejected at the keystroke, the rule now binds the interface's own labels too, and no control is a silent no-op.</li>
+    </ul>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">The payload budget</h2>
+    <p style="margin:0 0 10px 0;">Every screen is drawn from one SPI message of at most 253 characters. The firmware draws what arrives and nothing else, so a list screen can carry only as many rows as fit in 253 characters, however many fit visually. Lists are therefore windowed: only the visible rows are sent, and the window re-sends when the selection moves.</p>
+    <table style="width:100%; border-collapse:collapse; font-size:10pt;">
+      <thead>
+        <tr style="border-bottom:1.5px solid #1e1e1e;">
+          <th style="text-align:left; padding:6px 8px 6px 0; font-weight:700;">List</th>
+          <th style="text-align:left; padding:6px 8px; font-weight:700;">Rows</th>
+          <th style="text-align:left; padding:6px 8px; font-weight:700;">Per row</th>
+          <th style="text-align:left; padding:6px 0 6px 8px; font-weight:700;">Payload</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0;">Texts</td><td style="padding:6px 8px;">5</td><td style="padding:6px 8px;">14 name + 24 preview + 8 time + 3 separators = 49</td><td style="padding:6px 0 6px 8px;">245</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0;">Contacts</td><td style="padding:6px 8px;">7</td><td style="padding:6px 8px;">18 name + 14 number + 2 separators = 34</td><td style="padding:6px 0 6px 8px;">238</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0;">Calls</td><td style="padding:6px 8px;">6</td><td style="padding:6px 8px;">14 name + 4 tag + 10 time + 6 duration + 4 separators = 38</td><td style="padding:6px 0 6px 8px;">228</td></tr>
+        <tr><td style="padding:6px 8px 6px 0;">Thread</td><td style="padding:6px 8px;">3 bubbles</td><td style="padding:6px 8px;">up to 160 message + 8 time + state flag</td><td style="padding:6px 0 6px 8px;">&le;&nbsp;253 by message cap</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:9.5pt; margin:10px 0 0 0;">The 24-character preview is a deliberate trade. A 44-character preview costs 69 characters a row and fits only three rows in one payload, which turns the text list into a peephole. Five short previews beat three long ones on a phone whose main screen is the list. The alternative &mdash; three rows, full previews &mdash; is listed as an open question.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Scrolling rule</h2>
+    <p style="margin:0 0 10px 0;">One rule for all four lists. The window follows the selection one row at a time: moving past the bottom visible row shifts the window down by one, moving above the top row shifts it up by one. Nothing pages. On e-ink the whole panel flashes on redraw, and a page jump loses the reader's place in a way a single-row shift does not.</p>
+    <p style="margin:0 0 10px 0;">The selection can never leave the window, so there is always exactly one inverted row on screen. Arrow up from the first row moves to the header; there is nothing above that. Arrow down on the last row does nothing. The window is its own position cue: the selection is always inside it, so a full window with an inverted row short of the bottom edge says there is more below without spending a band on saying so. The texts and call lists therefore carry no footer at all &mdash; the rows run to the bottom edge of the panel. Contacts is the exception: its footer already exists to hold LOOK UP, so it carries the position as <strong>3&nbsp;/&nbsp;14</strong> on the right at no extra cost. There is no maximum stored count; the window is what is bounded, not the list.</p>
+    <p style="margin:0 0 10px 0;">An empty list is a centered two-line message, not a blank screen: a 24px line naming the emptiness and an 18px line saying what to do &mdash; <em>NO CONVERSATIONS</em> over <em>PRESS + TO WRITE THE FIRST MESSAGE</em>. A filter that matches nothing says <em>NO MATCH</em> over <em>NO NAME STARTS WITH THAT. PRESS BACKSPACE TO WIDEN THE SEARCH.</em></p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Message states</h2>
+    <p style="margin:0 0 10px 0;">A message the user sends appears in the thread immediately, right-aligned with a tail on its right edge, and stays there. The fill carries the state, and the label under the bubble names it:</p>
+    <table style="width:100%; border-collapse:collapse; font-size:10pt; margin-bottom:10px;">
+      <thead>
+        <tr style="border-bottom:1.5px solid #1e1e1e;">
+          <th style="text-align:left; padding:6px 8px 6px 0; font-weight:700;">State</th>
+          <th style="text-align:left; padding:6px 8px; font-weight:700;">Bubble</th>
+          <th style="text-align:left; padding:6px 0 6px 8px; font-weight:700;">Label at 18px</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0;">Sending</td><td style="padding:6px 8px;">2px outline, paper fill</td><td style="padding:6px 0 6px 8px;">SENDING...</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0;">Sent</td><td style="padding:6px 8px;">filled with ink, paper text</td><td style="padding:6px 0 6px 8px;">SENT 6:53 PM</td></tr>
+        <tr><td style="padding:6px 8px 6px 0;">Not sent</td><td style="padding:6px 8px;">2px outline, paper fill</td><td style="padding:6px 0 6px 8px;">NOT SENT, in bold</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:0 0 10px 0;">A filled bubble means the message left the phone. An outlined one on the right means it has not, which is why not-sent needs no icon to read as unfinished. Sending and not-sent share a treatment because they share a fact; the label separates them, and sending is transient.</p>
+    <p style="margin:0 0 10px 0;"><strong>Retry.</strong> Arrow up from the composer selects the newest not-sent message rather than jumping to the header: it is the only thing in a transcript worth selecting. The selected bubble gains a second ink line 3px inside its border, drawn within the border box so it never meets the tail, and its label becomes <em>NOT SENT - ENTER TO RETRY</em>. Enter returns it to sending. Arrow up again reaches the header, arrow down returns to the composer. With no not-sent message present, arrow up goes straight to the header as before.</p>
+    <p style="margin:0 0 10px 0;">There is no cellular service in this build, so not sent is the normal outcome and the design is written for it rather than treating it as the error case. A new conversation joins the text list on the first send whether or not it succeeded, and its row preview carries a leading <strong>!</strong> in place of <em>You:</em> while the last outgoing message is unsent.</p>
+    <p style="margin:0 0 10px 0;">The phone has no notion of its own number, so it can never key a thread to itself. A thread is keyed on the other party's number, and nothing in the interface displays or refers to the phone's own number &mdash; there is nothing to filter and nothing to show.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0; break-before:page;">Long text and character limits</h2>
+    <p style="margin:0 0 10px 0;"><strong>Composer.</strong> The thread composer wraps to at most three lines of 24px text and grows upward from the bottom edge: 45px tall at one line, 79px at two, 113px at three, with its 2px rule riding the top of the block and the message area shrinking to match. When the draft is longer than three lines the composer shows the <em>end</em> of it behind a leading <code>...</code>, so the cursor is always visible and the user can always see what they are typing. The device fits 30 characters of 24px text across the 552px composer, so the visible tail is 87 characters.</p>
+    <p style="margin:0 0 10px 0;"><strong>Message length.</strong> Uncapped, and no counter anywhere. 160 characters would be one GSM segment, which only means something once a radio is attached; until then a limit buys nothing and costs the user a sentence. Nothing in the interface counts characters for the user.</p>
+    <p style="margin:0 0 10px 0;"><strong>Bubbles.</strong> A bubble wraps to as many lines as the message needs, at 26 characters a line. The message area is bottom-anchored and shows at most three bubbles, so a long message pushes older ones off the top, and a message longer than the area runs off the top of its own bubble with its newest lines against the composer. That is the rule the transcript already follows: the bottom of the screen is the present. Nothing is truncated inside a bubble &mdash; a message that cannot be read in full is worse than one that pushes an older message off screen.</p>
+    <p style="margin:0 0 10px 0;"><strong>Allowed characters.</strong> Printable ASCII, 32 to 126, less two: <code>|</code> and <code>·</code> are reserved as field separators in the SPI payload. Any other keystroke &mdash; an emoji, a curly quote, a dead key &mdash; is ignored: nothing appears and no alert fires, because a rejected keystroke is not an error worth a screen. Received text is not under our control, so an undrawable character in an incoming message is drawn as <code>?</code>.</p>
+    <p style="margin:0 0 10px 0;"><strong>The rule binds our own labels.</strong> No interface string may use a character the panel cannot draw, which rules out the ellipsis character, the em dash and the middot &mdash; the three a designer reaches for by habit. So: <em>SENDING...</em>, <em>NOT SENT - ENTER TO RETRY</em>, <em>ENTER ACCEPT / ESC DECLINE</em>, and <code>...</code> as the composer's truncation prefix. A label the panel cannot draw is the same defect as a keystroke it cannot draw, and nothing sanitizes a literal. The quote list in <code>kyphone_os.py</code> needs the same pass: one entry carries an em dash today.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Unsaved numbers</h2>
+    <p style="margin:0 0 10px 0;">A number that is not in the address book is displayed formatted, never truncated: <strong>(555) 019-9002</strong>. Ten digits, or eleven beginning with 1, format to that pattern; anything else is shown as typed. The formatted form is 14 characters, which is the name column's width on the texts list and the call list, so two unsaved numbers that share a prefix are never identical on screen.</p>
+    <p style="margin:0 0 10px 0;">The contact page for an unsaved number puts the formatted number in the 48px title slot and <strong>NOT IN CONTACTS</strong> in the 24px line under it. Its action row is CALL, TEXT, SAVE, and the header's right control is empty, since there is nothing to edit yet. SAVE opens NEW CONTACT with the number already in the phone field and the cursor in FIRST NAME.</p>
+    <p style="margin:0 0 10px 0;">A saved contact with no number is the mirror case: the name in the title, <em>NO NUMBER SAVED</em> beneath it, and a single ADD NUMBER button in place of CALL and TEXT, because neither can be performed.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">New contact</h2>
+    <p style="margin:0 0 10px 0;">The new-contact screen is the edit form with blank fields and the title <strong>NEW CONTACT</strong>. It has no DELETE button, which is the only difference between the two. It is reached from the + in the contacts header, and from SAVE on an unsaved number's contact page, which prefills the phone field.</p>
+    <p style="margin:0 0 10px 0;">X or Escape returns to wherever the form was opened from: the contacts list, the contact page, or the compose screen. Saving lands on the new contact's own page, so the user sees what they created. The exception is the compose picker: saving there returns to compose with the new contact in the TO field, because the user was in the middle of writing a message and the contact was a step along the way.</p>
+    <p style="margin:0 0 10px 0;"><strong>Validation.</strong> Four checks, each a stop alert in the existing style &mdash; boxed exclamation, 24px prose, OK bottom right &mdash; titled CONTACT, returning to the form with the offending field selected:</p>
+    <ul style="margin:0 0 10px 0; padding-left:1.3em;">
+      <li><em>A CONTACT NEEDS A FIRST NAME. TYPE ONE IN THE FIRST NAME FIELD, THEN PRESS SAVE.</em></li>
+      <li><em>A CONTACT NEEDS A PHONE NUMBER. TYPE ONE IN THE PHONE NUMBER FIELD, THEN PRESS SAVE.</em></li>
+      <li><em>THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.</em></li>
+      <li><em>THAT NUMBER IS ALREADY SAVED AS PIP OKONKWO. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.</em></li>
+    </ul>
+    <p style="margin:0 0 10px 0;">Last name is optional. The number field accepts digits and <code>+ ( ) - .</code> and spaces while typing, and is stored in the formatted form. Duplicates are detected on the last ten digits, so <em>(917) 555-0101</em> and <em>+1 917 555 0101</em> are the same person.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Deleting a contact</h2>
+    <p style="margin:0 0 10px 0;">DELETE sits at the bottom left of the edit form, as a 2px-bordered button opposite SAVE. It is on the form rather than the contact page because the contact page is where you act on a person and the form is where you change the record; deletion is a change to the record. Arrow left from SAVE reaches it. The alternative &mdash; a third button on the contact page &mdash; is listed as an open question.</p>
+    <p style="margin:0 0 10px 0;">Confirmation uses the discard dialog's layout with its own words: title DELETE CONTACT, body <em>DELETE PIP OKONKWO? THE MESSAGES STAY IN THE TEXT LIST, LABELED WITH THE NUMBER. THE NAME CANNOT BE BROUGHT BACK.</em> The destructive button, DELETE, sits bottom left with a 2px border; the safe button, KEEP CONTACT, sits bottom right with a 3px border and holds the selection when the screen opens.</p>
+    <p style="margin:0 0 10px 0;"><strong>Rule for every confirmation.</strong> The safe choice is the right-hand button, it carries the 3px border, and it is selected when the screen opens. The destructive choice is on the left with a 2px border and is never the default. Escape is the safe choice too.</p>
+    <p style="margin:0 0 10px 0;">Deleting leaves that person's conversations alone. A thread is keyed on the number, so the row simply falls back to the formatted number &mdash; no thread disappears, and nothing is orphaned.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Smaller items</h2>
+    <p style="margin:0 0 10px 0;"><strong>Home menu order.</strong> TEXT, CALL, CONTACTS, READ, LISTEN. Contacts moved to third so it is on screen on first view; READ and LISTEN are stop alerts in this build and cost nothing by sitting below the fold. The alternative &mdash; keeping the original order and strengthening the scroll cue &mdash; is available in the prototype as a tweak.</p>
+    <p style="margin:0 0 10px 0;"><strong>No silent no-ops.</strong> SEND with an empty message raises <em>THERE IS NOTHING TO SEND. TYPE A MESSAGE FIRST, THEN PRESS SEND.</em> SEND with no recipient raises <em>THERE IS NO ONE TO SEND THIS TO. TYPE A NUMBER IN THE TO FIELD, OR PRESS + TO PICK A CONTACT.</em> Saving a blank form raises the validation alerts above. The only deliberate silence in the interface is a rejected keystroke.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Decisions taken after the emulator test</h2>
+    <ul style="margin:0 0 10px 0; padding-left:1.3em;">
+      <li><strong>Five rows over three.</strong> The texts list keeps five rows with 24-character previews rather than three with the full 44. The list is the main screen and its job is to be a list.</li>
+      <li><strong>No message cap.</strong> Nothing limits or counts message length.</li>
+      <li><strong>No own number.</strong> The phone does not know or display its own number.</li>
+    </ul>
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Open question</h2>
+    <p style="margin:0 0 10px 0;"><strong>Delete placement.</strong> DELETE is specified on the edit form, bottom left opposite SAVE. The alternative is a third button on the contact page, next to CALL and TEXT. One decision outstanding.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Type scale</h2>
+    <p style="margin:0 0 12px 0;">Unchanged from 0.2. The Adafruit GFX built-in font draws a 5&times;7 glyph in a 6&times;8 cell and scales only by whole multiples, so the scale is built from those multiples.</p>
+    <table style="width:100%; border-collapse:collapse; font-size:10pt;">
+      <thead>
+        <tr style="border-bottom:1.5px solid #1e1e1e;">
+          <th style="text-align:left; padding:6px 8px 6px 0; font-weight:700;">Size</th>
+          <th style="text-align:left; padding:6px 8px; font-weight:700;">textSize</th>
+          <th style="text-align:left; padding:6px 0 6px 8px; font-weight:700;">Used for</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0; font-weight:700;">64px</td><td style="padding:6px 8px;">8</td><td style="padding:6px 0 6px 8px;">The lock clock, and nothing else</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0; font-weight:700;">48px</td><td style="padding:6px 8px;">6</td><td style="padding:6px 0 6px 8px;">Home menu words, call names, dial buffer, contact name</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0; font-weight:700;">24px</td><td style="padding:6px 8px;">3</td><td style="padding:6px 0 6px 8px;">Screen titles, row names, status bar, message text, field text, buttons</td></tr>
+        <tr style="border-bottom:1px solid #c9c9c4;"><td style="padding:6px 8px 6px 0; font-weight:700;">18px</td><td style="padding:6px 8px;">2 (rounded)</td><td style="padding:6px 0 6px 8px;">Timestamps, previews, field labels, counters, state labels, hints</td></tr>
+      </tbody>
+    </table>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Ink, headers, buttons, alerts</h2>
+    <p style="margin:0 0 10px 0;">Unchanged from 0.2. Two values, no grays: ink is <strong>#111111</strong>, paper is <strong>#FFFFFF</strong>. Selection is inversion. Rules are 1px within a list and 2px where a region ends. Every list screen carries a three-part header &mdash; back left, screen name centered, the one additive action right &mdash; each control a 38&times;34 hit box that inverts when selected. A button is a 3px-bordered box, and the default is the safe one. An unbuilt screen is a stop alert that says what happened, why, and what to do instead.</p>
+
+    <h2 style="font-size:13pt; font-weight:700; margin:30px 0 10px 0;">Still ahead of the firmware</h2>
+    <ul style="margin:0 0 6px 0; padding-left:1.3em;">
+      <li>Home menu icons. The repo backlog still lists the 1-bit bitmap icon system as open; the SVG paths need converting to GFX byte arrays.</li>
+      <li>Everything in this document's "What changed" list.</li>
+      <li>Call, dial, and the three call states, which the OS names in a docstring only.</li>
+    </ul>
+
+    <p style="font-size:9.5pt; margin:26px 0 0 0; border-top:1px solid #c9c9c4; padding-top:10px;">Reference build: <strong>KyPhone UI v4.dc.html</strong>. Icons: pixelarticons, MIT, &copy; Gerrit Halfmann. Quotes: Thich Nhat Hanh, matching the fixed list in <code>kyphone_os.py</code>. Composer line counts in the prototype render narrower than on device, because VT323 stands in for the GFX font at a tighter advance; the 30-character line is the device figure.</p>
+  </div>
+</doc-page>
+</x-dc>
+</body>
+</html>
