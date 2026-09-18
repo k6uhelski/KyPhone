@@ -39,6 +39,19 @@ PAYLOAD_BYTES   = 256
 SMS_POLL_INTERVAL    = 2
 CLOCK_UPDATE_INTERVAL = 60
 
+# --- List windows (OS 0.2.1) ---
+# A list screen is drawn from ONE command of at most MAX_COMMAND_CHARS
+# characters (build_payload truncates anything longer), so lists are windowed:
+# only the visible rows are sent, and the window re-sends when the selection
+# moves. Row counts and column caps: docs/02-design/design_handoff_os_0_2.
+MAX_COMMAND_CHARS = PAYLOAD_BYTES - 3
+TEXTS_ROWS    = 5
+CONTACTS_ROWS = 7
+CALLS_ROWS    = 6
+LIST_NAME_MAX    = 14   # texts + calls name column
+CONTACT_NAME_MAX = 18   # contacts list name column
+PREVIEW_MAX      = 24   # texts list preview line
+
 # --- Twilio Credentials ---
 ACCOUNT_SID   = os.environ.get('TWILIO_SID')
 AUTH_TOKEN    = os.environ.get('TWILIO_TOKEN')
@@ -144,6 +157,7 @@ state = {
     'screen':           'lock',
     'home_index':       0,          # -1=header | 0=TEXT 1=CALL 2=READ 3=LISTEN 4=CONTACTS
     'texts_index':      0,          # -1=header row selected
+    'texts_start':      0,          # first thread in the 5-row window
     'texts_header_sel': 'back',     # 'back' | 'plus'
     'thread_id':        None,       # sender phone number
     'thread_draft':     '',
@@ -163,6 +177,7 @@ state = {
 
     'contacts_query':      '',
     'contacts_index':      0,       # -1=header row selected
+    'contacts_start':      0,       # first contact in the 7-row window
     'contacts_header_sel': 'back',  # 'back' | 'plus'
     'contacts_return':     'home',  # 'home' | 'compose' — where Esc/back leads
 
@@ -177,6 +192,7 @@ state = {
 
     'calls':            [],         # [{name, tag, time, duration}] session call log
     'calls_index':      0,          # -1=header | 0=DIAL A NUMBER | 1..=calls[i-1]
+    'calls_start':      0,          # first entry in the 6-row window
     'dial_buffer':      '',
     'dial_quick_index': -1,         # -1=buffer active, >=0 selects a quick-dial contact
     'call_name':        '',
@@ -245,7 +261,8 @@ def format_msg_time(ts):
 
 
 def get_threads():
-    """Group flat messages by sender. Return newest-first list (max 7 threads)."""
+    """Group flat messages by sender. Return every thread, newest first — the
+    texts list windows over them, so there is no maximum stored count."""
     with state['lock']:
         msgs = list(state['messages'])
 
@@ -268,7 +285,45 @@ def get_threads():
     sorted_threads = sorted(thread_map.values(), key=lambda t: t['_last_i'], reverse=True)
     for t in sorted_threads:
         del t['_last_i']
-    return sorted_threads[:7]
+    return sorted_threads
+
+
+def window_start(start, index, rows, total):
+    """First item of a `rows`-tall window over `total` items that follows
+    `index` one row at a time — it never pages, because on e-ink a page jump
+    loses the reader's place — and always keeps `index` on screen."""
+    last_start = max(0, total - rows)
+    top = min(start, last_start)
+    if index < top:
+        top = index
+    if index > top + rows - 1:
+        top = index - rows + 1
+    return max(0, min(top, last_start))
+
+
+def _list_command(head, rows, shrink_order, floor=6):
+    """Join `head` fields and row entries (lists of fields, joined by the
+    field separator) into one command that fits MAX_COMMAND_CHARS.
+
+    The column caps alone can overflow the frame on unlucky data (five
+    max-length texts rows are ~267 chars), and build_payload would then cut the
+    last row mid-field. Instead, shorten the fields named in `shrink_order`
+    (longest first, one character at a time, never below `floor`) so every
+    row survives whole."""
+    def build():
+        return "|".join(head + ["\xb7".join(r) for r in rows])
+
+    cmd = build()
+    while len(cmd) > MAX_COMMAND_CHARS:
+        for f in shrink_order:
+            longest = max(rows, key=lambda r: len(r[f]), default=None)
+            if longest is not None and len(longest[f]) > floor:
+                longest[f] = longest[f][:-1]
+                break
+        else:
+            break    # nothing left to shorten; build_payload truncates
+        cmd = build()
+    return cmd
 
 
 # ─── SPI ──────────────────────────────────────────────────────────────────────
@@ -356,22 +411,29 @@ def push_texts():
     if idx >= 0 and threads:
         idx = min(idx, len(threads) - 1)
 
-    # Encode header selection: -1=back button, -2=plus button
+    # Window over the whole list; the header counts as row 0 for scrolling.
+    with state['lock']:
+        start = window_start(state['texts_start'], max(0, idx), TEXTS_ROWS, len(threads))
+        state['texts_start'] = start
+
+    # Encode the selection: -1=back button, -2=plus button, else the row
+    # within the window (0..TEXTS_ROWS-1).
     if idx == -1:
         send_idx = -2 if hdr == 'plus' else -1
     else:
-        send_idx = idx
+        send_idx = idx - start
 
-    parts = [str(send_idx)]
-    for t in threads:
+    rows = []
+    for t in threads[start:start + TEXTS_ROWS]:
         last    = t['messages'][-1] if t['messages'] else None
-        name    = t['name'][:10]
+        name    = t['name'][:LIST_NAME_MAX]
         prefix  = 'You: ' if last and last['sender'] == TWILIO_NUMBER else ''
-        preview = (prefix + last['body'])[:44] if last else ''
+        preview = (prefix + last['body'])[:PREVIEW_MAX] if last else ''
         unread  = '1' if t['unread'] else '0'
         time_str = format_msg_time(last.get('ts')) if last else ''
-        parts.append(f"{name}\xb7{preview}\xb7{unread}\xb7{time_str}")
-    push_screen("TEXTS|" + "|".join(parts))
+        rows.append([name, preview, unread, time_str])
+    # No rows = empty list: the renderer shows the NO CONVERSATIONS state.
+    push_screen(_list_command(["TEXTS", str(send_idx)], rows, shrink_order=(1, 0)))
 
 
 def push_thread2():
@@ -431,14 +493,22 @@ def push_contacts():
         idx   = state['contacts_index']
         hdr   = state['contacts_header_sel']
         query = state['contacts_query']
+    filtered = _filtered_contacts()
+    with state['lock']:
+        start = window_start(state['contacts_start'], max(0, idx), CONTACTS_ROWS, len(filtered))
+        state['contacts_start'] = start
+
     if idx == -1:
         send_idx = -2 if hdr == 'plus' else -1
     else:
-        send_idx = idx
-    parts = [str(send_idx), query]
-    for c in _filtered_contacts():
-        parts.append(f"{dispname(c)}\xb7{c.get('number', '')}")
-    push_screen("CONTACTSPICK|" + "|".join(parts))
+        send_idx = idx - start
+
+    # Footer counter, e.g. "3 / 14"; empty when there is nothing to count.
+    position = f"{max(1, idx + 1)} / {len(filtered)}" if filtered else ''
+    rows = [[dispname(c)[:CONTACT_NAME_MAX], c.get('number', '')]
+            for c in filtered[start:start + CONTACTS_ROWS]]
+    # No rows = the renderer shows NO MATCH (a query is set) or NO CONTACTS.
+    push_screen(_list_command(["CONTACTSPICK", str(send_idx), query, position], rows, shrink_order=(0,)))
 
 
 def push_contact():
@@ -464,10 +534,15 @@ def push_calls():
     with state['lock']:
         idx   = state['calls_index']
         calls = list(state['calls'])
-    parts = [str(idx)]
-    for c in calls:
-        parts.append(f"{c['name']}\xb7{c['tag']}\xb7{c['time']}\xb7{c['duration']}")
-    push_screen("CALLS|" + "|".join(parts))
+    # DIAL A NUMBER is the first entry of the list, so it scrolls like any row.
+    entries = [('DIAL A NUMBER', 'NEW', '', '')] + [
+        (c['name'][:LIST_NAME_MAX], c['tag'], c['time'], c['duration']) for c in calls]
+    with state['lock']:
+        start = window_start(state['calls_start'], max(0, idx), CALLS_ROWS, len(entries))
+        state['calls_start'] = start
+    send_idx = idx if idx < 0 else idx - start
+    rows = [list(e) for e in entries[start:start + CALLS_ROWS]]
+    push_screen(_list_command(["CALLS", str(send_idx)], rows, shrink_order=(0,)))
 
 
 def _quick_dial_names(n=4):
