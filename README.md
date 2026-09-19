@@ -16,6 +16,7 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 - **Contacts:** look up by name, create, edit and delete (with a confirmation), duplicate and bad-number checks, numbers stored as `(555) 010-0001` and matched by their last ten digits.
 - **Stop alerts:** anything the phone will not do (READ and LISTEN aren't built yet, an empty message, no recipient) says so on screen instead of doing nothing.
 - **Home menu:** TEXT · CALL · READ · LISTEN · CONTACTS (texts, calls, books, music, address book) with pixel-art icons.
+- **Music (built, not yet on the phone):** LISTEN browses the music files in `data/music/` by album and plays them through the Radxa's headphone jack with GStreamer: play/pause, next/previous, seek, volume, keeps playing in the background (the home menu shows a small mark), remembers volume and where you stopped. Bluetooth headphones are next.
 - **Reader (built, not yet on the phone):** READ opens a library of the `.epub` files in `data/books/`; a book is read a page at a time with four font sizes (FreeSerif 9/12/18/24pt), remembers where you stopped, and refreshes the panel in full every few turns to clear ghosting. Text only for now.
 - **Long lists and long text:** lists are windowed and the composer shows the end of a long draft, so nothing is cut mid-word or overflows a frame.
 - **Auto-start on boot:** the `kyphone` systemd service launches the OS on the Radxa.
@@ -24,7 +25,7 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 ### **What does not work yet**
 - **Nothing can actually be sent.** Twilio is no longer paid for and is switched off, and there is no cellular modem yet, so a sent message ends as NOT SENT. That is the phone's normal outcome for now.
 - **Calls are simulated.** The CALL screens exist but there is no telephony.
-- **LISTEN** is a placeholder that shows a stop alert. **READ** works in the emulator and on a computer-built copy of the firmware, but has not been flashed to the panel yet.
+- **READ and LISTEN** (books and music) work in the emulator and on a computer-built copy of the firmware, but have not been flashed to the panel yet, and the music has not been heard through the headphone jack.
 
 ### **Running it**
 ```bash
@@ -40,13 +41,16 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim     # a scr
 
 # Books: copy .epub files into data/books/ (any Project Gutenberg EPUB works), then READ opens them.
 # Reader keys: right/down/enter/space = next page, left/up = back, + / - = font size, esc = library.
+# Music: put audio files in the music/ folder of the data folder, then LISTEN. Keys: space = play/pause, right/left = next/previous,
+#        up/down or + / - = volume, . and , = seek 15 s, esc = back (the music keeps playing). No sound in the emulator: it keeps time silently.
 
 # Tests (name the files; do not point pytest at the whole tests/ folder)
 pip3 install pytest
 KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py \
   spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 423 passed
+  spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 586 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
@@ -61,6 +65,16 @@ The emulator and the tests read and write the `data/` folder beside `spi_bridge/
 
 ## **Development Log**
 
+### **September 2026: music**
+
+A music player behind LISTEN, built and tested on a computer (branch `music-build`); not flashed and not yet heard.
+
+- `music_library.py` reads MP3, FLAC, Ogg/Opus, M4A and WAV tags and lengths with the standard library only (cover art is skipped), groups albums, and caches what it read.
+- `music_player.py` has the playback rules in a `Session` (next, previous, seek, volume, skipping a bad file) over a silent simulated player and a GStreamer player for the phone; the real player was also run on the Radxa against a silent output.
+- Music keeps playing in the background; the home menu shows a mark; a 30-second ticker keeps the now-playing time honest without hammering the e-ink.
+- Volume and where you stopped are remembered; after a restart LISTEN offers RESUME.
+- 163 new tests; every decoder needed is on the Radxa; nothing new to install for the headphone jack.
+
 ### **September 2026: the reader**
 
 An EPUB reader, built and tested on a computer (branch `reader-build`); not flashed yet.
@@ -69,7 +83,7 @@ An EPUB reader, built and tested on a computer (branch `reader-build`); not flas
 - `reader_layout.py` wraps text with the exact glyph widths the panel uses and paginates each chapter; a saved place survives a change of font size.
 - The Inkplate draws pages with the FreeSerif fonts from a new `ui_reader.h`; a page is several SPI frames and the panel refreshes only on the last.
 - The emulator draws the same glyph bitmaps, and the tests show the firmware, the layout module and the emulator agree pixel for pixel at all four sizes.
-- 170 new tests (423 in all); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
+- 333 new tests (586 in all, counting the reader and the music player); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
 
 ### **September 2026: OS 0.2.1**
 
@@ -81,7 +95,7 @@ Tested texting, creating a contact and deleting a contact in the emulator, took 
 - Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
 - The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
 - Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
-- There are now 423 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- There are now 586 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
 - Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**
