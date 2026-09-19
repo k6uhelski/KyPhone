@@ -6,9 +6,11 @@ written from what is on the Mac and the Radxa today (checked 2026-09-19).
 **What ships:** the icon home menu (built earlier, never flashed) and the reader (library, page turning, four font
 sizes). Both are on the local branch `reader-build`. The firmware and the Python must go together.
 
-**Why this order is safe:** the new firmware is backward compatible. If you flash it and stop, the Radxa's current
-Python still works (the home menu just gets its icons, because the firmware draws icons when the Radxa does not say
-otherwise). So: back up, flash, look, and only then deploy the Python.
+**Why this order:** flash first, then deploy the Python, and **do those two back to back**. The home menu order changed
+on 2026-09-19 (now TEXT, CALL, READ, LISTEN, CONTACTS), and the firmware and the Radxa's Python each hold a copy of it.
+Between the flash and the deploy the icons follow the new order while the old Python still acts on the old one (so the
+third row shows a book icon but Enter opens Contacts). That is harmless and ends the moment step 4 is done, but it means
+step 2's "press a key" check below is only a look at the icons, not a real test. Nothing else is order-sensitive.
 
 ## You need
 - The Mac mini with the Inkplate on USB (port `/dev/cu.usbserial-1140`) and `ssh radxa` working.
@@ -56,8 +58,9 @@ bash ~/kyphone/flash_macmini.sh
 It compiles (about a minute; the compile has been checked and is 392 KB, 12% of program space), stops the logger, uploads
 at 115200 baud, waits 10 seconds and restarts the logger. It ends with `==> Done.`
 
-**You should see:** the panel reboots and shows what it showed before. Then press a key on the keyboard: the home menu
-should now have **pixel-art icons** (the Radxa's current Python still drives it).
+**You should see:** the panel reboots and shows what it showed before. If you press a key, the home menu now has
+**pixel-art icons** in the new order (text, call, book, music, address book), though Enter still follows the old order
+until step 4 (see above).
 `tail -20 /tmp/inkplate_serial.log` shows the boot lines and the commands it receives.
 
 *Stop here if anything looks wrong* — see "If something goes wrong" below. Nothing on the Radxa has changed yet.
@@ -94,7 +97,7 @@ ssh radxa 'sudo systemctl restart kyphone; sleep 3; systemctl is-active kyphone;
 ## 5. Click through it at the phone (20 minutes)
 With the Bluetooth keyboard connected. Tick these off; note anything odd.
 
-- [ ] Wake the phone: the home menu has icons; order TEXT, CALL, CONTACTS, READ, LISTEN.
+- [ ] Wake the phone: the home menu has icons in the order TEXT, CALL, READ (book), LISTEN (music), CONTACTS (address book). Only the first three are on screen; scroll down for the last two. Enter on each opens what its icon says.
 - [ ] Down to READ, Enter: the **library** lists both books. Up to the header and Enter goes back home.
 - [ ] Open Alice: the first page appears with a **full refresh** (flash). Footer shows the chapter and `1/n  0%`-ish.
 - [ ] Turn 10 pages with Right / Enter. **Time a few turns** (Radxa → panel over the real link). Watch for ghosting; the

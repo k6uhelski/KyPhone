@@ -29,7 +29,7 @@ ICONS = {
     'READ':     "M2 3h9v2H2zM0 19h11v2H0zM13 3h9v2h-9zm0 16h11v2H13zM11 5h2v18h-2zM0 5h2v14H0zm22 0h2v14h-2zm-7 2h5v2h-5zm0 4h5v2h-5zm0 4h2v2h-2z",
     'LISTEN':   "M4 12h4v2H4zm-2 2h2v4H2zm2 4h4v2H4zM8 6h2v12H8zm10 0h2v12h-2zm-6 8h2v4h-2zm2-2h4v2h-4zm0 6h4v2h-4zM10 4h8v2h-8z",
 }
-ORDER = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']      # the home menu order
+ORDER = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']      # the home menu order
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_H = os.path.join(HERE, '..', 'Inkplate_SPI_Peripheral', 'ui_icons.h')

@@ -11,7 +11,9 @@ def r(*f):
 
 SCREENS = {
     'home': ('HOME2|12:44 PM|0|3', '12_home_contacts_third.png'),
-    'home_contacts': ('HOME2|12:44 PM|2|3', None),
+    'home_read': ('HOME2|12:44 PM|2|3', None),
+    'home_listen': ('HOME2|12:44 PM|3|3', None),
+    'home_contacts': ('HOME2|12:44 PM|4|3', None),
     'home_both': ('HOME2|12:44 PM|1|3|B', None),
     'home_words': ('HOME2|12:44 PM|0|3|W', None),
     'home_icons_end': ('HOME2|12:44 PM|4|0|I', None),

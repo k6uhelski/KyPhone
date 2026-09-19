@@ -19,7 +19,7 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 4 | Unsaved numbers shown formatted; 3 contact-page variants; contacts identified by position | ✅ done |
 | 5 | New-contact form; four validation alerts; empty-send and no-recipient alerts; New Message screen limits | ✅ done |
 | 6 | Delete a contact + confirm screen (default KEEP CONTACT) | ✅ done |
-| 7 | Home menu reorder (CONTACTS third) | ✅ done |
+| 7 | Home menu reorder (CONTACTS third) | ✅ done — **superseded 2026-09-19**: Kyle chose TEXT, CALL, READ, LISTEN, CONTACTS (see `planning/reader-build-plan.md`) |
 | 8 | Home menu icons (pixel bitmaps) | ✅ built, tested and compiled — **not yet flashed or deployed** (see below) |
 | 9 | Name the call screens in a `kyphone_os.py` docstring | ✅ done |
 | F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ✅ done — flashed 2026-09-18; ten screens put up on the panel and photographed; layout as designed |

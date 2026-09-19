@@ -227,9 +227,9 @@ static void ui_home(char* data) {
     ui_status_group(fg, header_h / 2);
     ui_hline(header_h, 2);
 
-    // TEXT, CALL, CONTACTS, READ, LISTEN — CONTACTS is third so it is on screen
-    // on first view. Must match kyphone_os.HOME_MENU.
-    static const char* labels[] = {"TEXT", "CALL", "CONTACTS", "READ", "LISTEN"};
+    // TEXT, CALL, READ, LISTEN, CONTACTS — the first three are on screen on first
+    // view. Must match kyphone_os.HOME_MENU (and tools/make_icons.py ORDER).
+    static const char* labels[] = {"TEXT", "CALL", "READ", "LISTEN", "CONTACTS"};
     const int n_rows = 5, row_h = 135, view_top = header_h + 2, view_h = 600 - view_top;
     int shift = ((home_index > 0 ? home_index : 0) + 1) * row_h - view_h;
     if (shift < 0) shift = 0;

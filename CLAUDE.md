@@ -102,7 +102,7 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | Screen | Keys |
 | :--- | :--- |
 | lock | any → home |
-| home | ↑↓ move (−1 = header; Enter there → lock). Enter opens TEXT / CALL / CONTACTS / READ (list windows reset) or a stop alert for LISTEN. Esc → lock. `i` = incoming-call demo. Menu order: TEXT, CALL, CONTACTS, READ, LISTEN |
+| home | ↑↓ move (−1 = header; Enter there → lock). Enter opens TEXT / CALL / READ / CONTACTS (list windows reset) or a stop alert for LISTEN. Esc → lock. `i` = incoming-call demo. Menu order (Kyle's, 2026-09-19: texts, calls, books, music, address book): TEXT, CALL, READ, LISTEN, CONTACTS — the design handoff had CONTACTS third; only the first three rows are on screen without scrolling. The order lives in four places that must agree (`kyphone_os.HOME_MENU`, `simulator.HOME_MENU`, `labels[]` in `ui_screens.h`, `tools/make_icons.py` ORDER → the generated icon tables); a test checks them |
 | texts_list | ↑↓; ↑ past the first row → header (←→ back/plus); Enter → thread (marks read); `+` or header plus → compose; Esc → home |
 | thread | typing edits the draft; Enter sends (empty → alert). ↑ from the composer selects the newest **NOT SENT** bubble (else the header); Enter on it **retries**; ↑ again → header; ↓ → composer. Header ←→ back/info; info → contact page. Esc → texts_list |
 | compose | Tab toggles TO/MESSAGE. ↑ walks SEND → MESSAGE → TO → the X in the header; ↓ MESSAGE → SEND. Enter: TO empty → contact picker, TO set → MESSAGE, MESSAGE or SEND → send (alerts if no recipient / empty message). `+` beside an empty TO opens the picker. Esc with a draft → discard confirm. TO holds 20 chars; the message is uncapped |
@@ -143,7 +143,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 | Screen | Command |
 | :--- | :--- |
 | Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution` |
-| Home | `HOME2\|time\|index\|unread\|style` — index −1 header, 0 TEXT 1 CALL 2 CONTACTS 3 READ 4 LISTEN; style `I` icons (default) / `B` icons and words / `W` words |
+| Home | `HOME2\|time\|index\|unread\|style` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS; style `I` icons (default) / `B` icons and words / `W` words |
 | Texts | `TEXTS\|sel\|name·preview·unread·time\|…` — sel −1 back, −2 plus, else the row in the window; ≤5 rows; preview starts `You: ` or `! ` (unsent); no rows = empty state |
 | Contacts | `CONTACTSPICK\|sel\|query\|3 / 14\|name·number\|…` — ≤7 rows; no rows = NO MATCH (query set) or NO CONTACTS |
 | Calls | `CALLS\|sel\|name·tag·time·duration\|…` — ≤6 rows; the first list entry is `DIAL A NUMBER·NEW··` |

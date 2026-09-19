@@ -183,9 +183,15 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.has_ink(self.frames['edit_edit'], 24, 549, 140, 585))       # present, not selected
         self.assertFalse(self.has_ink(self.frames['edit_new'], 24, 549, 140, 585))       # a new contact has none
 
-    def test_home_row_three_is_contacts_and_on_screen_without_scrolling(self):
-        f = self.frames['home_contacts']                                       # index 2
+    def test_home_row_three_is_read_and_on_screen_without_scrolling(self):
+        f = self.frames['home_read']                                           # index 2
         self.assertEqual([self.ink(f, 4, 62 + i * 135 + 4) for i in range(3)], [False, False, True])
+
+    def test_the_last_two_rows_scroll_into_view_with_their_own_icons(self):
+        # music (LISTEN) and the address book (CONTACTS) sit below the fold; once selected they ride the bottom
+        # of the view, 504px down (top of the row 465 + 39). A mismatched icon table would show the wrong icon here.
+        for frame, name in (('home_listen', 'LISTEN'), ('home_contacts', 'CONTACTS')):
+            self.assertTrue(self.icon_matches(self.frames[frame], name, 272, 504, True), name)
 
     # ── home menu icons ────────────────────────────────────────────────────────
     def icon_matches(self, frame, name, x, y, selected):
@@ -200,7 +206,7 @@ class FirmwareFrames(unittest.TestCase):
 
     def test_the_firmware_draws_each_icon_bitmap_where_the_design_puts_it(self):
         f = self.frames['home']                                                  # TEXT selected
-        for i, name in enumerate(['TEXT', 'CALL', 'CONTACTS']):
+        for i, name in enumerate(['TEXT', 'CALL', 'READ']):                      # the three rows on screen
             self.assertTrue(self.icon_matches(f, name, 272, 62 + i * 135 + 39, i == 0), name)
 
     def test_icons_and_words_are_centred_as_one_unit(self):
@@ -221,7 +227,7 @@ class FirmwareFrames(unittest.TestCase):
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMatchesEmulator(unittest.TestCase):
     """Both renderers draw the same rules, fills and borders; only their fonts differ."""
-    NAMES = ['home', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
+    NAMES = ['home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete']
 

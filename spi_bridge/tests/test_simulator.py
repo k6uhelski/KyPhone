@@ -215,7 +215,7 @@ class SimulatorPixels(unittest.TestCase):
 
     # ── home menu ────────────────────────────────────────────────────────────
     def test_the_third_row_is_on_screen_without_scrolling_and_inverts_when_selected(self):
-        # rows are 135px from y=62; CONTACTS (third) spans 332-467 and needs no scroll shift
+        # rows are 135px from y=62; the third row (READ) spans 332-467 and needs no scroll shift
         self.draw('HOME2|12:44 PM|2|3')
         self.assertEqual(self.px(4, 62 + 2 * 135 + 4), BLACK)
         self.assertEqual(self.px(4, 62 + 1 * 135 + 4), WHITE)
@@ -239,8 +239,15 @@ class SimulatorPixels(unittest.TestCase):
 
     def test_icons_style_draws_each_bitmap_centred_and_39px_down_the_row(self):
         self.draw('HOME2|12:44 PM|0|3|I')                                        # TEXT selected, others not
-        for i, name in enumerate(['TEXT', 'CALL', 'CONTACTS']):
+        for i, name in enumerate(['TEXT', 'CALL', 'READ']):                    # the three rows on screen
             self.assertTrue(self.icon_matches(name, 272, 62 + i * 135 + 39, selected=(i == 0)), name)
+
+    def test_the_last_two_rows_scroll_into_view_with_their_own_icons(self):
+        # music (LISTEN) and the address book (CONTACTS) sit below the fold; once selected they ride the bottom of
+        # the view, 504px down (top of the row 465 + 39).
+        for index, name in ((3, 'LISTEN'), (4, 'CONTACTS')):
+            self.draw('HOME2|12:44 PM|%d|0|I' % index)
+            self.assertTrue(self.icon_matches(name, 272, 504, selected=True), name)
 
     def test_icons_and_words_share_the_row_with_a_28px_gap(self):
         self.draw('HOME2|12:44 PM|1|0|B')                                        # CALL selected
@@ -298,10 +305,10 @@ class HomeIconsMatchTheDesign(unittest.TestCase):
         import make_icons
         from home_icons import MENU_ORDER
         self.assertEqual(MENU_ORDER, make_icons.ORDER)
-        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN'])
+        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS'])
         with open(os.path.join(os.path.dirname(__file__), '..', 'Inkplate_SPI_Peripheral', 'ui_screens.h')) as f:
             src = f.read()
-        self.assertIn('{"TEXT", "CALL", "CONTACTS", "READ", "LISTEN"}', src)
+        self.assertIn('{"TEXT", "CALL", "READ", "LISTEN", "CONTACTS"}', src)
 
     def test_every_icon_is_56_rows_of_56_bits_with_ink(self):
         from home_icons import ICONS

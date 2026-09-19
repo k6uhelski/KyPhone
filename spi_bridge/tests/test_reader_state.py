@@ -74,7 +74,7 @@ class ReaderCase(unittest.TestCase):
 
     def reset(self):
         kyphone_os.state.update(
-            screen='home', home_index=3, book=None, library_books=[], library_index=0, library_start=0, r_id='',
+            screen='home', home_index=kyphone_os.HOME_MENU.index('READ'), book=None, library_books=[], library_index=0, library_start=0, r_id='',
             r_chapter=0, r_offset=0, r_size='M', r_pages=None, r_pages_key=None, r_turns=0,
             stub_key='', stub_text=None, stub_return='home')
 
@@ -96,7 +96,7 @@ class ReaderCase(unittest.TestCase):
 
     def open_library(self):
         self.reset()
-        self.key('KEY_ENTER')                            # READ is the fourth home row
+        self.key('KEY_ENTER')                            # READ is on the home menu's third row
         self.assertEqual(kyphone_os.state['screen'], 'library')
 
     def open_book(self, index=0):

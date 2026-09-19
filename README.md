@@ -15,7 +15,7 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 - **Texting UI:** conversation list, threads, New Message (type a number or pick a contact), and per-message states — SENDING, SENT, NOT SENT with retry from the thread.
 - **Contacts:** look up by name, create, edit and delete (with a confirmation), duplicate and bad-number checks, numbers stored as `(555) 010-0001` and matched by their last ten digits.
 - **Stop alerts:** anything the phone will not do (READ and LISTEN aren't built yet, an empty message, no recipient) says so on screen instead of doing nothing.
-- **Home menu:** TEXT · CALL · CONTACTS · READ · LISTEN with pixel-art icons.
+- **Home menu:** TEXT · CALL · READ · LISTEN · CONTACTS (texts, calls, books, music, address book) with pixel-art icons.
 - **Reader (built, not yet on the phone):** READ opens a library of the `.epub` files in `data/books/`; a book is read a page at a time with four font sizes (FreeSerif 9/12/18/24pt), remembers where you stopped, and refreshes the panel in full every few turns to clear ghosting. Text only for now.
 - **Long lists and long text:** lists are windowed and the composer shows the end of a long draft, so nothing is cut mid-word or overflows a frame.
 - **Auto-start on boot:** the `kyphone` systemd service launches the OS on the Radxa.

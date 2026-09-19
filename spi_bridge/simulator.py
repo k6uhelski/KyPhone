@@ -375,7 +375,7 @@ class Simulator:
                 else:
                     i += 1
 
-    HOME_MENU = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']    # must match kyphone_os.HOME_MENU (a test asserts it)
+    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']    # must match kyphone_os.HOME_MENU (a test asserts it)
 
     def _draw_status_group(self, fg, bg, mid_y):
         """Battery block + percentage + 4-bar signal staircase, right-aligned

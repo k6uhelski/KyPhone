@@ -253,9 +253,9 @@ ALERTS = {
 }
 
 # --- State ---
-# CONTACTS is third so it is on screen on first view; READ and LISTEN are stop
-# alerts in this build and cost nothing by sitting below the fold.
-HOME_MENU = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']
+# The order is Kyle's (2026-09-19): texts, calls, books, music, address book. The design
+# handoff had CONTACTS third; only the first three rows are on screen on first view.
+HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']
 
 # How the home menu looks: pixel icons (the design's default), icons with their
 # words, or words only. Set KYPHONE_HOME_STYLE=icons|both|words; the renderer draws
@@ -265,7 +265,7 @@ HOME_STYLE  = HOME_STYLES.get(os.environ.get('KYPHONE_HOME_STYLE', 'icons'), 'I'
 
 state = {
     'screen':           'lock',
-    'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=CONTACTS 3=READ 4=LISTEN
+    'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=READ 3=LISTEN 4=CONTACTS
     'texts_index':      0,          # -1=header row selected
     'texts_start':      0,          # first thread in the 5-row window
     'texts_header_sel': 'back',     # 'back' | 'plus'
