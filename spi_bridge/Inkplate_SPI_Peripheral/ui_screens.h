@@ -19,6 +19,9 @@
 //   CONTACT|title|sub|kind|sel         CONTACTEDIT|first|last|number|idx|kind
 //   STUB|title|body                    CONFIRM|title|body|go|keep|sel
 //   LIBRARY|sel|title·author·pct|...   (book pages: RTEXT / RFOOT frames, see ui_reader.h)
+//   MUSIC|sel|title·sub·right|...      TRACKS|sel|album|title·artist·time|...
+//   NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N     (state P playing, U paused, S finished)
+//   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -210,12 +213,13 @@ static void ui_status_group(uint16_t fg, int mid_y) {
 }
 
 static void ui_home(char* data) {
-    char* f[4];
-    int n = ui_split(data, '|', f, 4);
+    char* f[6];
+    int n = ui_split(data, '|', f, 6);
     const char* time_str = ui_fld(f, n, 0);
     int home_index = ui_fld_int(f, n, 1, 0);
     int unread     = ui_fld_int(f, n, 2, 0);
     char style     = ui_fld(f, n, 3)[0];            // I icons (the default), B icons and words, W words
+    bool playing   = ui_fld_int(f, n, 4, 0) == 1;   // music is playing
     bool show_icon  = (style != 'W');
     bool show_label = (style == 'B' || style == 'W');
 
@@ -260,6 +264,11 @@ static void ui_home(char* data) {
             char count[4];
             snprintf(count, sizeof(count), "%02d", unread > 99 ? 99 : unread);
             ui_put(count, x0 + content_w + 24, label_y + (48 - 24) / 2, 3, tc);
+        }
+        if (playing && strcmp(labels[i], "LISTEN") == 0) {   // three equalizer bars (6px wide, 4px apart) beside the icon
+            static const int bar_h[3] = {20, 28, 14};
+            for (int k = 0; k < 3; k++)
+                display.fillRect(x0 + content_w + 24 + k * 10, y + 67 + 14 - bar_h[k], 6, bar_h[k], tc);
         }
         if (y + row_h <= 600) display.fillRect(0, y + row_h, 600, 1, BLACK);
     }
@@ -314,30 +323,36 @@ static void ui_texts(char* data) {
     }
 }
 
-// ─── LIBRARY|sel|title·author·pct|... ─────────────────────────────────────────
-// The books on the phone, laid out like the texts list. sel: -1 back, else the row within the 5-row window.
+// ─── The two-line list: LIBRARY, MUSIC, TRACKS ────────────────────────────────
+//   LIBRARY|sel|title·author·pct|...            the books on the phone
+//   MUSIC|sel|title·sub·right|...               albums (a NOW PLAYING / RESUME row may lead)
+//   TRACKS|sel|album|title·artist·time|...      one album's tracks; the album name is the header
+// Laid out like the texts list: bold title, small subtitle under it, a note and a chevron at the right.
+// sel: -1 back, else the row within the 5-row window.
 
-static void ui_library(char* data) {
-    char* f[8];
-    int n = ui_split(data, '|', f, 8);
+static void ui_rows2(char* data, const char* header, const char* empty_title, const char* empty_hint, bool header_in_data) {
+    char* f[9];
+    int n = ui_split(data, '|', f, 9);
     int sel = ui_fld_int(f, n, 0, 0);
-    ui_header("READ", sel == -1, false, false);
+    int first = 1;
+    if (header_in_data) { header = ui_fld(f, n, 1); first = 2; }
+    ui_header(header, sel == -1, false, false);
 
     int rows = 0;
-    for (int i = 1; i < n && rows < 5; i++) if (f[i][0] != '\0') rows++;
+    for (int i = first; i < n && rows < 5; i++) if (f[i][0] != '\0') rows++;
     if (rows == 0) {
-        ui_empty_state("NO BOOKS", "COPY .EPUB FILES INTO THE BOOKS FOLDER ON THE PHONE.", 44, 600);
+        ui_empty_state(empty_title, empty_hint, 44, 600);
         return;
     }
     const int row_h = 111, margin = 28;
     int r = 0;
-    for (int i = 1; i < n && r < 5; i++) {
+    for (int i = first; i < n && r < 5; i++) {
         if (f[i][0] == '\0') continue;
         char* sf[3];
         int sn = ui_split(f[i], UI_SUB, sf, 3);
-        const char* title  = ui_fld(sf, sn, 0);
-        const char* author = ui_fld(sf, sn, 1);
-        const char* pct    = ui_fld(sf, sn, 2);
+        const char* title = ui_fld(sf, sn, 0);
+        const char* sub   = ui_fld(sf, sn, 1);
+        const char* right = ui_fld(sf, sn, 2);
 
         int y = 44 + r * row_h;
         bool is_sel = (r == sel);
@@ -347,11 +362,89 @@ static void ui_library(char* data) {
         ui_text(title, margin, y + 40, 3, fg, true);
         int chev_x = 600 - margin - 12;
         ui_text(">", chev_x, y + 40, 2, fg, false);
-        if (pct[0]) ui_text(pct, chev_x - 10 - ui_tw(pct, 2), y + 40, 2, fg, false);
-        ui_text(author, margin, y + 77, 2, fg, false);
+        if (right[0]) ui_text(right, chev_x - 10 - ui_tw(right, 2), y + 40, 2, fg, false);
+        ui_text(sub, margin, y + 77, 2, fg, false);
         ui_hline(y + row_h - 1, 1);
         r++;
     }
+}
+
+static void ui_library(char* data) {
+    ui_rows2(data, "READ", "NO BOOKS", "COPY .EPUB FILES INTO THE BOOKS FOLDER ON THE PHONE.", false);
+}
+static void ui_music(char* data) {
+    ui_rows2(data, "LISTEN", "NO MUSIC", "COPY MUSIC FILES INTO THE MUSIC FOLDER ON THE PHONE.", false);
+}
+static void ui_tracks(char* data) {
+    ui_rows2(data, "", "NO TRACKS", "THIS ALBUM HAS NO TRACKS.", true);
+}
+
+// ─── NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N ─────────────
+// A status line (state word left, n / N right) over a rule; the title in bold (up to three lines); artist and album;
+// a progress bar with the elapsed and total time under it; << II >> ; a volume bar. Mirrors simulator.py exactly.
+
+// A 2px outline with the inside filled num/den of the way from the left (integer maths, like simulator.py).
+static void ui_bar(int x, int y, int w, int h, long num, long den) {
+    ui_rect(x, y, w, h, 2, BLACK);
+    if (den <= 0) den = 1;
+    if (num < 0) num = 0;
+    if (num > den) num = den;
+    int fill = (int)(((long)(w - 4) * num) / den);
+    if (fill > 0) display.fillRect(x + 2, y + 2, fill, h - 4, BLACK);
+}
+
+// m:ss, h:mm:ss, or --:-- when the time is not known (zero or less)
+static void ui_clock(long secs, char* out, int out_len) {
+    if (secs <= 0) { snprintf(out, out_len, "--:--"); return; }
+    long h = secs / 3600, m = (secs % 3600) / 60, sec = secs % 60;
+    if (h) snprintf(out, out_len, "%ld:%02ld:%02ld", h, m, sec);
+    else   snprintf(out, out_len, "%ld:%02ld", m, sec);
+}
+
+static void ui_nowplaying(char* data) {
+    char* f[8];
+    int n = ui_split(data, '|', f, 8);
+    char state         = ui_fld(f, n, 0)[0];
+    const char* title  = ui_fld(f, n, 1);
+    const char* artist = ui_fld(f, n, 2);
+    const char* album  = ui_fld(f, n, 3);
+    long elapsed = ui_fld_int(f, n, 4, 0), total = ui_fld_int(f, n, 5, 0), volume = ui_fld_int(f, n, 6, 0);
+
+    char pos[32];                                           // "2/9" is drawn as "2 / 9"
+    int pn = 0;
+    for (const char* p = ui_fld(f, n, 7); *p && pn < 28; p++) {
+        if (*p == '/') { pos[pn++] = ' '; pos[pn++] = '/'; pos[pn++] = ' '; }
+        else           { pos[pn++] = *p; }
+    }
+    pos[pn] = '\0';
+
+    ui_text(state == 'P' ? "PLAYING" : (state == 'U' ? "PAUSED" : "FINISHED"), 28, 44, 2, BLACK, false);
+    ui_text_right(pos, 600 - 28, 44, 2, BLACK, false);
+    ui_hline(62, 1);
+
+    static char lines[3][32];
+    int nl = ui_wrap(title, 28, &lines[0][0], 32, 3);
+    for (int k = 0; k < nl; k++) ui_text(lines[k], 28, 116 + 30 * k, 3, BLACK, true);
+    ui_text(artist, 28, 224, 2, BLACK, false);
+    ui_text(album, 28, 252, 2, BLACK, false);
+
+    char t[16];
+    ui_bar(28, 296, 544, 16, total > 0 ? elapsed : 0, total > 0 ? total : 1);
+    if (elapsed > 0) ui_clock(elapsed, t, sizeof(t)); else snprintf(t, sizeof(t), "0:00");
+    ui_text(t, 28, 344, 2, BLACK, false);
+    ui_clock(total, t, sizeof(t));
+    ui_text_right(t, 600 - 28, 344, 2, BLACK, false);
+
+    const char* mid = (state == 'P') ? "II" : ">";
+    ui_text("<<", 90, 436, 5, BLACK, true);
+    ui_text(mid, (600 - ui_tw(mid, 5)) / 2, 436, 5, BLACK, true);
+    ui_text(">>", 600 - 90 - ui_tw(">>", 5), 436, 5, BLACK, true);
+    ui_text_center("LEFT/RIGHT SKIP   UP/DOWN VOLUME", 496, 2, BLACK, false);
+
+    ui_text("VOL", 28, 556, 2, BLACK, false);
+    ui_bar(90, 542, 420, 16, volume, 100);
+    snprintf(t, sizeof(t), "%ld", volume);
+    ui_text_right(t, 600 - 28, 556, 2, BLACK, false);
 }
 
 // ─── CONTACTSPICK|sel|query|position|name·number|... ──────────────────────────
@@ -713,7 +806,8 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"HOME2|", ui_home},         {"TEXTS|", ui_texts},         {"CONTACTSPICK|", ui_contacts},
         {"CALLS|", ui_calls},        {"THREAD2|", ui_thread},      {"COMPOSE|", ui_compose},
         {"STUB|", ui_stub},          {"CONFIRM|", ui_confirm},     {"CONTACTEDIT|", ui_contact_edit},
-        {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},
+        {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},   {"MUSIC|", ui_music},
+        {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

@@ -22,6 +22,17 @@ SCREENS = {
         r('(555) 019-9014', '! thank you!', '0', '8:31 AM'), r('Therapist', 'See you Thursday at 3.', '0', '2:14 PM'),
         r('Bestie', 'STOP EVERYTHING. call me', '0', 'Yesterday')]), '01_texts_list_5_rows.png'),
     'texts_empty': ('TEXTS|-2', None),                # an empty list opens with + selected
+    'music': ('MUSIC|0|' + '|'.join([
+        r('NOW PLAYING', 'The Long Road Home - Nina Simone', 'PLAYING'), r('Pastel Blues', 'Nina Simone', '9 trk'),
+        r('Kind of Blue', 'Miles Davis', '5 trk')]), None),
+    'music_empty': ('MUSIC|-1', None),
+    'tracks': ('TRACKS|1|Pastel Blues|' + '|'.join([
+        r('Plain Gold Ring', 'Nina Simone', '3:05'), r('Sinnerman', 'Nina Simone', '10:21'), r('Be My Husband', 'Nina Simone', '2:52')]), None),
+    'nowplaying': ('NOWPLAYING|P|Sinnerman|Nina Simone|Pastel Blues|93|621|40|2/9', None),
+    'nowplaying_paused': ('NOWPLAYING|U|Sinnerman (Live at the Village Gate, extended studio version)|Nina Simone|Pastel Blues (Remastered)|300|621|70|2/9', None),
+    'nowplaying_finished': ('NOWPLAYING|S|Sinnerman|Nina Simone|Pastel Blues|0|621|100|9/9', None),
+    'home_playing': ('HOME2|12:44 PM|3|0|I|1', None),
+    'home_playing_unselected': ('HOME2|12:44 PM|0|0|I|1', None),
     'library': ('LIBRARY|1|' + '|'.join([
         r("Alice's Adventures in Wond", 'Lewis Carroll', '35%'), r('The Count of Monte Cristo', 'Alexandre Dumas', ''),
         r('Frankenstein', 'Mary Shelley', '100%')]), None),

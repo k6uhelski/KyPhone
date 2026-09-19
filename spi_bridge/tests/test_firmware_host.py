@@ -113,6 +113,73 @@ class FirmwareFrames(unittest.TestCase):
         self.assertFalse(self.ink(f, 18, 8))                       # the back box is not
         self.assertGreater(self.ink_count(f), 300)                 # and the NO CONVERSATIONS message is still drawn
 
+    # ── music ──────────────────────────────────────────────────────────────────
+    def test_music_rows_are_111px_and_only_the_selected_one_is_inverted(self):
+        f = self.frames['music']                                     # sel = 0 (NOW PLAYING)
+        self.assertEqual([self.ink(f, 4, 44 + row * 111 + 4) for row in range(3)], [True, False, False])
+        self.assertFalse(self.has_ink(f, 500, 6, 585, 40))           # back only
+
+    def test_an_empty_music_list_says_so(self):
+        f = self.frames['music_empty']
+        self.assertGreater(self.ink_count(f), 300)
+        self.assertFalse(any(self.ink(f, 4, y) for y in (60, 120, 200, 300, 400)))
+        self.assertTrue(self.ink(f, 20, 20))                          # the back control is selected
+
+    def test_the_track_list_shows_the_album_in_the_header_and_row_two_selected(self):
+        f = self.frames['tracks']
+        self.assertTrue(self.has_ink(f, 150, 8, 450, 38))
+        self.assertEqual([self.ink(f, 4, 44 + row * 111 + 4) for row in range(3)], [False, True, False])
+
+    def test_now_playing_has_a_rule_and_bars_that_fill_in_proportion(self):
+        def now(state='P', elapsed=0, total=200, vol=40, title='A Song'):
+            return 'NOWPLAYING|%s|%s|An Artist|An Album|%d|%d|%d|1/9' % (state, title, elapsed, total, vol)
+        f = self.frame(now(elapsed=100))
+        self.assertTrue(all(self.ink(f, x, 62) for x in range(600)))
+        self.assertFalse(self.ink(f, 300, 61))
+        self.assertTrue(self.ink(f, 28, 296) and self.ink(f, 571, 311))                      # the outline's corners
+        self.assertTrue(self.ink(f, 299, 302) and not self.ink(f, 320, 302))                  # half of 540: x 30..299
+        self.assertFalse(self.ink(self.frame(now(elapsed=0)), 200, 302))
+        self.assertTrue(self.ink(self.frame(now(elapsed=999)), 565, 302))                     # clamped inside the outline
+        self.assertFalse(self.ink(self.frame(now(elapsed=999)), 575, 302))
+        self.assertFalse(self.ink(self.frame(now(elapsed=50, total=0)), 200, 302))            # unknown length: no fill
+        for vol, inside, outside in ((0, None, 100), (50, 250, 400), (100, 500, None)):
+            g = self.frame(now(vol=vol))
+            if inside is not None:
+                self.assertTrue(self.ink(g, inside, 550), vol)
+            if outside is not None:
+                self.assertFalse(self.ink(g, outside, 550), vol)
+
+    def test_now_playing_controls_status_and_title_wrapping(self):
+        def now(state, title='A Song'):
+            return 'NOWPLAYING|%s|%s|An Artist|An Album|10|200|40|1/9' % (state, title)
+        def region(f, x0, y0, x1, y1):
+            return bytes(f[y * W + x] for y in range(y0, y1) for x in range(x0, x1))
+        seen = {}
+        for state in 'PUS':
+            f = self.frame(now(state))
+            seen[state] = (region(f, 20, 25, 200, 50), region(f, 240, 395, 360, 445))
+        self.assertEqual(len({v[0] for v in seen.values()}), 3)                             # PLAYING / PAUSED / FINISHED
+        self.assertNotEqual(seen['P'][1], seen['U'][1])                                      # II versus >
+        self.assertEqual(seen['U'][1], seen['S'][1])                                         # paused and finished both offer >
+        long = self.frame(now('P', 'Word ' * 11))
+        self.assertGreater(self.ink_box(long, 20, 160, 580, 186), 20)                        # a third title line
+        self.assertEqual(self.ink_box(long, 0, 190, 600, 205), 0)                            # and a gap before the artist
+
+    def ink_box(self, f, x0, y0, x1, y1):
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.ink(f, x, y))
+
+    def test_the_playing_mark_stands_beside_the_music_icon(self):
+        selected, unselected = self.frames['home_playing'], self.frames['home_playing_unselected']
+        self.assertFalse(self.ink(selected, 354, 540))                                       # white bar on the inverted row
+        self.assertFalse(self.ink(selected, 374, 540))
+        self.assertTrue(self.ink(unselected, 354, 540))                                      # black bar on white
+        self.assertTrue(self.ink(unselected, 374, 540))
+        for row in range(3):
+            self.assertEqual(self.ink_box(self.frame('HOME2|12:44 PM|-1|0|I|1'), 345, 62 + row * 135 + 40, 385, 62 + row * 135 + 100), 0)
+
+    def test_an_old_home_command_without_the_flag_still_draws(self):
+        self.assertGreater(self.ink_count(self.frame('HOME2|12:44 PM|0|3|I')), 300)
+
     def test_an_empty_library_says_so(self):
         f = self.frames['library_empty']
         self.assertGreater(self.ink_count(f), 300)
@@ -233,7 +300,7 @@ class FirmwareFrames(unittest.TestCase):
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMatchesEmulator(unittest.TestCase):
     """Both renderers draw the same rules, fills and borders; only their fonts differ."""
-    NAMES = ['home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
+    NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete']
 
@@ -287,6 +354,27 @@ class FirmwareMatchesEmulator(unittest.TestCase):
             runs.append((start, W - 1))
         return runs
 
+    def test_the_bars_and_the_home_mark_agree_with_the_emulator_to_the_pixel(self):
+        # Regions with no text in them, so the two renderers' different fonts cannot differ: the progress bar and the
+        # volume bar (integer fill maths on both sides), and the equalizer mark beside the music icon.
+        regions = {'nowplaying': [(20, 290, 580, 318), (88, 538, 512, 562)],
+                   'nowplaying_paused': [(20, 290, 580, 318), (88, 538, 512, 562)],
+                   'nowplaying_finished': [(20, 290, 580, 318), (88, 538, 512, 562)],
+                   'home_playing': [(340, 500, 392, 560)], 'home_playing_unselected': [(340, 500, 392, 560)]}
+        for name, boxes in regions.items():
+            wire = SCREENS[name][0]
+            fw, sim = self.firmware_frame(wire), self.sim_frame(wire)
+            for x0, y0, x1, y1 in boxes:
+                for y in range(y0, y1):
+                    for x in range(x0, x1):
+                        self.assertEqual(fw[y * W + x], sim[y * W + x], (name, x, y))
+
+    def test_every_elapsed_fraction_fills_the_bar_the_same_in_both(self):
+        for elapsed, total in ((1, 3), (2, 3), (7, 9), (100, 621), (620, 621), (1, 1000)):
+            wire = 'NOWPLAYING|P|T|A|B|%d|%d|33|1/2' % (elapsed, total)
+            fw, sim = self.firmware_frame(wire), self.sim_frame(wire)
+            self.assertEqual([fw[302 * W + x] for x in range(20, 580)], [sim[302 * W + x] for x in range(20, 580)], (elapsed, total))
+
     def test_rules_and_inverted_rows_are_where_the_emulator_puts_them(self):
         for name in self.NAMES:
             wire = SCREENS[name][0]
@@ -307,7 +395,7 @@ class FirmwareMemorySafety(unittest.TestCase):
 
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
-                    'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|']
+                    'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):
@@ -326,6 +414,10 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long3\tSTUB|' + 'T' * 30 + '|' + 'B' * 220 + '\n',
             'long4\tCONFIRM|' + 'T' * 30 + '|' + 'B' * 150 + '|' + 'G' * 30 + '|' + 'K' * 30 + '|D\n',
             'long5\tTEXTS|4|' + '|'.join(('N' * 30 + '\xb7' + 'p' * 60 + '\xb71\xb7' + 't' * 20) for _ in range(9)) + '\n',
+            'long6\tNOWPLAYING|P|' + 'T' * 56 + '|' + 'A' * 44 + '|' + 'B' * 44 + '|99999999|99999999|100|99/99\n',
+            'long7\tMUSIC|4|' + '|'.join(('N' * 22 + '\xb7' + 's' * 24 + '\xb7' + '99 trk') for _ in range(5)) + '\n',
+            'long8\tTRACKS|0|' + 'H' * 20 + '|' + '|'.join(('N' * 22 + '\xb7' + 's' * 24 + '\xb710:21') for _ in range(5)) + '\n',
+            'long9\tNOWPLAYING|P|' + 'W' * 200 + '\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
         done = subprocess.run([exe, '-'], input=''.join(lines).encode('latin-1'), capture_output=True, env=env)

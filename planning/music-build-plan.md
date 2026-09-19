@@ -8,9 +8,9 @@
 | 2 | Player: `Session` (queue and rules), `SimPlayer`, `GstPlayer` (`music_player.py`, 42 tests; the real player also ran on the Radxa against a silent output) | done |
 | 3 | State machine: music / tracks / nowplaying screens, keys, background playback, ticker, saved volume and resume, alerts (`kyphone_os.py`, `test_music_state.py` 41 tests) | done |
 | 4 | Emulator renderers (MUSIC / TRACKS / NOWPLAYING, the home mark; 17 pixel tests; real-key click-through of a whole album) | done |
-| 5 | Firmware renderers + host harness | next |
+| 5 | Firmware renderers (`ui_rows2`, `ui_nowplaying`, the home mark), host harness, fuzz; compile-checked for the board (394 KB, 12%) — **not flashed** | done |
 | 6 | Device: headphones, format matrix, soak (needs Kyle at the phone) | waiting |
-| 7 | Docs | |
+| 7 | Docs | next |
 
 **Checked on the Radxa 2026-09-19 (silent, nothing changed):** every decoder the plan worried about is there — `mpg123audiodec` (MP3), `flacdec`, `vorbisdec`, `opusdec`, `avdec_aac`/`faad`, `avdec_alac`, `wavparse`, plus the Ogg, QuickTime and ID3 demuxers (my first plugin listing was truncated, which is why FLAC and Vorbis looked missing). `GstPlayer` was run from a temp folder with `KYPHONE_AUDIO_DEVICE=fake` (a clocked fakesink): position follows real time, pause holds it, seek works and clamps, a text file posing as an MP3 is reported ("THIS APPEARS TO BE A TEXT FILE") and skipped, the queue continues and finishes. Still to be heard on real headphones: step 6. Lesson: ALSA's `null` device is not paced, so it "plays" everything instantly; `fake` is the silent option that keeps time.
 

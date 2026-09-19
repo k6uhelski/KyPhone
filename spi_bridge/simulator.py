@@ -902,10 +902,12 @@ class Simulator:
         m, sec = divmod(rem, 60)
         return '%d:%02d:%02d' % (h, m, sec) if h else '%d:%02d' % (m, sec)
 
-    def _bar(self, x, y, w, h, fraction):
-        """A 2px outline with the inside filled `fraction` (0..1) of the way from the left."""
+    def _bar(self, x, y, w, h, numerator, denominator):
+        """A 2px outline with the inside filled numerator/denominator of the way from the left (integer maths, so the
+        firmware, which does the same sum, agrees to the pixel)."""
         pygame.draw.rect(self._surface, BLACK, (x, y, w, h), 2)
-        fill = int((w - 4) * max(0.0, min(1.0, fraction)))
+        numerator = max(0, min(numerator, denominator))
+        fill = ((w - 4) * numerator) // denominator
         if fill > 0:
             pygame.draw.rect(self._surface, BLACK, (x + 2, y + 2, fill, h - 4))
 
@@ -928,7 +930,7 @@ class Simulator:
         self._text_bl(artist, 28, 224, 2)
         self._text_bl(album, 28, 252, 2)
 
-        self._bar(self.BAR_X, 296, self.BAR_W, self.BAR_H, (elapsed / float(total)) if total > 0 else 0.0)
+        self._bar(self.BAR_X, 296, self.BAR_W, self.BAR_H, elapsed if total > 0 else 0, total if total > 0 else 1)
         self._text_bl(self._clock(elapsed) if elapsed > 0 else '0:00', 28, 344, 2)
         self._text_right(self._clock(total), self.WIDTH - 28, 344, 2)
 
@@ -940,7 +942,7 @@ class Simulator:
         self._text_bl(hint, (self.WIDTH - len(hint) * self._char_w(2)) // 2, 496, 2)
 
         self._text_bl('VOL', 28, 556, 2)
-        self._bar(self.VOL_X, 542, self.VOL_W, self.BAR_H, volume / 100.0)
+        self._bar(self.VOL_X, 542, self.VOL_W, self.BAR_H, volume, 100)
         self._text_right(str(volume), self.WIDTH - 28, 556, 2)
 
     # ── The reader: book text drawn with the panel's own glyphs ─────────
