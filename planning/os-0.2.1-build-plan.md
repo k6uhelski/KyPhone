@@ -1,5 +1,5 @@
 # KyPhone OS 0.2.1 — Build Plan
-*Updated: September 18, 2026 · branch `os-0.2.1-build` · 11 local commits, nothing pushed, nothing deployed*
+*Updated: September 18, 2026 · branch `os-0.2.1-build` · 12 local commits, nothing pushed, nothing deployed*
 
 **Goal.** Bring the running UI (OS 0.2) up to the OS 0.2.1 design in
 `docs/02-design/design_handoff_os_0_2/`, which answers the undefined behaviours found by click-testing 0.2 in
@@ -61,9 +61,24 @@ input saved silently or did nothing · SEND with nothing to send did nothing · 
 
 **The Python and emulator side of the build is complete** (steps 1–7 and 9). What remains is the firmware pass and the docs/deploy.
 
-**Firmware pass (F).** Implement the wire changes below in `Inkplate_SPI_Peripheral.ino`; flash with `flash.sh`;
-check every screen on the real panel. Also confirm the design's 18 px text really renders at textSize 2, and that
-bubble/composer wrapping matches `wrap_words` (30 columns composer, 20 bubble).
+**Firmware pass (F) — what I found.**
+- `Inkplate_SPI_Peripheral.ino` is 2,421 lines and **already has a renderer for every screen**, so this is editing about ten of
+  them, not writing new ones: `render_home2` (order, `03` padding), `render_texts`, `render_contacts_pick`, `render_calls`,
+  `render_thread2` (bubble states, wrapped composer), `render_compose` (wrapping), `render_contact` (three kinds),
+  `render_contact_edit` (title, DELETE), `render_stub` (inverted OK, all alerts), and `render_confirm_discard` → one
+  general `CONFIRM` renderer. The dispatch in `loop()` changes to match.
+- **This Mac can compile it.** `arduino-cli` 1.5.1, the Inkplate board package (8.1.0) and libraries are installed; the
+  unmodified firmware builds (373 KB, 11% of flash; about 3 minutes cold). Every firmware change can be compile-checked
+  here before anything is flashed.
+- **Flashing:** use `flash_macmini.sh` (points at `~/kyphone`, port `/dev/cu.usbserial-1140`). The tracked `flash.sh` points at a
+  `~/Desktop/kyphone` that no longer exists. An Inkplate-looking serial device is currently attached.
+- **Cannot be seen from here.** Whether a screen *looks* right on the e-ink panel needs your eyes (or a photo). Proposed aid: a
+  dev-only USB-serial command that draws one wire string sent from the Mac, so each screen can be checked on the real panel
+  without the Radxa — then replayed for every screen the emulator produces.
+- **Rollback caveat.** The build I made from `origin/main` can be kept as a fallback, but the firmware *currently on the
+  Inkplate* may have been built from your earlier local edits (now in `git stash`), so it is not guaranteed identical.
+- **Order of operations:** write and compile-check → (with your OK) flash → check screens with the serial preview → deploy the
+  Python to the Radxa together with the flash, since they must match. Flashing and deploying each need an explicit go-ahead.
 
 ## Wire changes the firmware must implement
 Rules for all screens: one command ≤ 253 characters; fields split on `|`, sub-fields on `·` (U+00B7); printable ASCII
