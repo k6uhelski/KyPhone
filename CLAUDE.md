@@ -157,9 +157,9 @@ Three suites, 250 tests (`test_state_machine.py` 193, `test_simulator.py` 34, `t
 *   **`test_firmware_host.py`** — builds `ui_screens.h` for the computer with `tests/firmware_host/` (a fake display using the real GFX font) and checks exact geometry, that firmware and emulator agree on every rule and inverted row, and memory safety (thousands of malformed and maximum-length commands under the address and undefined-behaviour sanitizers). Needs `clang++` and Adafruit_GFX's `glcdfont.c`; skips otherwise.
 
 ```
-python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
+python3 -m pytest spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_state_machine.py
 ```
-Name the three files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the three files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. **Keep this order:** `test_state_machine.py` puts a fake pygame in `sys.modules` if pygame is not loaded yet, so if it is collected first the simulator and firmware tests skip silently ("220 passed, 30 skipped" instead of "250 passed"). Check the total. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Run tests on a copy of `spi_bridge/` with an empty `data/`**, not in place: importing `kyphone_os` loads (and can rewrite) `data/contacts.json`. The same applies to the simulator, which reads and writes the real `data/` — see Known constraints.
 

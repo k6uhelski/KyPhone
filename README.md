@@ -38,9 +38,9 @@ python3 spi_bridge/kyphone_os.py --sim
 
 # Tests (name the three files; do not point pytest at the whole tests/ folder)
 pip3 install pytest
-python3 -m pytest spi_bridge/tests/test_state_machine.py \
-                  spi_bridge/tests/test_simulator.py \
-                  spi_bridge/tests/test_firmware_host.py
+python3 -m pytest spi_bridge/tests/test_simulator.py \
+                  spi_bridge/tests/test_firmware_host.py \
+                  spi_bridge/tests/test_state_machine.py   # keep this order; expect 250 passed
 ```
 The emulator and the tests read and write `spi_bridge/data/`, so run them on a copy of the folder if it holds real contacts or messages. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
