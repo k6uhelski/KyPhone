@@ -1,5 +1,5 @@
 # KyPhone OS 0.2.1 — Build Plan
-*Updated: September 18, 2026 · branch `os-0.2.1-build` · 9 local commits, nothing pushed, nothing deployed*
+*Updated: September 18, 2026 · branch `os-0.2.1-build` · 11 local commits, nothing pushed, nothing deployed*
 
 **Goal.** Bring the running UI (OS 0.2) up to the OS 0.2.1 design in
 `docs/02-design/design_handoff_os_0_2/`, which answers the undefined behaviours found by click-testing 0.2 in
@@ -19,10 +19,10 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 4 | Unsaved numbers shown formatted; 3 contact-page variants; contacts identified by position | ✅ done |
 | 5 | New-contact form; four validation alerts; empty-send and no-recipient alerts; New Message screen limits | ✅ done |
 | 6 | Delete a contact + confirm screen (default KEEP CONTACT) | ✅ done |
-| 7 | Home menu reorder (CONTACTS third) | ⬜ next |
+| 7 | Home menu reorder (CONTACTS third) | ✅ done |
 | 8 | Home menu icons (pixel bitmaps) | ⬜ separate task, out of this build |
-| 9 | Name the call screens in a `kyphone_os.py` docstring | ⬜ small |
-| F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ⬜ needs you at the device |
+| 9 | Name the call screens in a `kyphone_os.py` docstring | ✅ done |
+| F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ⬜ **next; needs you at the device** |
 | D | Docs (`CLAUDE.md`, wire tables) and deploy to the Radxa | ⬜ after F |
 
 ¹ The *thread* composer and the character rules came with step 3; the *New Message* screen's own limits (TO 20, message
@@ -39,6 +39,7 @@ uncapped and wrapped) came with step 5.
 | `7f3c5a8` | This plan |
 | `4c61a50` | **Step 5.** `_open_new_contact`, validation with the offending field selected, `_show_alert` (reuses the stop-alert screen), compose limits, empty-send / no-recipient alerts, compose arrow-up fix |
 | `1ab7f6d` | **Step 6.** DELETE on the edit form (arrow left from SAVE); one `confirm` screen for discard and delete (safe button right, selected on open); delete removes by position, conversations stay; shared 36px emulator button |
+| `8e8ed4b` | **Steps 7 and 9.** Home order TEXT, CALL, CONTACTS, READ, LISTEN (dispatch by label); call screens named in the docstring; version strings 0.2.1 |
 
 **Problems from the emulator test, now fixed:** texts and contacts lists ran off the screen with nothing highlighted ·
 older conversations unreachable · sent texts vanished and a fake own-number conversation appeared · a slow send froze
@@ -47,7 +48,7 @@ picking the second of two same-named contacts opened the first · `+` in contact
 input saved silently or did nothing · SEND with nothing to send did nothing · from SEND, arrow up jumped to the header.
 
 ## Tests and verification
-- **206 tests pass** (51 at the start): `test_state_machine.py` (state, wire strings, frame limits, retry, contacts) and
+- **216 tests pass** (51 at the start): `test_state_machine.py` (state, wire strings, frame limits, retry, contacts) and
   new `test_simulator.py` (pixel checks on real emulator frames, plus a check that the simulator's word-wrap matches the OS's).
 - **Every step** is also click-tested in the real emulator with real key events, screenshots after each key, compared
   side by side with the designer's captures.
@@ -58,7 +59,7 @@ input saved silently or did nothing · SEND with nothing to send did nothing · 
 
 ## Remaining work
 
-**Step 7 — Home menu order.** TEXT, CALL, CONTACTS, READ, LISTEN; indices in `_from_home` and tests update.
+**The Python and emulator side of the build is complete** (steps 1–7 and 9). What remains is the firmware pass and the docs/deploy.
 
 **Firmware pass (F).** Implement the wire changes below in `Inkplate_SPI_Peripheral.ino`; flash with `flash.sh`;
 check every screen on the real panel. Also confirm the design's 18 px text really renders at textSize 2, and that
@@ -78,6 +79,7 @@ otherwise.
 | `CONTACTEDIT` | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save, **4 DELETE**; kind `N` new (title NEW CONTACT, no DELETE) / `E` edit (EDIT CONTACT, DELETE bottom left) |
 | `CONFIRM` | `CONFIRM\|title\|body\|go\|keep\|sel` — replaces `CONFIRMDISCARD`. Destructive button left (2px), safe button right (3px); sel `D` / `K`; opens on `K`. Discard message and delete contact both use it |
 | `STUB` (stop alert) | `STUB\|title\|body` — boxed `!`, body wrapped, **OK drawn inverted** (the only control). Carries every alert: unbuilt feature, validation, empty send, no recipient |
+| `HOME2` | `HOME2\|time\|index\|unread` — shape unchanged, but **index is a position in the new order**: 0 TEXT, 1 CALL, 2 CONTACTS, 3 READ, 4 LISTEN. The renderer pads the unread count to two digits (`03`) and scrolls by `max(0, (index+1)*135 − 538)` |
 | `COMPOSE` | unchanged shape; the message field is uncapped in state but the wire shows its END behind `...` when it would not fit; renderer wraps it at 30 columns |
 
 ## Decisions and deviations from the design doc
