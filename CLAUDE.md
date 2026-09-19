@@ -84,11 +84,12 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 *   `039042d` — OS 0.1: 6-screen state machine (`kyphone_os.py`) and TDD suite.
 *   `b2a33cc` — OS 0.2: contacts, calls, trackpad navigation.
 *   OS 0.2.1 (branch `os-0.2.1-build`, until merged): windowed lists, message states and retry, formatted numbers, contact create/delete, stop alerts, icon home menu. Firmware and Radxa updated 2026-09-18 except the icons (built, not yet flashed — see the plan).
+*   **Reader** (branch `reader-build`, on top of `os-0.2.1-build`; built, tested and compile-checked, **not yet flashed or deployed**): READ opens a library of EPUBs from `data/books/`; a book is read a page at a time with four font sizes. See *Reader (books)* below and `planning/reader-build-plan.md`.
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
 
-Screens: `lock · home · texts_list · thread · compose · confirm · contacts_pick · contact · contact_edit · stub · calls_list · dial · outgoing · incoming · in_call`. `stub` is the one **stop alert** screen (unbuilt features, validation, empty send, no recipient); `confirm` is the one **confirmation** screen (discard message, delete contact).
+Screens: `lock · home · texts_list · thread · compose · confirm · contacts_pick · contact · contact_edit · stub · calls_list · dial · outgoing · incoming · in_call · library · reader`. `stub` is the one **stop alert** screen (unbuilt features, validation, empty send, no recipient, the ends of a book or of the font sizes); `confirm` is the one **confirmation** screen (discard message, delete contact).
 
 Selection convention: a list's `*_index` is an absolute position, `-1` = the header (with `*_header_sel` = `back`/`plus`). Lists are windowed (`texts_start`, `contacts_start`, `calls_start`); the wire carries the selection **relative to the window**.
 
@@ -101,7 +102,7 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | Screen | Keys |
 | :--- | :--- |
 | lock | any → home |
-| home | ↑↓ move (−1 = header; Enter there → lock). Enter opens TEXT / CALL / CONTACTS (list windows reset) or a stop alert for READ / LISTEN. Esc → lock. `i` = incoming-call demo. Menu order: TEXT, CALL, CONTACTS, READ, LISTEN |
+| home | ↑↓ move (−1 = header; Enter there → lock). Enter opens TEXT / CALL / CONTACTS / READ (list windows reset) or a stop alert for LISTEN. Esc → lock. `i` = incoming-call demo. Menu order: TEXT, CALL, CONTACTS, READ, LISTEN |
 | texts_list | ↑↓; ↑ past the first row → header (←→ back/plus); Enter → thread (marks read); `+` or header plus → compose; Esc → home |
 | thread | typing edits the draft; Enter sends (empty → alert). ↑ from the composer selects the newest **NOT SENT** bubble (else the header); Enter on it **retries**; ↑ again → header; ↓ → composer. Header ←→ back/info; info → contact page. Esc → texts_list |
 | compose | Tab toggles TO/MESSAGE. ↑ walks SEND → MESSAGE → TO → the X in the header; ↓ MESSAGE → SEND. Enter: TO empty → contact picker, TO set → MESSAGE, MESSAGE or SEND → send (alerts if no recipient / empty message). `+` beside an empty TO opens the picker. Esc with a draft → discard confirm. TO holds 20 chars; the message is uncapped |
@@ -109,6 +110,8 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | contacts_pick | typing filters by name prefix (LOOK UP); ↑↓; header back/plus; `+` → new contact; Enter → contact page (from home) or picks into compose |
 | contact | top row `[back, edit]`, action row `[call, text]` (saved) · `[add number]` (saved, no number) · `[call, text, save]` (not in contacts, no EDIT). SAVE opens the form with the number filled in |
 | contact_edit | ↑↓ through first / last / number / SAVE; ← from SAVE reaches **DELETE** (existing contacts only). Four validation alerts (first name, number, dialable, duplicate) return to the offending field. First is required, last optional. X/Esc return to where the form was opened; a save from the compose picker returns to compose with the contact in TO |
+| library | ↑↓ through the books (↑ past the first → header; Enter there → home); Enter opens a book (a file that cannot be read says why on a stop alert); Esc → home |
+| reader | → ↓ Enter Space = next page; ← ↑ Backspace = previous; `+`/`=` bigger text, `-`/`_` smaller; Esc/`q` → library. The ends of the book and of the size range raise a stop alert; Enter/Esc returns to the page |
 | stub | Enter/Esc → the screen it came from, state intact |
 | calls_list / dial / outgoing / incoming / in_call | unchanged in 0.2.1 and **simulated** — there is no telephony until the cellular modem exists |
 
@@ -116,6 +119,14 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 
 ### **Sending**
 `send_reply()` stores the message as **SENDING…** and returns; a worker thread hands it to `_transport_send()` so the keyboard never waits on the network. With no modem and Twilio switched off, `_transport_send` raises `no service`, so **NOT SENT is the phone's normal outcome today**, not an error case. The path to Twilio still exists if credentials are set. In the simulator, `KYPHONE_SIM_SEND=sent` makes the fake radio succeed (default: not sent, like the phone).
+
+### **Reader (books)**
+*   **Loading books:** copy `.epub` files into `data/books/` on the Radxa (no upload screen yet). READ lists them by title with progress; the list is rescanned each time it opens. DRM'd, corrupt or picture-only books are listed and explain themselves when opened.
+*   **Modules** (all standard library, importable without hardware): `reader_epub.py` reads the zip → OPF → spine, titles from the EPUB 3 nav or EPUB 2 NCX, chapters as `('p'|'h', text)` paragraphs reduced to drawable ASCII; chapters load **lazily** (opening a 2.6M-character novel takes 0.09 s on the Radxa; parsing it all took 5.7 s). `reader_layout.py` wraps with the exact glyph advances the panel sums, centres headings and scene breaks, paginates a chapter, and packs a page into frames. `reader_fonts.py` is **generated** from the four FreeSerif headers (`tools/make_reader_fonts.py`; never edit it).
+*   **Position** = (chapter, character offset in that chapter), independent of font size, so a change of size lands on the page containing the place. Saved to `data/reading.json` (`{font, books: {file:size → {chapter, offset, pct}}}`) after every page. Book progress (%) is by file size, so approximate.
+*   **Refresh policy:** the Radxa asks for a *full* (flashing) refresh when a book opens, on a new chapter, a new font size, after a stop alert and every 8th turn (`READER_FULL_EVERY`); otherwise partial.
+*   **Text limits:** printable ASCII only (accents stripped, typographic punctuation reduced, anything else `?`); no images, bold or italic; no chapter menu yet.
+*   **Sending a page:** `push_page(frames)` queues the whole page as ONE item (the sender otherwise keeps only the latest command); frames go out back to back and the Inkplate refreshes only on the last. If a newer command arrives mid-page the rest is dropped (nothing was shown), so fast paging skips pages instead of queueing them.
 
 ### **One command = one frame**
 Every screen is drawn from **one command of at most 253 characters** (`MAX_COMMAND_CHARS`; `PAYLOAD_BYTES` 256 minus the 3-byte header), so:
@@ -142,28 +153,33 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 | Contact form | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save, 4 delete; kind `N` new, `E` edit |
 | Stop alert | `STUB\|title\|body` |
 | Confirm | `CONFIRM\|title\|body\|go\|keep\|sel` — sel `D` / `K` |
+| Library | `LIBRARY\|sel\|title·author·pct\|…` — sel −1 back, else the row in the window; ≤5 rows; no rows = NO BOOKS |
+| Book text | `RTEXT\|size\|row\|S/-\|line·line·…` — size `S M L X` (FreeSerif 9/12/18/24pt), `row` = the first line's row (digits only), `S` = first frame of a page: clear. Draws only; never refreshes. Blank lines are empty fields |
+| Book footer | `RFOOT\|P/F\|left\|right` — the footer rule, chapter title at the left margin, `12/40  35%` at the right; then refresh: `P` partial, `F` full. Always a page's last frame |
 | Call screens | `DIAL\|…`, `CALLSTATE\|OUT/IN/ACTIVE\|name\|mm:ss` (unchanged) |
 
 ### **Inkplate firmware**
 *   **`ui_screens.h`** draws every OS 0.2.1 screen with the Adafruit GFX built-in font, ported from `simulator.py`. It depends only on `display.setCursor / setTextSize / setTextColor / print / fillRect / drawRect / drawBitmap`, so the same code also builds on a computer (below). **`ui_icons.h`** holds the home-menu bitmaps and is **generated** — edit `tools/make_icons.py`, never the header.
 *   `Inkplate_SPI_Peripheral.ino` keeps the V4 transport, the lock screen (with its fixed cat bitmap), dial, call state and the OS 0.0 screens. Command handling is `handle_command()`, shared by the SPI link and a **USB preview**: a line `@<command>` on the USB serial port draws that screen as if the Radxa had sent it (`tools/preview_screens.py`), so screens can be checked on the panel without the Radxa.
 *   **GFX geometry:** a size-N glyph is a 5×7 shape in a 6×8 cell scaled by N, so its baseline sits `7*N` below the cursor. `ui_text()` draws at a baseline, which is how the designer's measured baselines are used directly. Bold is printing twice, one pixel apart. The design's 18 px text is textSize 2 (16 px) on the device.
+*   **`ui_reader.h`** draws book pages with the four FreeSerif fonts (vendored into `Inkplate_SPI_Peripheral/fonts/`, one include line removed — see `assets/freeserif-NOTICE.txt`). `handle_command()` routes `RTEXT`/`RFOOT` **before** its clear-and-refresh path. A GFX custom font's cursor y is the baseline; row *r* sits on `24 + r*yAdvance + (3*yAdvance)/4`, the same integer rule as `reader_layout.baseline()`. It turns text wrap off while drawing and restores the built-in font afterwards.
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Three suites, 253 tests (`test_state_machine.py` 196, `test_simulator.py` 34, `test_firmware_host.py` 23):
+Seven suites, 411 tests (`test_state_machine.py` 196, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_simulator.py` 46, `test_firmware_host.py` 36):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
+*   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
 *   **`test_firmware_host.py`** — builds `ui_screens.h` for the computer with `tests/firmware_host/` (a fake display using the real GFX font) and checks exact geometry, that firmware and emulator agree on every rule and inverted row, and memory safety (thousands of malformed and maximum-length commands under the address and undefined-behaviour sanitizers). Needs `clang++` and Adafruit_GFX's `glcdfont.c`; skips otherwise.
 
 ```
-KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
+KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
 ```
-Name the three files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `253 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `411 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 
-Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/preview_screens.py` (draw screens on the real panel over USB; use the system `/usr/bin/python3`, which has pyserial), `flash_macmini.sh` (compile and flash from the Mac mini), `serial_log_macmini.py` (streams the Inkplate's serial output to `/tmp/inkplate_serial.log`).
+Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/make_reader_fonts.py [--check]` (book-font tables; `preview_screens.py --book x.epub --turns 10` sends real pages to the panel over USB and times them; `--dry-run` shows the frames), `tools/preview_screens.py` (draw screens on the real panel over USB; use the system `/usr/bin/python3`, which has pyserial), `flash_macmini.sh` (compile and flash from the Mac mini), `serial_log_macmini.py` (streams the Inkplate's serial output to `/tmp/inkplate_serial.log`).
 
 ### **Simulator**
 ```
@@ -172,7 +188,7 @@ python3 spi_bridge/kyphone_os.py --sim
 Renders every screen in a 600×600 pygame window with full keyboard navigation. Environment: `KYPHONE_SIM_SEND=sent|not_sent`, `KYPHONE_HOME_STYLE=icons|both|words`, `KYPHONE_DATA_DIR=<folder>` (where `contacts.json` and `messages.json` live; default `data/` beside `spi_bridge/`). The emulator's text is narrower than the panel's fixed 6×8-cell font, so wrapping follows the device figures (composer 30 columns, bubbles 20) rather than the font.
 
 ### **Deploying**
-*   **Radxa:** systemd `kyphone.service` runs `spi_bridge/kyphone_os.py` as root from `~/kyphone`. To update: copy `kyphone_os.py`, `simulator.py`, `home_icons.py`; `sudo systemctl restart kyphone`; check `journalctl -u kyphone` and `/tmp/inkplate_serial.log` (the Inkplate logs each command it receives). The Radxa's git clone is not kept in step — files are copied in.
+*   **Radxa:** systemd `kyphone.service` runs `spi_bridge/kyphone_os.py` as root from `~/kyphone`. To update: copy `kyphone_os.py`, `simulator.py`, `home_icons.py` and (reader) `reader_epub.py`, `reader_layout.py`, `reader_fonts.py`; put books in `~/kyphone/data/books/`; `sudo systemctl restart kyphone`; check `journalctl -u kyphone` and `/tmp/inkplate_serial.log` (the Inkplate logs each command it receives). The Radxa's git clone is not kept in step — files are copied in.
 *   **Inkplate:** `flash_macmini.sh`, or write only the app image at `0x10000` with esptool (the bootloader and partition table do not change). **Stop `serial_log_macmini.py` first** — it holds the port — and start it again afterwards.
 *   **Always back up both first.** Inkplate: `esptool read_flash 0 0x400000 <file>` gives an exact 4 MB rollback (about 6 minutes at 115200). Radxa: copy `spi_bridge/`, `data/` and the unit file. Python and firmware must ship **together** when a wire format changes.
 
@@ -186,8 +202,9 @@ Renders every screen in a 600×600 pygame window with full keyboard navigation. 
 *   `spi_bridge/simulator.py` — pygame simulator (`--sim`); mirrors the firmware's screens. `spi_bridge/home_icons.py` — generated icon bitmaps for it.
 *   `spi_bridge/input_handler.py`, `trackpad_handler.py` — evdev keyboard and trackpad readers; forward nav keys and `CHAR:<c>`.
 *   `spi_bridge/Inkplate_SPI_Peripheral/Inkplate_SPI_Peripheral.ino` — firmware: transport, lock screen, dial/call state, `handle_command()`, USB preview. `ui_screens.h` — the OS 0.2.1 renderers. `ui_icons.h` — generated bitmaps.
-*   `spi_bridge/tools/` — `make_icons.py`, `preview_screens.py`. `spi_bridge/assets/` — the icon licence notice.
-*   `spi_bridge/tests/` — `test_state_machine.py`, `test_simulator.py`, `test_firmware_host.py`, `firmware_host/` (fake display, host renderer, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
+*   `spi_bridge/reader_epub.py`, `reader_layout.py`, `reader_fonts.py` (generated) — the reader's parser, layout and font tables; `spi_bridge/Inkplate_SPI_Peripheral/ui_reader.h` and `fonts/` — the firmware side.
+*   `spi_bridge/tools/` — `make_icons.py`, `make_reader_fonts.py`, `preview_screens.py`. `spi_bridge/assets/` — the icon and font licence notices.
+*   `spi_bridge/tests/` — the seven test files above, `epub_fixtures.py`, `firmware_host/` (fake display with GFX custom-font printing, `render_host.cpp`, `render_reader.cpp`, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
 *   `docs/02-design/design_handoff_os_0_2/` — the design spec, geometry table, prototypes and captures.
 *   `planning/os-0.2.1-build-plan.md` — build status, wire changes, decisions, rollbacks. `planning/kyphone_backlog.md`, `kyphone_milestones.md` — longer-range plans.
 *   `flash_macmini.sh` (untracked, machine-specific), `serial_log_macmini.py`.
@@ -223,6 +240,9 @@ Non-obvious facts that will bite future maintainers if undocumented.
 *   **`reclaim_pin15_for_gpio()` must be called after every `display.display()`**, not just at startup. The Inkplate library re-steals Pin 15 on every refresh. The firmware already does this — do not remove it.
 *   **`PAYLOAD_BYTES = 256` must stay in sync** between `kyphone_os.py` and the `.ino` (and `MAX_COMMAND_CHARS` = 253 follows from it). There is no compile-time check.
 *   **Wire changes need every layer at once:** `kyphone_os.py`, `simulator.py`, `ui_screens.h`, the tests, and the wire table above. Several things exist in more than one place and are guarded by tests: `wrap_words` (`kyphone_os.py` and `simulator.py`, asserted equal; `ui_screens.h` covered by the host geometry tests), the home menu order (`HOME_MENU`, the simulator's list, `labels[]` in `ui_screens.h`, `make_icons.ORDER`), and the generated icon files (`make_icons.py --check`).
+*   **The reader geometry lives in three places** — `reader_layout.py` (`TEXT_X`, `TOP`, the baseline rule, footer rows), `ui_reader.h` (`READER_*`) and the emulator (which uses `reader_layout`) — with no compile-time link. `test_firmware_host.py` compares firmware pixels to the layout module's glyph ink and to the emulator's frame, so a drift fails a test. Change all three together, and flash the firmware together with the Python: an old firmware draws `RTEXT` frames as stray text.
+*   **Vendored font headers must not `#include <Adafruit_GFX.h>`.** That include makes the Arduino build link the standalone Adafruit GFX library next to the copy `Inkplate.h` bundles (duplicate-symbol link errors). The four FreeSerif headers have that one line replaced by a comment.
+*   **`~/Documents/Arduino/libraries` on the Mac mini can be iCloud-evicted** ("dataless" files that fail with `Operation timed out`; seen with `Adafruit_MonoOLED.cpp/.h`). The reader firmware does not pull that library in, so `flash_macmini.sh` still compiles; if a build ever complains about a library file timing out, open the file in Finder to make macOS download it.
 *   **`state['lock']` is not re-entrant.** Never call a helper that takes it (`_contact_view`, `_thread_messages`, `resolve_peer`, `get_threads`, …) from inside a `with state['lock']:` block — that deadlocks. It happened twice during development; compute the value first, then take the lock.
 *   **Importing `kyphone_os` touches `data/`** (it loads contacts and may migrate/rewrite the file), and the simulator reads and writes it too. Set `KYPHONE_DATA_DIR` to a scratch folder for tests and experiments; it is read once at import, so it must be set before the process starts.
 *   **Closing the Inkplate's USB serial port resets it** (the DTR/RTS pulse), so the preview tool leaves the board rebooting after its last screen; the panel keeps its image. Open the port with DTR and RTS off, as `serial_log_macmini.py` does.
@@ -245,4 +265,4 @@ KyPhone is more than a technical exercise; it is a revolt against the attention 
 
 *   **The Problem:** Smartphones are designed to keep us connected to people who *aren't* around, often at the expense of those who *are*. They are purveyors of "social time" that cannibalize real-world presence.
 *   **The Vision:** A "Minimal Phone" (not just a "Dumb Phone"). Moving away from the sterile black/white brick design toward something expressive, intentional, and worth owning.
-*   **Current Priority:** OS 0.2.1 is built and mostly on the devices (see `planning/os-0.2.1-build-plan.md`). Next: flash the icon home menu; click through every screen on the real phone with the Bluetooth keyboard connected; push and merge the branch; then a cellular modem so a send can actually leave the phone.
+*   **Current Priority:** OS 0.2.1 is built and mostly on the devices (see `planning/os-0.2.1-build-plan.md`); the **reader** is built and tested on a computer (`planning/reader-build-plan.md`) but not flashed. Next, at the phone: flash the firmware (icons + reader), copy the Python to the Radxa, put a book in `data/books/`, click through every screen with the Bluetooth keyboard connected and time real page turns; push and merge the branches; then a cellular modem so a send can actually leave the phone.

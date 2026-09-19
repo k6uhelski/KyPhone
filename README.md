@@ -16,6 +16,7 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 - **Contacts:** look up by name, create, edit and delete (with a confirmation), duplicate and bad-number checks, numbers stored as `(555) 010-0001` and matched by their last ten digits.
 - **Stop alerts:** anything the phone will not do (READ and LISTEN aren't built yet, an empty message, no recipient) says so on screen instead of doing nothing.
 - **Home menu:** TEXT · CALL · CONTACTS · READ · LISTEN with pixel-art icons.
+- **Reader (built, not yet on the phone):** READ opens a library of the `.epub` files in `data/books/`; a book is read a page at a time with four font sizes (FreeSerif 9/12/18/24pt), remembers where you stopped, and refreshes the panel in full every few turns to clear ghosting. Text only for now.
 - **Long lists and long text:** lists are windowed and the composer shows the end of a long draft, so nothing is cut mid-word or overflows a frame.
 - **Auto-start on boot:** the `kyphone` systemd service launches the OS on the Radxa.
 - **Emulator:** the pygame emulator, run with the `--sim` flag as shown under Running it below, mirrors the panel and is what the tests drive.
@@ -23,7 +24,7 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 ### **What does not work yet**
 - **Nothing can actually be sent.** Twilio is no longer paid for and is switched off, and there is no cellular modem yet, so a sent message ends as NOT SENT. That is the phone's normal outcome for now.
 - **Calls are simulated.** The CALL screens exist but there is no telephony.
-- **READ and LISTEN** are placeholders that show a stop alert.
+- **LISTEN** is a placeholder that shows a stop alert. **READ** works in the emulator and on a computer-built copy of the firmware, but has not been flashed to the panel yet.
 
 ### **Running it**
 ```bash
@@ -36,16 +37,20 @@ python3 spi_bridge/kyphone_os.py --sim
 #   KYPHONE_SIM_SEND=sent        make the fake radio succeed (default: not sent)
 #   KYPHONE_HOME_STYLE=icons|both|words
 
-# Tests (name the three files; do not point pytest at the whole tests/ folder)
+# Books: copy .epub files into data/books/ (any Project Gutenberg EPUB works), then READ opens them.
+# Reader keys: right/down/enter/space = next page, left/up = back, + / - = font size, esc = library.
+
+# Tests (name the files; do not point pytest at the whole tests/ folder)
 pip3 install pytest
 KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py \
-                  spi_bridge/tests/test_simulator.py \
-                  spi_bridge/tests/test_firmware_host.py   # expect 253 passed
+  spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
+  spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 411 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
 ### **What's next**
-- Flash the icon home menu and click through every screen on the real phone
+- Flash the firmware (icons and reader) and click through every screen on the real phone; time real page turns
 - Merge the OS 0.2.1 branch
 - SIM7600G-H cellular modem (direct AT commands), so a send can leave the phone
 - BlackBerry Q10 keyboard integration
@@ -54,6 +59,16 @@ The emulator and the tests read and write the `data/` folder beside `spi_bridge/
 ---
 
 ## **Development Log**
+
+### **September 2026: the reader**
+
+An EPUB reader, built and tested on a computer (branch `reader-build`); not flashed yet.
+
+- `reader_epub.py` reads EPUB 2 and 3 with the standard library only and loads chapters lazily: a 2.6-million-character novel opens in 0.09 s on the Radxa.
+- `reader_layout.py` wraps text with the exact glyph widths the panel uses and paginates each chapter; a saved place survives a change of font size.
+- The Inkplate draws pages with the FreeSerif fonts from a new `ui_reader.h`; a page is several SPI frames and the panel refreshes only on the last.
+- The emulator draws the same glyph bitmaps, and the tests show the firmware, the layout module and the emulator agree pixel for pixel at all four sizes.
+- 158 new tests (411 in all); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
 
 ### **September 2026: OS 0.2.1**
 
@@ -65,7 +80,7 @@ Tested texting, creating a contact and deleting a contact in the emulator, took 
 - Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
 - The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
 - Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
-- There are now 253 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- There are now 411 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
 - Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**
