@@ -1,5 +1,5 @@
 # KyPhone OS 0.2.1 — Build Plan
-*Updated: September 18, 2026 · branch `os-0.2.1-build` · 14 local commits, nothing pushed · Inkplate flashed, Radxa not yet*
+*Updated: September 18, 2026 · branch `os-0.2.1-build` · 15 local commits, nothing pushed · **Inkplate flashed and Radxa deployed (2026-09-18)***
 
 **Goal.** Bring the running UI (OS 0.2) up to the OS 0.2.1 design in
 `docs/02-design/design_handoff_os_0_2/`, which answers the undefined behaviours found by click-testing 0.2 in
@@ -22,8 +22,8 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 7 | Home menu reorder (CONTACTS third) | ✅ done |
 | 8 | Home menu icons (pixel bitmaps) | ⬜ separate task, out of this build |
 | 9 | Name the call screens in a `kyphone_os.py` docstring | ✅ done |
-| F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | 🔄 written, tested on a computer, **flashed 2026-09-18**; ten screens shown on the panel — **awaiting your visual check** |
-| D | Deploy the Python to the Radxa; docs (`CLAUDE.md`, wire tables) | ⬜ after you have looked at the panel |
+| F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ✅ done — flashed 2026-09-18; ten screens put up on the panel and photographed; layout as designed |
+| D | Deploy the Python to the Radxa; docs (`CLAUDE.md`, wire tables) | 🔄 **deployed 2026-09-18 19:17**; `CLAUDE.md` still to update |
 
 ¹ The *thread* composer and the character rules came with step 3; the *New Message* screen's own limits (TO 20, message
 uncapped and wrapped) came with step 5.
@@ -71,13 +71,20 @@ input saved silently or did nothing · SEND with nothing to send did nothing · 
 - **Checked on the panel:** `tools/preview_screens.py` sends `@<command>` over USB serial and the board draws it; ten screens were
   put up and the board acknowledged each. **How they look to a person is for you to confirm.**
 - **Flashed:** app section only (bootloader and partition table were byte-identical), 2026-09-18, hash verified.
-- **Radxa service is stopped** during the preview so its clock does not repaint the panel; it comes back at deploy.
+- The Radxa service was stopped during the preview so its clock would not repaint the panel, then started again at deploy.
 - **Rollbacks (both taken before touching anything):**
   - Inkplate: `~/kyphone-backups/inkplate-flash-2026-09-18.bin` (the full 4 MB as it was; sha256 alongside). Restore with
     `esptool --chip esp32 --port /dev/cu.usbserial-1140 --baud 115200 write_flash 0 <that file>`.
   - Radxa: `~/kyphone_backup_2026-09-18/` (deployed `spi_bridge`, `data`, `kyphone.service`). Restore: `sudo systemctl stop kyphone;
     cp -a ~/kyphone_backup_2026-09-18/spi_bridge_deployed/. ~/kyphone/spi_bridge/; sudo systemctl start kyphone`.
-- **Deploy order:** you confirm the panel looks right → copy the new Python to the Radxa → restart its service → check its log and the panel.
+- **Deployed (2026-09-18 19:17).** Copied `kyphone_os.py` and `simulator.py` to `~/kyphone/spi_bridge/` on the Radxa. First ran the 191
+  state-machine tests there on its own Python 3.9.2 (pass, in a scratch folder). Service `active`, 0 restarts, banner `KyPhone OS 0.2.1`;
+  `contacts.json` / `messages.json` byte-identical to the backup. **End-to-end SPI check:** the Inkplate's own log shows it received the
+  Radxa's `LOCK` command (2,048 bits, no errors), drew it, and reports screen `LOCK`.
+- **Not yet exercised on the real phone:** navigating the new screens with a real keyboard. The Radxa logs `No keyboard found`; the
+  Bluetooth keyboard has to be connected first. Twilio is still off, so a send ends as NOT SENT (by design).
+- **The Radxa's git clone is not updated** (its working tree was copied into, on an old commit). After the branch is pushed and merged,
+  `git pull` there will need its local edits reconciled.
 - `flash.sh` (tracked) still points at a `~/Desktop/kyphone` that no longer exists; `flash_macmini.sh` is the right one for this Mac.
 
 ## Wire changes the firmware must implement
