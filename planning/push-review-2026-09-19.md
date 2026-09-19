@@ -4,21 +4,22 @@
 `k6uhelski/kyphone` is **public** (an unauthenticated request to its API returns 200), so anything pushed is visible to everyone.
 
 ## What would be pushed
-Two local branches, stacked:
+Three local branches, stacked (each includes the ones above it):
 
 | Branch | Ahead of `origin/main` | Change vs `main` |
 | :--- | :--- | :--- |
 | `os-0.2.1-build` | 20 commits | 38 files, +10,681 / −1,706 lines |
-| `reader-build` (includes the 20 above) | 27 commits | 55 files, +16,239 / −1,719 lines |
+| `reader-build` (also the home-menu reorder and the empty-TEXT fix) | 27 commits | 55 files, +16,239 / −1,719 lines |
+| `music-build` (LISTEN) | 39 commits | 64 files, +20,190 / −1,744 lines |
 
-The 7 reader commits alone are 29 files, +5,596 / −51. 73% of the 16,239 added lines are tests (25%), generated data such as font and
+The reader commits alone are 29 files, +5,596 / −51; the music commits alone are 17 files, +3,636 / −80. 73% of the 16,239 added lines are tests (25%), generated data such as font and
 icon bitmaps (14%), and the design handoff docs (34%); the working code is the rest.
 
-All 27 commits are authored as `k6uhelski <61721323+k6uhelski@users.noreply.github.com>`, the GitHub no-reply address, so
+All 39 commits are authored as `k6uhelski <61721323+k6uhelski@users.noreply.github.com>`, the GitHub no-reply address, so
 no personal email address is published.
 
 ## What I scanned for, and found
-The scan covered every added line in the 55 files (generated bitmap data and the design prototype excluded from the text
+The scan (re-run 2026-09-19 after the music work, same result) covered every added line in the 64 files (generated bitmap data and the design prototype excluded from the text
 patterns, checked separately):
 
 | Check | Result |
@@ -46,8 +47,8 @@ patterns, checked separately):
    exception) plus tables generated from them. `spi_bridge/assets/freeserif-NOTICE.txt` explains this. FreeFont's exception
    is meant for exactly this use, but if you want a definite answer for a published repo, read the licence text at
    gnu.org/software/freefont before pushing. Not legal advice.
-5. **How to land it.** Either (a) push both branches and open two stacked PRs (below), or (b) merge locally
-   (`git switch main && git merge --ff-only reader-build`) and push `main` — quicker, no review step, and it puts all 27
+5. **How to land it.** Either (a) push the branches and open three stacked PRs (below), or (b) merge locally
+   (`git switch main && git merge --ff-only music-build`) and push `main` — quicker, no review step, and it puts all 39
    commits on `main` at once. I would use (a) while you are alone in the repo only if you want the PR text kept as history.
 6. **Rotate the Twilio credentials** at some point (they appeared in earlier tool output in a session). Low urgency because
    you stopped paying for the account; not part of the push.
@@ -75,6 +76,31 @@ patterns, checked separately):
 > the Radxa on 2026-09-18 (icons excepted; they ship with the next flash).
 >
 > **Notes.** Twilio is switched off, so a send ends NOT SENT until there is a modem. No secrets or real numbers (scanned).
+
+## Draft PR 3 — `music-build` → `reader-build` (retarget as the earlier ones merge)
+**Title:** Music: play the music on the phone from LISTEN, in the background, through the headphone jack
+
+**Body:**
+> **Problem.** LISTEN was a stop alert. The goal: put music files on the phone and play them, controlled from the e-ink
+> screen, with the music carrying on while you read or text.
+>
+> **Design.** The Radxa does everything: `music_library.py` reads tags and lengths from MP3, FLAC, Ogg/Opus, M4A and WAV with
+> the standard library only; `music_player.py` holds all the playback rules in a `Session` (next, previous, seek, volume,
+> skipping a bad file) over a silent simulated player (emulator, tests) and a GStreamer player for the phone (GStreamer and its
+> Python bindings are already on the Radxa, so nothing new is installed for the headphone jack). LISTEN opens an album list, an
+> album its tracks, a track a now-playing screen. Music keeps playing when you leave; the home menu shows a small mark;
+> a 30-second ticker keeps the elapsed time honest without hammering the e-ink; nothing else is redrawn by the player. Volume
+> (default 40%) and the place you stopped are saved. No new firmware protocol: three screens on the normal path.
+>
+> **Testing.** 586 tests in all (163 new): every tag format from synthetic files, damaged and random files, the cache, a
+> 5,000-track scan, every Session rule, the OS screens against a temp music folder with a hand-advanced clock, emulator pixel
+> tests, firmware pixel parity (bars filled by integer maths in both), sanitizer fuzz of the new commands, firmware
+> compile-checked (12% of program space). The real GStreamer player was also run on the Radxa against a silent output:
+> real-time position, pause, seek, a bad file skipped, queue finished; and every decoder needed is present there.
+> **Not yet heard through the headphone jack, and no real album played** — see `planning/phone-session-checklist.md`.
+>
+> **Notes.** Local files only (no streaming, no accounts). Bluetooth headphones are a planned second phase (PulseAudio's Bluetooth
+> module; the service runs as root, which is the awkward part). The now-playing layout is ours, not a designer's.
 
 ## Draft PR 2 — `reader-build` → `os-0.2.1-build` (retarget to `main` once PR 1 merges)
 **Title:** Reader: load EPUBs on the Radxa, read them on the Inkplate with page turning and four font sizes
