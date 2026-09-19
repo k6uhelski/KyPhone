@@ -31,5 +31,5 @@
 - [ ] Battery + enclosure
 
 ## Polish
-- [ ] Bitmap icon system (1-bit, Adafruit GFX byte arrays)
+- [x] Bitmap icon system (1-bit, Adafruit GFX byte arrays) — done for the home menu in OS 0.2.1: `spi_bridge/tools/make_icons.py`
 - [ ] Font/layout refinements informed by Dieter Rams / early Mac aesthetic

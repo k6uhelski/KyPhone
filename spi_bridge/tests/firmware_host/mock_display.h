@@ -39,6 +39,14 @@ struct MockDisplay {
         else          for (int y = y0; y <= y1; y++) drawPixel(x0, y, c);
     }
 
+    // Adafruit_GFX::drawBitmap: 1 bits are drawn in `color`, 0 bits are left alone.
+    void drawBitmap(int x, int y, const uint8_t* bitmap, int w, int h, uint16_t color) {
+        int byte_width = (w + 7) / 8;
+        for (int j = 0; j < h; j++)
+            for (int i = 0; i < w; i++)
+                if (bitmap[j * byte_width + i / 8] & (128 >> (i & 7))) drawPixel(x + i, y + j, color);
+    }
+
     // Adafruit_GFX::drawChar with the classic font, transparent background.
     void drawChar(int x, int y, unsigned char c, uint16_t color, int size) {
         for (int8_t i = 0; i < 5; i++) {

@@ -174,11 +174,41 @@ class FirmwareFrames(unittest.TestCase):
         f = self.frames['home_contacts']                                       # index 2
         self.assertEqual([self.ink(f, 4, 62 + i * 135 + 4) for i in range(3)], [False, False, True])
 
+    # ── home menu icons ────────────────────────────────────────────────────────
+    def icon_matches(self, frame, name, x, y, selected):
+        from home_icons import ICONS
+        for j, row in enumerate(ICONS[name]):
+            for i in range(56):
+                on = (row >> (55 - i)) & 1
+                is_ink = self.ink(frame, x + i, y + j)
+                if is_ink != (on != selected):          # selected row: ink is paper, the fill is ink
+                    return False
+        return True
+
+    def test_the_firmware_draws_each_icon_bitmap_where_the_design_puts_it(self):
+        f = self.frames['home']                                                  # TEXT selected
+        for i, name in enumerate(['TEXT', 'CALL', 'CONTACTS']):
+            self.assertTrue(self.icon_matches(f, name, 272, 62 + i * 135 + 39, i == 0), name)
+
+    def test_icons_and_words_are_centred_as_one_unit(self):
+        x0 = (600 - (56 + 28 + 4 * 36)) // 2
+        self.assertTrue(self.icon_matches(self.frames['home_both'], 'CALL', x0, 62 + 135 + 39, True))
+
+    def test_words_style_draws_no_icon(self):
+        self.assertFalse(self.icon_matches(self.frames['home_words'], 'TEXT', 272, 62 + 39, True))
+
+    def test_the_more_below_cue_is_a_downward_funnel(self):
+        f = self.frames['home']
+        for y, x0, x1 in ((581, 574, 587), (586, 577, 584), (591, 580, 582)):
+            self.assertTrue(all(self.ink(f, x, y + 1) for x in range(x0, x1 + 1)), (y, x0, x1))
+            self.assertFalse(self.ink(f, x0 - 1, y + 1))
+            self.assertFalse(self.ink(f, x1 + 1, y + 1))
+
 
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMatchesEmulator(unittest.TestCase):
     """Both renderers draw the same rules, fills and borders; only their fonts differ."""
-    NAMES = ['home', 'home_contacts', 'texts', 'texts_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
+    NAMES = ['home', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete']
 

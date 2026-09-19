@@ -235,6 +235,12 @@ ALERTS = {
 # alerts in this build and cost nothing by sitting below the fold.
 HOME_MENU = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']
 
+# How the home menu looks: pixel icons (the design's default), icons with their
+# words, or words only. Set KYPHONE_HOME_STYLE=icons|both|words; the renderer draws
+# whichever it is told, so changing it needs no reflash.
+HOME_STYLES = {'icons': 'I', 'both': 'B', 'words': 'W'}
+HOME_STYLE  = HOME_STYLES.get(os.environ.get('KYPHONE_HOME_STYLE', 'icons'), 'I')
+
 state = {
     'screen':           'lock',
     'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=CONTACTS 3=READ 4=LISTEN
@@ -584,7 +590,7 @@ def push_home2():
     with state['lock']:
         unread = sum(1 for m in state['messages'] if not m['read'])
         home_index = state['home_index']
-    push_screen(f"HOME2|{time_str}|{home_index}|{unread}")
+    push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}")
 
 
 def push_texts():

@@ -1,5 +1,5 @@
 # KyPhone OS 0.2.1 — Build Plan
-*Updated: September 18, 2026 · branch `os-0.2.1-build` · 15 local commits, nothing pushed · **Inkplate flashed and Radxa deployed (2026-09-18)***
+*Updated: September 18, 2026 · branch `os-0.2.1-build` · 16 local commits, nothing pushed · **Inkplate flashed and Radxa deployed (2026-09-18); the menu icons are built but not yet on the devices***
 
 **Goal.** Bring the running UI (OS 0.2) up to the OS 0.2.1 design in
 `docs/02-design/design_handoff_os_0_2/`, which answers the undefined behaviours found by click-testing 0.2 in
@@ -20,7 +20,7 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 5 | New-contact form; four validation alerts; empty-send and no-recipient alerts; New Message screen limits | ✅ done |
 | 6 | Delete a contact + confirm screen (default KEEP CONTACT) | ✅ done |
 | 7 | Home menu reorder (CONTACTS third) | ✅ done |
-| 8 | Home menu icons (pixel bitmaps) | ⬜ separate task, out of this build |
+| 8 | Home menu icons (pixel bitmaps) | ✅ built, tested and compiled — **not yet flashed or deployed** (see below) |
 | 9 | Name the call screens in a `kyphone_os.py` docstring | ✅ done |
 | F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ✅ done — flashed 2026-09-18; ten screens put up on the panel and photographed; layout as designed |
 | D | Deploy the Python to the Radxa; docs (`CLAUDE.md`, wire tables) | 🔄 **deployed 2026-09-18 19:17**; `CLAUDE.md` still to update |
@@ -87,6 +87,23 @@ input saved silently or did nothing · SEND with nothing to send did nothing · 
   `git pull` there will need its local edits reconciled.
 - `flash.sh` (tracked) still points at a `~/Desktop/kyphone` that no longer exists; `flash_macmini.sh` is the right one for this Mac.
 
+## Home menu icons (step 8) — built, waiting to ship
+- **What:** each home row is a 56×56 pixel icon (pixelarticons, MIT — notice in `spi_bridge/assets/`), as in the design's default. The
+  design has three styles; the renderer draws whichever the wire names, so it can change without reflashing:
+  `KYPHONE_HOME_STYLE=icons` (default) · `both` (icon + word) · `words` (what the phone showed before).
+- **How:** `spi_bridge/tools/make_icons.py` holds the five SVG paths from the design and writes `Inkplate_SPI_Peripheral/ui_icons.h` (firmware)
+  and `spi_bridge/home_icons.py` (emulator) from one source. Its rasteriser (no imaging library) puts a pixel on where the target pixel's
+  centre falls inside the path, as a browser does. **Against the designer's capture the four icons that appear in it overlap 98.7–99.9%**
+  (1 to 8 pixels differ); LISTEN is not in the capture.
+- **Also fixed:** the "more below" mark at the bottom of the home menu pointed the wrong way (an upside-down staircase); it is now the
+  designer's downward funnel, measured from the capture — in both the emulator and the firmware, and it had been wrong since OS 0.2.
+- **Wire:** `HOME2|time|index|unread|style` (style I / B / W). Either side can ship first: old Python + new firmware shows icons; new Python
+  + old firmware ignores the extra field.
+- **Checked:** 250 tests pass (icons pixel-for-pixel in both renderers, all three styles, the funnel, the generator's output up to date,
+  overlap with the capture); firmware compiles (374 KB, 11% of flash, RAM unchanged).
+- **To put it on the phone:** flash the Inkplate (`flash_macmini.sh`, or write `ui` app image as before) and copy `kyphone_os.py`,
+  `simulator.py`, `home_icons.py` to the Radxa. Held back on purpose until you can look at the panel.
+
 ## Wire changes the firmware must implement
 Rules for all screens: one command ≤ 253 characters; fields split on `|`, sub-fields on `·` (U+00B7); printable ASCII
 otherwise.
@@ -101,7 +118,7 @@ otherwise.
 | `CONTACTEDIT` | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save, **4 DELETE**; kind `N` new (title NEW CONTACT, no DELETE) / `E` edit (EDIT CONTACT, DELETE bottom left) |
 | `CONFIRM` | `CONFIRM\|title\|body\|go\|keep\|sel` — replaces `CONFIRMDISCARD`. Destructive button left (2px), safe button right (3px); sel `D` / `K`; opens on `K`. Discard message and delete contact both use it |
 | `STUB` (stop alert) | `STUB\|title\|body` — boxed `!`, body wrapped, **OK drawn inverted** (the only control). Carries every alert: unbuilt feature, validation, empty send, no recipient |
-| `HOME2` | `HOME2\|time\|index\|unread` — shape unchanged, but **index is a position in the new order**: 0 TEXT, 1 CALL, 2 CONTACTS, 3 READ, 4 LISTEN. The renderer pads the unread count to two digits (`03`) and scrolls by `max(0, (index+1)*135 − 538)` |
+| `HOME2` | `HOME2\|time\|index\|unread\|style` — **index is a position in the new order**: 0 TEXT, 1 CALL, 2 CONTACTS, 3 READ, 4 LISTEN. `style` I icons (default) / B icons and words / W words. The renderer pads the unread count to two digits (`03`), scrolls by `max(0, (index+1)*135 − 538)`, and draws the downward "more below" funnel while rows remain below |
 | `COMPOSE` | unchanged shape; the message field is uncapped in state but the wire shows its END behind `...` when it would not fit; renderer wraps it at 30 columns |
 
 ## Decisions and deviations from the design doc

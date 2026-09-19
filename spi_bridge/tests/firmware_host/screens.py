@@ -12,6 +12,9 @@ def r(*f):
 SCREENS = {
     'home': ('HOME2|12:44 PM|0|3', '12_home_contacts_third.png'),
     'home_contacts': ('HOME2|12:44 PM|2|3', None),
+    'home_both': ('HOME2|12:44 PM|1|3|B', None),
+    'home_words': ('HOME2|12:44 PM|0|3|W', None),
+    'home_icons_end': ('HOME2|12:44 PM|4|0|I', None),
     'texts': ('TEXTS|2|' + '|'.join([
         r('Pip Okonkwo', 'omw, 5 min', '1', '6:57 PM'), r('(555) 019-9002', 'Where are you?', '0', '9:29 AM'),
         r('(555) 019-9014', '! thank you!', '0', '8:31 AM'), r('Therapist', 'See you Thursday at 3.', '0', '2:14 PM'),

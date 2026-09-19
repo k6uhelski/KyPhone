@@ -23,6 +23,7 @@ except ImportError:                                   # pragma: no cover
     pygame, _REAL = None, False
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'tools'))
 if _REAL:
     import simulator as sim_module                    # noqa: E402
 
@@ -223,6 +224,91 @@ class SimulatorPixels(unittest.TestCase):
     def test_the_more_below_cue_shows_while_part_of_the_menu_is_below_the_fold(self):
         self.draw('HOME2|12:44 PM|0|3')
         self.assertEqual(self.px(580, 592), BLACK)                              # the widest of the three bars
+
+    # ── home menu icons ──────────────────────────────────────────────────────
+    def icon_matches(self, name, x, y, selected):
+        """Is the 56x56 block at (x, y) exactly the icon bitmap (ink = paper on an inverted row)?"""
+        from home_icons import ICONS
+        ink, paper = (WHITE, BLACK) if selected else (BLACK, WHITE)
+        for j, row in enumerate(ICONS[name]):
+            for i in range(56):
+                want = ink if (row >> (55 - i)) & 1 else paper
+                if self.px(x + i, y + j) != want:
+                    return False
+        return True
+
+    def test_icons_style_draws_each_bitmap_centred_and_39px_down_the_row(self):
+        self.draw('HOME2|12:44 PM|0|3|I')                                        # TEXT selected, others not
+        for i, name in enumerate(['TEXT', 'CALL', 'CONTACTS']):
+            self.assertTrue(self.icon_matches(name, 272, 62 + i * 135 + 39, selected=(i == 0)), name)
+
+    def test_icons_and_words_share_the_row_with_a_28px_gap(self):
+        self.draw('HOME2|12:44 PM|1|0|B')                                        # CALL selected
+        x0 = (600 - (56 + 28 + 4 * 36)) // 2                                     # icon + 28 + "CALL"
+        self.assertTrue(self.icon_matches('CALL', x0, 62 + 135 + 39, selected=True))
+
+    def test_words_style_draws_no_icon(self):
+        self.draw('HOME2|12:44 PM|1|0|W')
+        self.assertFalse(self.icon_matches('CALL', 272, 62 + 135 + 39, selected=True))
+
+    def test_the_unread_count_hangs_24px_right_of_the_icon(self):
+        self.draw('HOME2|12:44 PM|0|3|I')
+        self.assertTrue(self.region_has_ink(272 + 56 + 24, 62 + 55, 272 + 56 + 24 + 40, 62 + 80))   # white on the inverted row
+        self.assertEqual(self.px(272 + 56 + 10, 62 + 67), BLACK)                                    # nothing in the 24px gap
+
+    def test_the_more_below_cue_is_a_downward_funnel(self):
+        self.draw('HOME2|12:44 PM|0|3|I')
+        # 14, 8 and 3px bars, widest on top, centred, at y 581, 586 and 591 (the designer's capture)
+        for y, x0, x1 in ((581, 574, 587), (586, 577, 584), (591, 580, 582)):
+            self.assertTrue(all(self.px(x, y + 1) == BLACK for x in range(x0, x1 + 1)), (y, x0, x1))
+            self.assertEqual(self.px(x0 - 1, y + 1), WHITE)
+            self.assertEqual(self.px(x1 + 1, y + 1), WHITE)
+
+
+CAPTURE = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', '02-design', 'design_handoff_os_0_2',
+                       'screens', '12_home_contacts_third.png')
+
+
+class HomeIconsMatchTheDesign(unittest.TestCase):
+    """The generated bitmaps against the designer's 600x600 capture of the home menu."""
+
+    @unittest.skipUnless(_REAL and os.path.exists(CAPTURE), 'needs real pygame and the design handoff')
+    def test_each_icon_overlaps_the_designers_pixels_by_at_least_98_percent(self):
+        from home_icons import ICONS
+        img = pygame.image.load(CAPTURE)
+        lum = lambda x, y: sum(img.get_at((x, y))[:3]) / 3
+        for r, name in enumerate(['TEXT', 'CALL', 'CONTACTS', 'READ']):        # LISTEN is not in the capture
+            top = 62 + r * 135
+            selected = lum(4, top + 4) < 110
+            inter = union = 0
+            for y in range(56):
+                for x in range(56):
+                    v = lum(272 + x, top + 39 + y)
+                    cap = (v > 150) if selected else (v < 110)
+                    mine = (ICONS[name][y] >> (55 - x)) & 1
+                    inter += cap and mine
+                    union += cap or mine
+            self.assertGreaterEqual(inter / union, 0.98, name)
+
+    def test_generated_files_are_up_to_date_with_the_generator(self):
+        import make_icons
+        self.assertEqual(make_icons.main(['--check']), 0)
+
+    def test_the_menu_order_matches_the_os_and_the_renderers(self):
+        import make_icons
+        from home_icons import MENU_ORDER
+        self.assertEqual(MENU_ORDER, make_icons.ORDER)
+        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN'])
+        with open(os.path.join(os.path.dirname(__file__), '..', 'Inkplate_SPI_Peripheral', 'ui_screens.h')) as f:
+            src = f.read()
+        self.assertIn('{"TEXT", "CALL", "CONTACTS", "READ", "LISTEN"}', src)
+
+    def test_every_icon_is_56_rows_of_56_bits_with_ink(self):
+        from home_icons import ICONS
+        for name, rows in ICONS.items():
+            self.assertEqual(len(rows), 56, name)
+            self.assertTrue(all(0 <= r < (1 << 56) for r in rows), name)
+            self.assertGreater(sum(bin(r).count('1') for r in rows), 300, name)
 
 
 class WrapParity(unittest.TestCase):

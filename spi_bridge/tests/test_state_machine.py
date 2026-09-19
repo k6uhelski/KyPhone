@@ -1761,7 +1761,7 @@ class TestHomeMenuOrder(unittest.TestCase):
             kyphone_os.handle_key('KEY_ESC')
         self.assertEqual(kyphone_os.state['screen'], 'home')
         self.assertEqual(kyphone_os.state['home_index'], 2)
-        self.assertTrue(_wire(ps).endswith('|2|' + _wire(ps).split('|')[-1]))   # HOME2|time|2|unread
+        self.assertEqual(_wire(ps).split('|')[2], '2')                          # HOME2|time|2|unread|style
 
     def test_down_walks_the_new_order_and_stops_at_listen(self):
         reset_state(screen='home', home_index=0)
@@ -1771,6 +1771,26 @@ class TestHomeMenuOrder(unittest.TestCase):
                 kyphone_os.handle_key('KEY_DOWN')
                 seen.append(kyphone_os.HOME_MENU[kyphone_os.state['home_index']])
         self.assertEqual(seen, ['CALL', 'CONTACTS', 'READ', 'LISTEN', 'LISTEN', 'LISTEN'])
+
+class TestHomeStyle(unittest.TestCase):
+    def wire(self, style=None):
+        reset_state(screen='home', home_index=0)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            if style is None:
+                kyphone_os.push_home2()
+            else:
+                with patch.object(kyphone_os, 'HOME_STYLE', style):
+                    kyphone_os.push_home2()
+        return _wire(ps)
+
+    def test_the_wire_carries_the_style_and_icons_are_the_default(self):
+        self.assertEqual(kyphone_os.HOME_STYLE, 'I')
+        self.assertTrue(self.wire().endswith('|I'))
+        self.assertTrue(self.wire('B').endswith('|B'))
+        self.assertTrue(self.wire('W').endswith('|W'))
+
+    def test_the_setting_names_map_to_the_wire_letters(self):
+        self.assertEqual(kyphone_os.HOME_STYLES, {'icons': 'I', 'both': 'B', 'words': 'W'})
 
 
 if __name__ == '__main__':
