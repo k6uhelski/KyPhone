@@ -280,8 +280,9 @@ class Simulator:
         self._draw_status_group(header_fg, header_bg, mid_y=header_h // 2)
         self._line(header_h, weight=2)
 
-        # 5-row menu (TEXT/CALL/READ/LISTEN/CONTACTS), scrolling: 4 fill the
-        # panel, the 5th scrolls into view when selected.
+        # 5-row menu (TEXT/CALL/CONTACTS/READ/LISTEN), scrolling: the first three
+        # rows and part of the fourth show on first view; the rest scroll into
+        # view as the selection moves down.
         row_h     = 135
         view_top  = header_h + 2
         view_h    = self.HEIGHT - view_top
@@ -309,20 +310,20 @@ class Simulator:
             # Unread count hangs to the right of the TEXT row's content
             if label == 'TEXT' and unread > 0:
                 count_x = label_x + label_w + 24
-                self._text(str(unread), count_x, label_y + (6 * 8 - 3 * 8) // 2, 3, fg)
+                self._text('%02d' % unread, count_x, label_y + (6 * 8 - 3 * 8) // 2, 3, fg)   # two digits, as in the design: 03
 
             self._line(y + row_h, weight=1)
         self._surface.set_clip(prev_clip)
 
         # "More below" chevron — three shrinking bars, bottom right
-        if n > 4 and home_index <= 3:
+        if n * row_h - shift > view_h:                    # part of the menu is still below the fold
             cx = self.WIDTH - 12
             cy = self.HEIGHT - 6
             for w in (14, 8, 3):
                 pygame.draw.rect(self._surface, BLACK, (cx - w, cy - 3, w, 3))
                 cy -= 5
 
-    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']
+    HOME_MENU = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']    # must match kyphone_os.HOME_MENU (a test asserts it)
 
     def _draw_status_group(self, fg, bg, mid_y):
         """Battery block + percentage + 4-bar signal staircase, right-aligned

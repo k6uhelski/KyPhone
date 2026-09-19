@@ -154,15 +154,17 @@ class TestHomeScreen(unittest.TestCase):
 
     @patch.object(kyphone_os, 'push_screen')
     def test_enter_read_goes_to_stub(self, _ps):
-        reset_state(screen='home', home_index=2)
-        kyphone_os.handle_key('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['screen'], 'stub')
-
-    @patch.object(kyphone_os, 'push_screen')
-    def test_enter_listen_goes_to_stub(self, _ps):
         reset_state(screen='home', home_index=3)
         kyphone_os.handle_key('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'stub')
+        self.assertEqual(kyphone_os.state['stub_key'], 'READ')
+
+    @patch.object(kyphone_os, 'push_screen')
+    def test_enter_listen_goes_to_stub(self, _ps):
+        reset_state(screen='home', home_index=4)
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'stub')
+        self.assertEqual(kyphone_os.state['stub_key'], 'LISTEN')
 
     @patch.object(kyphone_os, 'push_screen')
     def test_esc_goes_to_lock_and_advances_quote(self, _ps):
@@ -1707,6 +1709,68 @@ class TestDiscardConfirmStillWorks(SendBase):
         with patch.object(kyphone_os, 'push_screen'):
             kyphone_os.handle_key('KEY_ESC')
         self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Home menu order (OS 0.2.1 step 7)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestHomeMenuOrder(unittest.TestCase):
+    def setUp(self):
+        self._save_patch = patch.object(kyphone_os, 'save_messages')
+        self._save_patch.start()
+
+    def tearDown(self):
+        self._save_patch.stop()
+
+    def enter_row(self, index, **state):
+        reset_state(screen='home', home_index=index, **state)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_ENTER')
+        return _wire(ps)
+
+    def test_contacts_is_third(self):
+        self.assertEqual(kyphone_os.HOME_MENU, ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN'])
+
+    def test_each_row_opens_its_screen(self):
+        self.enter_row(0);  self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+        self.enter_row(1);  self.assertEqual(kyphone_os.state['screen'], 'calls_list')
+        self.enter_row(2);  self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+        self.enter_row(3);  self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'READ'))
+        self.enter_row(4);  self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'LISTEN'))
+
+    def test_read_and_listen_alerts_use_their_own_text_not_a_leftover_alert(self):
+        kyphone_os.state['stub_text'] = ('CONTACT', 'A LEFTOVER ALERT')
+        wire = self.enter_row(3)
+        self.assertTrue(wire.startswith('STUB|READ|READ CANNOT OPEN YET.'))
+
+    def test_contacts_opens_a_fresh_list_returning_to_home(self):
+        self.enter_row(2, contacts_query='old', contacts_index=5, contacts_start=3)
+        self.assertEqual((kyphone_os.state['contacts_query'], kyphone_os.state['contacts_index'],
+                          kyphone_os.state['contacts_start'], kyphone_os.state['contacts_return']), ('', 0, 0, 'home'))
+
+    def test_texts_and_calls_open_with_their_windows_at_the_top(self):
+        self.enter_row(0, texts_index=6, texts_start=4)
+        self.assertEqual((kyphone_os.state['texts_index'], kyphone_os.state['texts_start']), (0, 0))
+        self.enter_row(1, calls_index=5, calls_start=2)
+        self.assertEqual((kyphone_os.state['calls_index'], kyphone_os.state['calls_start']), (0, 0))
+
+    def test_leaving_contacts_returns_to_the_contacts_row(self):
+        reset_state(screen='contacts_pick', contacts_return='home', contacts_index=0)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+        self.assertEqual(kyphone_os.state['home_index'], 2)
+        self.assertTrue(_wire(ps).endswith('|2|' + _wire(ps).split('|')[-1]))   # HOME2|time|2|unread
+
+    def test_down_walks_the_new_order_and_stops_at_listen(self):
+        reset_state(screen='home', home_index=0)
+        with patch.object(kyphone_os, 'push_screen'):
+            seen = []
+            for _ in range(6):
+                kyphone_os.handle_key('KEY_DOWN')
+                seen.append(kyphone_os.HOME_MENU[kyphone_os.state['home_index']])
+        self.assertEqual(seen, ['CALL', 'CONTACTS', 'READ', 'LISTEN', 'LISTEN', 'LISTEN'])
 
 
 if __name__ == '__main__':

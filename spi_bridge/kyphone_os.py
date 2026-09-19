@@ -1,9 +1,17 @@
 """
-kyphone_os.py — KyPhone OS 0.2
+kyphone_os.py — KyPhone OS 0.2.1
 
 Screens: lock | home | texts_list | thread | compose | confirm |
          contacts_pick | contact | contact_edit | stub |
          calls_list | dial | outgoing | incoming | in_call
+
+Call screens (unchanged in 0.2.1, and simulated: there is no telephony until the
+cellular modem exists):
+    calls_list   DIAL A NUMBER, then the call log, windowed to six rows
+    dial         a number buffer with four quick-dial contacts underneath
+    outgoing     CALLSTATE|OUT    ringing; Enter answers it (a demo), Esc goes back
+    incoming     CALLSTATE|IN     the `i` key on the home menu raises one (a demo)
+    in_call      CALLSTATE|ACTIVE a running timer; Esc hangs up
 
 Run:
     python3 spi_bridge/kyphone_os.py          # hardware mode (Radxa)
@@ -223,11 +231,13 @@ ALERTS = {
 }
 
 # --- State ---
-HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']
+# CONTACTS is third so it is on screen on first view; READ and LISTEN are stop
+# alerts in this build and cost nothing by sitting below the fold.
+HOME_MENU = ['TEXT', 'CALL', 'CONTACTS', 'READ', 'LISTEN']
 
 state = {
     'screen':           'lock',
-    'home_index':       0,          # -1=header | 0=TEXT 1=CALL 2=READ 3=LISTEN 4=CONTACTS
+    'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=CONTACTS 3=READ 4=LISTEN
     'texts_index':      0,          # -1=header row selected
     'texts_start':      0,          # first thread in the 5-row window
     'texts_header_sel': 'back',     # 'back' | 'plus'
@@ -997,22 +1007,25 @@ def _from_home(keycode):
                 state['screen'] = 'lock'
                 state['quote_index'] += 1
             push_lock()
-        elif idx == 0:   # TEXT
+        elif HOME_MENU[idx] == 'TEXT':
             with state['lock']:
                 state['screen']           = 'texts_list'
                 state['texts_index']      = 0
+                state['texts_start']      = 0
                 state['texts_header_sel'] = 'back'
             push_texts()
-        elif idx == 1:  # CALL
+        elif HOME_MENU[idx] == 'CALL':
             with state['lock']:
                 state['screen']      = 'calls_list'
                 state['calls_index'] = 0
+                state['calls_start'] = 0
             push_calls()
-        elif idx == 4:  # CONTACTS
+        elif HOME_MENU[idx] == 'CONTACTS':
             with state['lock']:
                 state['screen']              = 'contacts_pick'
                 state['contacts_query']      = ''
                 state['contacts_index']      = 0
+                state['contacts_start']      = 0
                 state['contacts_header_sel'] = 'back'
                 state['contacts_return']     = 'home'
             push_contacts()
@@ -2069,7 +2082,7 @@ def main():
         KeyboardHandler(handle_key).start()
         TrackpadHandler(handle_key).start()
 
-    print("\n--- KyPhone OS 0.2 ---")
+    print("\n--- KyPhone OS 0.2.1 ---")
     if TWILIO_NUMBER and not SIM_MODE:
         print(f"Number: {TWILIO_NUMBER}")
 

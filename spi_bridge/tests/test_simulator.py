@@ -212,6 +212,18 @@ class SimulatorPixels(unittest.TestCase):
         self.draw('CONFIRM|T|Body text here.|GO|KEEP|K')
         self.assertEqual((self.px(57, 556), self.px(58, 556)), (BLACK, WHITE))                    # 2px border
 
+    # ── home menu ────────────────────────────────────────────────────────────
+    def test_the_third_row_is_on_screen_without_scrolling_and_inverts_when_selected(self):
+        # rows are 135px from y=62; CONTACTS (third) spans 332-467 and needs no scroll shift
+        self.draw('HOME2|12:44 PM|2|3')
+        self.assertEqual(self.px(4, 62 + 2 * 135 + 4), BLACK)
+        self.assertEqual(self.px(4, 62 + 1 * 135 + 4), WHITE)
+        self.assertEqual(self.px(4, 62 + 0 * 135 + 4), WHITE)
+
+    def test_the_more_below_cue_shows_while_part_of_the_menu_is_below_the_fold(self):
+        self.draw('HOME2|12:44 PM|0|3')
+        self.assertEqual(self.px(580, 592), BLACK)                              # the widest of the three bars
+
 
 class WrapParity(unittest.TestCase):
     """The simulator draws with its own copy of wrap_words; it must match the OS's."""
@@ -231,6 +243,20 @@ class WrapParity(unittest.TestCase):
         for text in samples:
             for cols in (10, 20, 30):
                 self.assertEqual(mod.wrap_words(text, cols), kyphone_os.wrap_words(text, cols), (text, cols))
+
+
+    def test_simulator_home_menu_matches_the_os(self):
+        import importlib.util
+        os.environ['SDL_VIDEODRIVER'] = 'dummy'
+        for name in ('spidev', 'gpiod', 'input_handler', 'twilio', 'twilio.rest', 'evdev'):
+            sys.modules.setdefault(name, MagicMock())
+        sys.argv = ['test', '--sim']
+        import kyphone_os
+        spec = importlib.util.spec_from_file_location('simulator_by_path2',
+                                                      os.path.join(os.path.dirname(__file__), '..', 'simulator.py'))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.Simulator.HOME_MENU, kyphone_os.HOME_MENU)
 
 
 if __name__ == '__main__':
