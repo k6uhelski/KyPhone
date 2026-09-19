@@ -1,5 +1,5 @@
 # KyPhone OS 0.2.1 — Build Plan
-*Updated: September 18, 2026 · branch `os-0.2.1-build` · 7 local commits, nothing pushed, nothing deployed*
+*Updated: September 18, 2026 · branch `os-0.2.1-build` · 9 local commits, nothing pushed, nothing deployed*
 
 **Goal.** Bring the running UI (OS 0.2) up to the OS 0.2.1 design in
 `docs/02-design/design_handoff_os_0_2/`, which answers the undefined behaviours found by click-testing 0.2 in
@@ -18,8 +18,8 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 3 | Thread composer (wraps to 3 lines, shows the end of a draft); character filter | ✅ done ¹ |
 | 4 | Unsaved numbers shown formatted; 3 contact-page variants; contacts identified by position | ✅ done |
 | 5 | New-contact form; four validation alerts; empty-send and no-recipient alerts; New Message screen limits | ✅ done |
-| 6 | Delete a contact + confirm screen (default KEEP CONTACT) | ⬜ next |
-| 7 | Home menu reorder (CONTACTS third) | ⬜ |
+| 6 | Delete a contact + confirm screen (default KEEP CONTACT) | ✅ done |
+| 7 | Home menu reorder (CONTACTS third) | ⬜ next |
 | 8 | Home menu icons (pixel bitmaps) | ⬜ separate task, out of this build |
 | 9 | Name the call screens in a `kyphone_os.py` docstring | ⬜ small |
 | F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ⬜ needs you at the device |
@@ -38,6 +38,7 @@ uncapped and wrapped) came with step 5.
 | `0fc4d0e` | **Step 4.** `format_number` / `same_number` / `normalize_number`; contact page kinds S / N / U; `contact_idx` replaces name lookup |
 | `7f3c5a8` | This plan |
 | `4c61a50` | **Step 5.** `_open_new_contact`, validation with the offending field selected, `_show_alert` (reuses the stop-alert screen), compose limits, empty-send / no-recipient alerts, compose arrow-up fix |
+| `1ab7f6d` | **Step 6.** DELETE on the edit form (arrow left from SAVE); one `confirm` screen for discard and delete (safe button right, selected on open); delete removes by position, conversations stay; shared 36px emulator button |
 
 **Problems from the emulator test, now fixed:** texts and contacts lists ran off the screen with nothing highlighted ·
 older conversations unreachable · sent texts vanished and a fake own-number conversation appeared · a slow send froze
@@ -46,7 +47,7 @@ picking the second of two same-named contacts opened the first · `+` in contact
 input saved silently or did nothing · SEND with nothing to send did nothing · from SEND, arrow up jumped to the header.
 
 ## Tests and verification
-- **185 tests pass** (51 at the start): `test_state_machine.py` (state, wire strings, frame limits, retry, contacts) and
+- **206 tests pass** (51 at the start): `test_state_machine.py` (state, wire strings, frame limits, retry, contacts) and
   new `test_simulator.py` (pixel checks on real emulator frames, plus a check that the simulator's word-wrap matches the OS's).
 - **Every step** is also click-tested in the real emulator with real key events, screenshots after each key, compared
   side by side with the designer's captures.
@@ -56,10 +57,6 @@ input saved silently or did nothing · SEND with nothing to send did nothing · 
   the default is NOT SENT, which is what the phone does today.
 
 ## Remaining work
-
-**Step 6 — Delete.** DELETE button on the edit form (bottom left, edit only) → confirm screen with the discard-dialog
-layout, KEEP CONTACT as the right-hand default. That layout itself changes (destructive left, safe default right,
-selected on open), so the discard-draft dialog is updated with it. Messages stay in the texts list under the number.
 
 **Step 7 — Home menu order.** TEXT, CALL, CONTACTS, READ, LISTEN; indices in `_from_home` and tests update.
 
@@ -78,12 +75,13 @@ otherwise.
 | `CALLS` | `CALLS\|sel\|name·tag·time·duration\|…` — ≤6 rows; first entry of the list is `DIAL A NUMBER·NEW··` |
 | `THREAD2` | `THREAD2\|name\|draft\|hdr\|code·time·text\|…` — hdr `''`/`B`/`I`; code `R` received, `Y0` sending, `Y1` sent, `Y2` not sent, `Y3` not sent + selected; ≤3 bubbles; renderer wraps draft at 30 columns (≤3 lines) and bubbles at 20, greedy word wrap, a long word breaks at the end of the line |
 | `CONTACT` | `CONTACT\|title\|sub\|kind\|sel` — kind `S` saved / `N` saved without number / `U` unsaved; sel `B E C T V A` (back, edit, call, text, save, add number) |
-| `CONTACTEDIT` | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save; kind `N` new (title NEW CONTACT) / `E` edit (EDIT CONTACT) |
+| `CONTACTEDIT` | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save, **4 DELETE**; kind `N` new (title NEW CONTACT, no DELETE) / `E` edit (EDIT CONTACT, DELETE bottom left) |
+| `CONFIRM` | `CONFIRM\|title\|body\|go\|keep\|sel` — replaces `CONFIRMDISCARD`. Destructive button left (2px), safe button right (3px); sel `D` / `K`; opens on `K`. Discard message and delete contact both use it |
 | `STUB` (stop alert) | `STUB\|title\|body` — boxed `!`, body wrapped, **OK drawn inverted** (the only control). Carries every alert: unbuilt feature, validation, empty send, no recipient |
 | `COMPOSE` | unchanged shape; the message field is uncapped in state but the wire shows its END behind `...` when it would not fit; renderer wraps it at 30 columns |
 
 ## Decisions and deviations from the design doc
-- **DELETE lives on the edit form** (the handoff's one open question), chosen by the recommendation; moving it is a small change.
+- **DELETE lives on the edit form** (the handoff's one open question), chosen by the recommendation; moving it is a small change. It is built and tested there.
 - **Long messages** are cut with `...` when one alone exceeds the frame; the oldest bubble drops first when frame space is tight.
 - **Old sent messages** with no recorded recipient (3 on the phone) are hidden, not deleted.
 - **Not in the doc:** newlines become spaces and curly quotes/dashes become ASCII (instead of `?`); a word longer than a line
@@ -94,6 +92,7 @@ otherwise.
   differs between v3 and v4 and is the reference; ported and tested. When the prose and the prototype disagree, the prototype wins.
 - **Payload budget:** the handoff's per-row tables omit separators and the command head; worst-case rows overflowed by
   5–14 characters. Fixed in code by shortening the flexible field, with tests.
+- **Every small button is 36px tall** (SAVE, SEND, OK, DELETE, confirm), measured from the captures; the emulator had drawn them at 28px.
 - **The emulator's text is narrower than the device's** fixed 18 px glyph cells; layouts match the mock within a few
   pixels, and line-wrapping follows the device figure (30 / 20 columns).
 
