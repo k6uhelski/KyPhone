@@ -7,14 +7,14 @@
 | 1 | EPUB parser (`reader_epub.py`, 47 tests; lazy per-chapter loading) | done |
 | 2 | Font generator + `reader_fonts.py` (FreeSerif 9/12/18/24 vendored into the sketch's `fonts/`; 11 tests) | done |
 | 3 | Layout / pagination (`reader_layout.py`, 31 tests) | done |
-| 4 | State machine: library + reader | next |
-| 5 | Emulator renderers | |
+| 4 | State machine: library + reader (`kyphone_os.py`, 44 tests) | done |
+| 5 | Emulator renderers (`render_page`, library list) | next |
 | 6 | Firmware + host harness; panel test (needs Kyle at the phone) | |
 | 7 | Docs | |
 
 Measured with real Project Gutenberg books (free): *Alice in Wonderland* (161k characters, 13 chapters) and *The Count of Monte Cristo* (2.6M characters, 123 chapters, largest chapter 61k). **On the Radxa** the first version, which parsed the whole book on open, took **5.7 s** to open Monte Cristo; making chapter loading lazy brought that to **0.09 s** (a mid-book chapter parses in 0.04 s and paginates in 0.06 s). Pagination of the whole book at any size is ~1.3 s on the Mac, but the reader only ever paginates the chapter it is in. At 12pt a page averages 4.1 wire frames (max 5); 9pt averages 6.7 (max 8); 18pt 2.0; 24pt 1.2. Every frame across the whole of Monte Cristo is ≤253 characters.
 
-Deviations from the plan as built: the loader is **lazy** (`Book.chapter(i)`, `next_with_text`, `progress` by file size) instead of parsing everything on open; the four FreeSerif headers are vendored (unmodified) into `Inkplate_SPI_Peripheral/fonts/` so neither the generator nor the firmware build depends on the Arduino library folder; `reader_epub.to_drawable` has its own transliteration table instead of importing `kyphone_os.sanitize` (importing the OS pulls in hardware modules); em-dashes become `--` (so "bank--the" can break after the dash) rather than `-`.
+Deviations from the plan as built: the library shows **5 rows** (like the texts list) rather than 6, so title+author+percentage fit one frame; the READ stop alert is gone (LISTEN keeps its own); five new stop alerts (`BAD_BOOK`, `END_OF_BOOK`, `START_OF_BOOK`, `BIGGEST_FONT`, `SMALLEST_FONT`); the reader's page-turn keys are Right/Down/Enter/Space and Left/Up/Backspace, `+`/`=` and `-`/`_` for size, Esc/`q` to leave; the loader is **lazy** (`Book.chapter(i)`, `next_with_text`, `progress` by file size) instead of parsing everything on open; the four FreeSerif headers are vendored (unmodified) into `Inkplate_SPI_Peripheral/fonts/` so neither the generator nor the firmware build depends on the Arduino library folder; `reader_epub.to_drawable` has its own transliteration table instead of importing `kyphone_os.sanitize` (importing the OS pulls in hardware modules); em-dashes become `--` (so "bank--the" can break after the dash) rather than `-`.
 
 ## Context
 The home menu's READ entry is a stop alert today ("READ CANNOT OPEN YET"). Kyle wants it to be a simple e-reader: put an EPUB on the Radxa, open it from READ, and read it on the Inkplate with page turning and adjustable font size. Decisions already made with Kyle: **serif book font (FreeSerif, proportional)**, **books are copied into a folder** (no upload UI yet), **v1 = library + reader + next/prev page + 4 font sizes + resume position + end-of-book alerts** (text only: no images, bold/italic, or chapter menu).

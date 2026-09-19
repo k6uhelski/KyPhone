@@ -159,12 +159,13 @@ class TestHomeScreen(unittest.TestCase):
         self.assertEqual(kyphone_os.state['screen'], 'texts_list')
         self.assertEqual(kyphone_os.state['texts_index'], 0)
 
+    @patch.object(kyphone_os, 'READING_FILE', '/nonexistent-kyphone/reading.json')
+    @patch.object(kyphone_os, 'BOOKS_DIR', '/nonexistent-kyphone/books')
     @patch.object(kyphone_os, 'push_screen')
-    def test_enter_read_goes_to_stub(self, _ps):
+    def test_enter_read_opens_the_library(self, _ps):
         reset_state(screen='home', home_index=3)
         kyphone_os.handle_key('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['screen'], 'stub')
-        self.assertEqual(kyphone_os.state['stub_key'], 'READ')
+        self.assertEqual(kyphone_os.state['screen'], 'library')
 
     @patch.object(kyphone_os, 'push_screen')
     def test_enter_listen_goes_to_stub(self, _ps):
@@ -1743,13 +1744,15 @@ class TestHomeMenuOrder(unittest.TestCase):
         self.enter_row(0);  self.assertEqual(kyphone_os.state['screen'], 'texts_list')
         self.enter_row(1);  self.assertEqual(kyphone_os.state['screen'], 'calls_list')
         self.enter_row(2);  self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
-        self.enter_row(3);  self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'READ'))
+        with patch.object(kyphone_os, 'BOOKS_DIR', '/nonexistent-kyphone/books'), \
+                patch.object(kyphone_os, 'READING_FILE', '/nonexistent-kyphone/reading.json'):
+            self.enter_row(3);  self.assertEqual(kyphone_os.state['screen'], 'library')
         self.enter_row(4);  self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'LISTEN'))
 
-    def test_read_and_listen_alerts_use_their_own_text_not_a_leftover_alert(self):
+    def test_the_listen_alert_uses_its_own_text_not_a_leftover_alert(self):
         kyphone_os.state['stub_text'] = ('CONTACT', 'A LEFTOVER ALERT')
-        wire = self.enter_row(3)
-        self.assertTrue(wire.startswith('STUB|READ|READ CANNOT OPEN YET.'))
+        wire = self.enter_row(4)
+        self.assertTrue(wire.startswith('STUB|LISTEN|LISTEN CANNOT OPEN YET.'))
 
     def test_contacts_opens_a_fresh_list_returning_to_home(self):
         self.enter_row(2, contacts_query='old', contacts_index=5, contacts_start=3)
@@ -1854,11 +1857,13 @@ class TestDataDirOverride(unittest.TestCase):
         # in a scratch tree, where "beside spi_bridge" is the scratch tree's own data/.
         import shutil
         import tempfile
-        real = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'kyphone_os.py'))
+        import glob
+        here = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
         with tempfile.TemporaryDirectory() as tmp:
             tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
-            shutil.copy(real, os.path.join(tmp, 'spi_bridge', 'kyphone_os.py'))
+            for src in [os.path.join(here, 'kyphone_os.py')] + glob.glob(os.path.join(here, 'reader_*.py')):
+                shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
                 data_dir, contacts, messages = self.run_import(unset, module_dir=os.path.join(tmp, 'spi_bridge'))
                 self.assertEqual(data_dir, os.path.join(tmp, 'data'))

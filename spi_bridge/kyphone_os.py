@@ -3,7 +3,12 @@ kyphone_os.py — KyPhone OS 0.2.1
 
 Screens: lock | home | texts_list | thread | compose | confirm |
          contacts_pick | contact | contact_edit | stub |
-         calls_list | dial | outgoing | incoming | in_call
+         calls_list | dial | outgoing | incoming | in_call |
+         library | reader
+
+Reader: READ on the home menu opens the library (the .epub files in data/books/);
+a book opens in the reader, which shows one page at a time. The book is parsed and
+laid out here (reader_epub.py, reader_layout.py); the Inkplate is sent the lines.
 
 Call screens (unchanged in 0.2.1, and simulated: there is no telephony until the
 cellular modem exists):
@@ -36,6 +41,9 @@ if not SIM_MODE:
 
 from twilio.rest import Client
 
+import reader_epub
+import reader_layout as rl
+
 # --- Config ---
 CHIP            = 'gpiochip3'
 HANDSHAKE_LINE  = 21
@@ -56,6 +64,7 @@ MAX_COMMAND_CHARS = PAYLOAD_BYTES - 3
 TEXTS_ROWS    = 5
 CONTACTS_ROWS = 7
 CALLS_ROWS    = 6
+LIBRARY_ROWS  = 5
 LIST_NAME_MAX    = 14   # texts + calls name column
 CONTACT_NAME_MAX = 18   # contacts list name column
 PREVIEW_MAX      = 24   # texts list preview line
@@ -193,6 +202,15 @@ def contact_index_for(number):
 # --- Persistence Paths ---
 MESSAGES_FILE = os.path.join(DATA_DIR, 'messages.json')     # DATA_DIR is defined with the contacts path above
 
+# --- Reader (books) ---
+BOOKS_DIR         = os.path.join(DATA_DIR, 'books')          # drop .epub files here
+READING_FILE      = os.path.join(DATA_DIR, 'reading.json')   # {'font': 'M', 'books': {id: {chapter, offset, pct}}}
+LIBRARY_MAX_BOOKS = 200
+LIBRARY_TITLE_MAX  = 24
+LIBRARY_AUTHOR_MAX = 14
+READER_FULL_EVERY  = 8        # a full (flashing) refresh at least this often while turning pages, to clear ghosting
+DEFAULT_READER_SIZE = 'M'
+
 # --- Lock Screen Quotes ---
 # Matches the fixed list in the OS 0.2 design prototype. Quotes cycle each
 # time the device returns to lock.
@@ -212,10 +230,6 @@ QUOTES = [
 # An unbuilt feature is a stop alert, not a silent no-op: each one says what
 # happened, why it happened, and what to do instead.
 STUB_INFO = {
-    'READ': {
-        'title': 'READ',
-        'body': 'READ CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO BOOKS ARE ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.',
-    },
     'LISTEN': {
         'title': 'LISTEN',
         'body': 'LISTEN CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO AUDIO IS ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.',
@@ -231,6 +245,11 @@ ALERTS = {
     'NEED_NUMBER':  ('CONTACT', 'A CONTACT NEEDS A PHONE NUMBER. TYPE ONE IN THE PHONE NUMBER FIELD, THEN PRESS SAVE.'),
     'BAD_NUMBER':   ('CONTACT', 'THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
     'DUP_NUMBER':   ('CONTACT', 'THAT NUMBER IS ALREADY SAVED AS {name}. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.'),
+    'BAD_BOOK':     ('READ', 'THIS BOOK CANNOT BE OPENED. {reason}. PRESS ENTER TO GO BACK TO YOUR BOOKS.'),
+    'END_OF_BOOK':  ('READ', 'THAT WAS THE LAST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE, THEN ESC FOR YOUR BOOKS.'),
+    'START_OF_BOOK': ('READ', 'THIS IS THE FIRST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE.'),
+    'BIGGEST_FONT': ('READ', 'THE TEXT IS ALREADY AT ITS LARGEST SIZE. PRESS ENTER TO GO BACK TO THE PAGE.'),
+    'SMALLEST_FONT': ('READ', 'THE TEXT IS ALREADY AT ITS SMALLEST SIZE. PRESS ENTER TO GO BACK TO THE PAGE.'),
 }
 
 # --- State ---
@@ -294,6 +313,19 @@ state = {
     'dial_quick_index': -1,         # -1=buffer active, >=0 selects a quick-dial contact
     'call_name':        '',
     'call_started_at':  None,
+
+    'library_books':  [],           # [{path, id, title, author, pct, error}] scanned from BOOKS_DIR when READ opens
+    'library_index':  0,            # -1=header | index into library_books
+    'library_start':  0,            # first book in the 5-row window
+
+    'book':           None,         # the open reader_epub.Book, or None
+    'r_id':           '',           # its id in reading.json
+    'r_chapter':      0,            # chapter index in reading order
+    'r_offset':       0,            # reading position in that chapter (independent of font size)
+    'r_size':         DEFAULT_READER_SIZE,   # 'S' | 'M' | 'L' | 'X'
+    'r_pages':        None,         # pages of the current chapter at the current size
+    'r_pages_key':    None,         # (chapter, size) those pages belong to
+    'r_turns':        0,            # partial refreshes since the last full one
 
     'running': True,
     'lock':    threading.Lock(),
@@ -558,6 +590,20 @@ def push_screen(command):
     _pending_event.set()
 
 
+def push_page(frames):
+    """Queue one whole page of book text: a list of frames sent back to back. It is one queue item, so a newer
+    page replaces it rather than interleaving; and the Inkplate only refreshes on the last frame (RFOOT), so a page
+    abandoned part-way is never shown half-drawn."""
+    print(f"  → page of {len(frames)} frames: {frames[0][:60]}")
+    if SIM_MODE:
+        simulator.render_page(frames)
+        return
+    global _pending_command
+    with _pending_lock:
+        _pending_command = list(frames)
+    _pending_event.set()
+
+
 def _spi_sender_loop():
     global _pending_command
     while state['running']:
@@ -569,10 +615,21 @@ def _spi_sender_loop():
         if command is None:
             continue
         with _spi_lock:
-            if not wait_for_ready():
-                print(f"Warning: Inkplate not ready, skipping: {command[:40]}")
-                continue
-            spi.xfer2(build_payload(command))
+            _send_command(command)
+
+
+def _send_command(command):
+    """Send one command, or a page (a list of frames) in order. If a newer command arrives while a page is going
+    out, the rest of that page is dropped: nothing shows until its last frame, so the panel simply moves on."""
+    frames = command if isinstance(command, list) else [command]
+    for k, frame in enumerate(frames):
+        if k and _pending_event.is_set():
+            print(f"  (page abandoned after {k} of {len(frames)} frames: a newer one is waiting)")
+            return
+        if not wait_for_ready():
+            print(f"Warning: Inkplate not ready, skipping: {frame[:40]}")
+            return
+        spi.xfer2(build_payload(frame))
 
 
 # ─── Screen Builders ──────────────────────────────────────────────────────────
@@ -902,6 +959,7 @@ def _push_for_screen(screen_name):
         'calls_list': push_calls, 'dial': push_dial,
         'outgoing': push_call_screen, 'incoming': push_call_screen,
         'in_call': push_call_screen,
+        'library': push_library, 'reader': lambda: push_reader(force_full=True),
     }
     pusher = pushers.get(screen_name)
     if pusher:
@@ -978,6 +1036,12 @@ def handle_key(keycode):
     elif screen == 'in_call':
         _from_in_call(keycode)
 
+    elif screen == 'library':
+        _from_library(keycode)
+
+    elif screen == 'reader':
+        _from_reader(keycode)
+
     elif screen == 'stub':
         if keycode in ('KEY_ESC', 'KEY_ENTER'):
             with state['lock']:
@@ -1038,7 +1102,9 @@ def _from_home(keycode):
                 state['contacts_header_sel'] = 'back'
                 state['contacts_return']     = 'home'
             push_contacts()
-        else:  # READ, LISTEN — not built yet
+        elif HOME_MENU[idx] == 'READ':
+            _open_library()
+        else:  # LISTEN — not built yet
             with state['lock']:
                 state['screen']      = 'stub'
                 state['stub_key']    = HOME_MENU[idx]
@@ -1916,6 +1982,280 @@ def _transport_send(to_number, body):
         raise RuntimeError('no service')
     msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=normalize_number(to_number))
     print(f"  → sent: {body} (SID: {msg.sid})")
+
+
+# ─── Reader (books) ───────────────────────────────────────────────────────────
+# READ opens the library: the .epub files in BOOKS_DIR, alphabetical by title, each with how far you have
+# read. A book opens in the reader at the place you left it. The book is parsed and laid out here; the
+# Inkplate is sent the finished lines of one page at a time (rl.page_frames) and refreshes on the last frame.
+#
+# A position is (chapter, offset) where the offset counts characters into the chapter, so it means the same
+# thing at every font size. It is saved to READING_FILE after every page.
+
+_reader_lock = threading.RLock()     # the keyboard and the trackpad each call handle_key from their own thread
+
+
+def _load_reading():
+    """READING_FILE as {'font': size, 'books': {id: {chapter, offset, pct}}}; anything unreadable is empty."""
+    try:
+        with open(READING_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    books = data.get('books')
+    font = data.get('font')
+    return {'font': font if font in rl.SIZES else DEFAULT_READER_SIZE,
+            'books': books if isinstance(books, dict) else {}}
+
+
+def _save_reading(reading):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = READING_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(reading, f)
+        os.replace(tmp, READING_FILE)
+    except OSError as e:
+        print(f"Warning: could not save reading position: {e}")
+
+
+def _book_id(path):
+    """A book's key in READING_FILE: its file name and size (renaming it starts it again from page one)."""
+    try:
+        return f"{os.path.basename(path)}:{os.path.getsize(path)}"
+    except OSError:
+        return os.path.basename(path)
+
+
+def _scan_books():
+    """[{path, id, title, author, pct, error}] for the .epub files in BOOKS_DIR, by title. Never raises: a file
+    that cannot be read is still listed (by its file name) and says why when opened."""
+    try:
+        names = sorted(n for n in os.listdir(BOOKS_DIR) if n.lower().endswith('.epub') and not n.startswith('.'))
+    except OSError:
+        names = []
+    saved = _load_reading()['books']
+    books = []
+    for name in names[:LIBRARY_MAX_BOOKS]:
+        path = os.path.join(BOOKS_DIR, name)
+        error = None
+        try:
+            title, author = reader_epub.read_info(path)
+        except reader_epub.EpubError as e:
+            title, author, error = reader_epub.to_drawable(os.path.splitext(name)[0]), '', str(e)
+        except Exception:
+            title, author, error = reader_epub.to_drawable(os.path.splitext(name)[0]), '', 'COULD NOT READ THE BOOK'
+        bid = _book_id(path)
+        rec = saved.get(bid)
+        pct = rec.get('pct') if isinstance(rec, dict) and isinstance(rec.get('pct'), int) else None
+        books.append({'path': path, 'id': bid, 'title': title, 'author': author, 'pct': pct, 'error': error})
+    books.sort(key=lambda b: b['title'].lower())
+    return books
+
+
+def push_library():
+    with state['lock']:
+        idx = state['library_index']
+        books = list(state['library_books'])
+        start = window_start(state['library_start'], max(0, idx), LIBRARY_ROWS, len(books))
+        state['library_start'] = start
+    send_idx = idx if idx < 0 else idx - start
+    rows = [[b['title'][:LIBRARY_TITLE_MAX], b['author'][:LIBRARY_AUTHOR_MAX],
+             '' if b['pct'] is None else f"{b['pct']}%"] for b in books[start:start + LIBRARY_ROWS]]
+    push_screen(_list_command(["LIBRARY", str(send_idx)], rows, shrink_order=(0, 1)))
+
+
+def _open_library(select_id=None):
+    books = _scan_books()
+    idx = next((i for i, b in enumerate(books) if b['id'] == select_id), 0 if books else -1)
+    with state['lock']:
+        state['screen']        = 'library'
+        state['library_books'] = books
+        state['library_index'] = idx
+        state['library_start'] = 0
+    push_library()
+
+
+def _from_library(keycode):
+    with state['lock']:
+        idx = state['library_index']
+        books = list(state['library_books'])
+
+    if keycode == 'KEY_UP':
+        with state['lock']:
+            state['library_index'] = max(-1, idx - 1)
+        push_library()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['library_index'] = min(len(books) - 1, idx + 1)
+        push_library()
+    elif keycode == 'KEY_ENTER':
+        if idx == -1 or not books:
+            with state['lock']:
+                state['screen'] = 'home'
+            push_home2()
+        else:
+            _open_book(books[idx])
+    elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+        with state['lock']:
+            state['screen'] = 'home'
+        push_home2()
+
+
+def _open_book(entry):
+    if entry['error']:
+        _show_alert('BAD_BOOK', 'library', reason=entry['error'])
+        return
+    try:
+        book = reader_epub.load(entry['path'])
+        first = book.first_with_text()
+        saved = _load_reading()
+        rec = saved['books'].get(entry['id'])
+        chapter, offset = first, 0
+        if isinstance(rec, dict) and isinstance(rec.get('chapter'), int) and isinstance(rec.get('offset'), int):
+            if 0 <= rec['chapter'] < len(book) and rec['offset'] >= 0 and book.chapter(rec['chapter']).paras:
+                chapter, offset = rec['chapter'], rec['offset']
+    except reader_epub.EpubError as e:
+        _show_alert('BAD_BOOK', 'library', reason=str(e))
+        return
+    with _reader_lock:
+        with state['lock']:
+            old = state['book']
+            state['book']        = book
+            state['r_id']        = entry['id']
+            state['r_chapter']   = chapter
+            state['r_offset']    = offset
+            state['r_size']      = saved['font']
+            state['r_pages']     = None
+            state['r_pages_key'] = None
+            state['r_turns']     = 0
+            state['screen']      = 'reader'
+        if old is not None:
+            old.close()
+        _push_reader_safely(force_full=True)
+
+
+def _reader_view():
+    """(chapter, pages, page index) at the current position, laying the chapter out if it is not already."""
+    with state['lock']:
+        book, ch, size, offset = state['book'], state['r_chapter'], state['r_size'], state['r_offset']
+        key, pages = state['r_pages_key'], state['r_pages']
+    chapter = book.chapter(ch)
+    if key != (ch, size) or pages is None:
+        pages = rl.paginate(chapter.paras, size)
+        with state['lock']:
+            state['r_pages'], state['r_pages_key'] = pages, (ch, size)
+    return chapter, pages, rl.page_index(pages, offset)
+
+
+def push_reader(force_full=False):
+    """Draw the page at the current position, and save the position. A full refresh (which flashes) clears ghosting;
+    it happens when a book opens, on a new chapter, a new font size, after an alert, and every READER_FULL_EVERY turns."""
+    with _reader_lock:
+        chapter, pages, idx = _reader_view()
+        with state['lock']:
+            book, ch, size, offset, book_id = state['book'], state['r_chapter'], state['r_size'], state['r_offset'], state['r_id']
+            full = force_full or state['r_turns'] >= READER_FULL_EVERY
+            state['r_turns'] = 0 if full else state['r_turns'] + 1
+        frac = pages[idx].start / max(1, rl.chapter_length(chapter.paras))
+        pct = int(round(100 * book.progress(ch, frac)))
+        if ch == len(book) - 1 and idx == len(pages) - 1:
+            pct = 100
+        saved = _load_reading()
+        saved['font'] = size
+        saved['books'][book_id] = {'chapter': ch, 'offset': offset, 'pct': pct}
+        _save_reading(saved)
+        push_page(rl.page_frames(size, pages[idx].lines, chapter.title, f"{idx + 1}/{len(pages)}  {pct}%",
+                                 'F' if full else 'P'))
+
+
+def _push_reader_safely(force_full=False):
+    """push_reader, but a chapter that turns out to be unreadable closes the book with an alert instead of crashing."""
+    try:
+        push_reader(force_full)
+    except reader_epub.EpubError as e:
+        _close_book('BAD_BOOK', reason=str(e))
+
+
+def _close_book(alert=None, **fields):
+    """Leave the reader for the library (with a stop alert, if given). The position is already saved."""
+    with _reader_lock:
+        with state['lock']:
+            book, book_id = state['book'], state['r_id']
+            state['book'], state['r_pages'], state['r_pages_key'] = None, None, None
+        if book is not None:
+            book.close()
+    _open_library(select_id=book_id)
+    if alert:
+        _show_alert(alert, 'library', **fields)
+
+
+_NEXT_PAGE = ('KEY_RIGHT', 'KEY_DOWN', 'KEY_ENTER', 'CHAR: ')
+_PREV_PAGE = ('KEY_LEFT', 'KEY_UP', 'KEY_BACKSPACE')
+_BIGGER    = ('CHAR:+', 'CHAR:=')
+_SMALLER   = ('CHAR:-', 'CHAR:_')
+
+
+def _from_reader(keycode):
+    with _reader_lock:
+        try:
+            _reader_key(keycode)
+        except reader_epub.EpubError as e:
+            _close_book('BAD_BOOK', reason=str(e))
+
+
+def _reader_key(keycode):
+    if keycode == 'KEY_ESC':
+        _close_book()
+        return
+    with state['lock']:
+        book, ch, size = state['book'], state['r_chapter'], state['r_size']
+    if book is None:                       # the book was closed under us; go to the library
+        _open_library()
+        return
+
+    if keycode in _NEXT_PAGE:
+        chapter, pages, idx = _reader_view()
+        if idx + 1 < len(pages):
+            with state['lock']:
+                state['r_offset'] = pages[idx + 1].start
+            push_reader()
+            return
+        nxt = book.next_with_text(ch, +1)
+        if nxt is None:
+            _show_alert('END_OF_BOOK', 'reader')
+            return
+        with state['lock']:
+            state['r_chapter'], state['r_offset'] = nxt, 0
+        push_reader(force_full=True)
+
+    elif keycode in _PREV_PAGE:
+        chapter, pages, idx = _reader_view()
+        if idx > 0:
+            with state['lock']:
+                state['r_offset'] = pages[idx - 1].start
+            push_reader()
+            return
+        prev = book.next_with_text(ch, -1)
+        if prev is None:
+            _show_alert('START_OF_BOOK', 'reader')
+            return
+        last_start = rl.paginate(book.chapter(prev).paras, size)[-1].start
+        with state['lock']:
+            state['r_chapter'], state['r_offset'] = prev, last_start
+        push_reader(force_full=True)
+
+    elif keycode in _BIGGER or keycode in _SMALLER:
+        sizes = list(rl.SIZES)
+        i = sizes.index(size) + (1 if keycode in _BIGGER else -1)
+        if not 0 <= i < len(sizes):
+            _show_alert('BIGGEST_FONT' if keycode in _BIGGER else 'SMALLEST_FONT', 'reader')
+            return
+        with state['lock']:
+            state['r_size'] = sizes[i]
+        push_reader(force_full=True)
 
 
 def _run_async(fn):
