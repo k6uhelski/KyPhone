@@ -31,9 +31,10 @@ KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every scree
 # On Radxa (hardware — auto-starts via systemd, or manually:)
 sudo systemctl restart kyphone
 
-# On Mac (emulator) — no hardware or credentials needed
-pip3 install pygame
-python3 spi_bridge/kyphone_os.py --sim
+# On Mac (emulator) — no hardware, no Twilio account and no credentials needed
+# (twilio is only imported; the library must be installed)
+pip3 install pygame twilio
+KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim     # a scratch data folder; put .epub files in its books/ folder to try READ
 #   KYPHONE_SIM_SEND=sent        make the fake radio succeed (default: not sent)
 #   KYPHONE_HOME_STYLE=icons|both|words
 

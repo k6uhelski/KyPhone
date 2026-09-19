@@ -183,8 +183,10 @@ Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/make_reader_
 
 ### **Simulator**
 ```
-python3 spi_bridge/kyphone_os.py --sim
+pip3 install pygame twilio          # twilio is imported even in emulator mode (no account or credentials needed)
+KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim
 ```
+To try the reader, make `books/` inside that scratch folder and put an `.epub` in it before starting (any Project Gutenberg EPUB works). A window opens; press any key to wake, Down ×3 and Enter for READ. The tests do not need twilio (they mock it), only the emulator run does.
 Renders every screen in a 600×600 pygame window with full keyboard navigation. Environment: `KYPHONE_SIM_SEND=sent|not_sent`, `KYPHONE_HOME_STYLE=icons|both|words`, `KYPHONE_DATA_DIR=<folder>` (where `contacts.json` and `messages.json` live; default `data/` beside `spi_bridge/`). The emulator's text is narrower than the panel's fixed 6×8-cell font, so wrapping follows the device figures (composer 30 columns, bubbles 20) rather than the font.
 
 ### **Deploying**
