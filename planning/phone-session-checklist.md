@@ -94,7 +94,7 @@ ssh radxa 'mkdir -p ~/kyphone/data/books ~/kyphone/data/music/Test/Tones'
 scp ~/alice.epub ~/monte-cristo.epub radxa:~/kyphone/data/books/
 # a real 30-second 440 Hz test tone (quiet, so it is safe to try first), and your own music if you like:
 python3 -c "import sys; sys.path.insert(0,'tests'); import audio_fixtures as f; open('/tmp/tone.wav','wb').write(f.wav_bytes(30, rate=44100, freq=440, volume=0.2))"
-scp /tmp/tone.wav radxa:'~/kyphone/data/music/Test/Tones/01\ A440.wav'
+scp /tmp/tone.wav radxa:kyphone/data/music/Test/Tones/01_A440.wav
 # scp -r ~/Music/SomeAlbum radxa:~/kyphone/data/music/
 ssh radxa 'sudo systemctl restart kyphone; sleep 3; systemctl is-active kyphone; journalctl -u kyphone -n 15 --no-pager | tail -15'
 ```
