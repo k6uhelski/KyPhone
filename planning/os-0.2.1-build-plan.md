@@ -23,7 +23,7 @@ changes what is sent to the Inkplate. **This branch must not be flashed or deplo
 | 8 | Home menu icons (pixel bitmaps) | ✅ built, tested and compiled — **not yet flashed or deployed** (see below) |
 | 9 | Name the call screens in a `kyphone_os.py` docstring | ✅ done |
 | F | **Firmware pass** — Arduino renderers for every changed screen, flash, check on the real panel | ✅ done — flashed 2026-09-18; ten screens put up on the panel and photographed; layout as designed |
-| D | Deploy the Python to the Radxa; docs (`CLAUDE.md`, wire tables) | 🔄 **deployed 2026-09-18 19:17**; `CLAUDE.md` still to update |
+| D | Deploy the Python to the Radxa; docs (`CLAUDE.md`, wire tables) | ✅ **deployed 2026-09-18 19:17**; `CLAUDE.md` rewritten for OS 0.2.1 (README.md still describes OS 0.0 — not done) |
 
 ¹ The *thread* composer and the character rules came with step 3; the *New Message* screen's own limits (TO 20, message
 uncapped and wrapped) came with step 5.
@@ -141,7 +141,7 @@ otherwise.
 - Firmware can't be verified in the emulator; the first flash may show mismatches. Keep the old firmware/renderers for rollback.
 - **Nothing here is on the Radxa.** It still runs OS 0.2. Python and firmware must ship together.
 - Once cellular hardware exists, real send/receive replaces `_transport_send`; number normalisation and `NOT SENT` handling are ready for it.
-- `CLAUDE.md` is out of date (still describes the 6-screen OS 0.1). Update with the wire table above at the end.
+- ~~`CLAUDE.md` is out of date~~ — rewritten for OS 0.2.1 (done). `README.md` is still stale (OS 0.0, `kyphone_app.py`, Twilio polling).
 - Menu icons need a separate 1-bit bitmap conversion (`planning/kyphone_backlog.md` item).
 
 ## Housekeeping done alongside
