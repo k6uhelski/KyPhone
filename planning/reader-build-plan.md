@@ -5,14 +5,14 @@
 | Step | What | State |
 |---|---|---|
 | 1 | EPUB parser (`reader_epub.py`, 41 tests; a real Gutenberg book: 13 chapters, 160k chars in 0.14 s) | done |
-| 2 | Font generator + `reader_fonts.py` | next |
-| 3 | Layout / pagination | |
+| 2 | Font generator + `reader_fonts.py` (FreeSerif 9/12/18/24 vendored into the sketch's `fonts/`; 11 tests) | done |
+| 3 | Layout / pagination | next |
 | 4 | State machine: library + reader | |
 | 5 | Emulator renderers | |
 | 6 | Firmware + host harness; panel test (needs Kyle at the phone) | |
 | 7 | Docs | |
 
-Deviations from the plan as built: `reader_epub.to_drawable` has its own transliteration table instead of importing `kyphone_os.sanitize` (importing the OS pulls in hardware modules); em-dashes become `--` (so "bank--the" can break after the dash) rather than `-`.
+Deviations from the plan as built: the four FreeSerif headers are vendored (unmodified) into `Inkplate_SPI_Peripheral/fonts/` so neither the generator nor the firmware build depends on the Arduino library folder; `reader_epub.to_drawable` has its own transliteration table instead of importing `kyphone_os.sanitize` (importing the OS pulls in hardware modules); em-dashes become `--` (so "bank--the" can break after the dash) rather than `-`.
 
 ## Context
 The home menu's READ entry is a stop alert today ("READ CANNOT OPEN YET"). Kyle wants it to be a simple e-reader: put an EPUB on the Radxa, open it from READ, and read it on the Inkplate with page turning and adjustable font size. Decisions already made with Kyle: **serif book font (FreeSerif, proportional)**, **books are copied into a folder** (no upload UI yet), **v1 = library + reader + next/prev page + 4 font sizes + resume position + end-of-book alerts** (text only: no images, bold/italic, or chapter menu).

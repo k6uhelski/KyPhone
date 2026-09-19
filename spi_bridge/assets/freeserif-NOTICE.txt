@@ -1,0 +1,16 @@
+The reader's book font is FreeSerif at 9, 12, 18 and 24 points.
+
+The four headers in spi_bridge/Inkplate_SPI_Peripheral/fonts/ (FreeSerif9pt7b.h, FreeSerif12pt7b.h,
+FreeSerif18pt7b.h, FreeSerif24pt7b.h) are copied unmodified from the Adafruit GFX Library
+(https://github.com/adafruit/Adafruit-GFX-Library, BSD licence for the library code). Adafruit
+generated them with its fontconvert tool from the GNU FreeFont sources
+(https://www.gnu.org/software/freefont/), which are licensed under the GNU General Public License
+version 3 or later with the FreeFont font-embedding exception: a document or program that merely
+embeds the font does not become GPL because of it.
+
+spi_bridge/reader_fonts.py is generated from those headers by spi_bridge/tools/make_reader_fonts.py
+(glyph metrics and bitmaps, for the Radxa's line layout and the emulator). Keep the glyph data
+inside those files; do not edit them by hand.
+
+If this repository is ever published or redistributed, check the FreeFont licence text at the link
+above and keep this notice with the fonts.
