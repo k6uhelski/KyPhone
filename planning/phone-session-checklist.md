@@ -27,7 +27,7 @@ cd ~/kyphone && git branch --show-current          # reader-build
 KYPHONE_DATA_DIR=$(mktemp -d) ~/.venvs/kyphone/bin/python -m pytest -q -p no:cacheprovider \
   spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py      # expect: 411 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py      # expect: 413 passed
 ```
 
 ## 1. Back up both devices (about 8 minutes)
