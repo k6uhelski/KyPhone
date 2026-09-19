@@ -13,6 +13,8 @@ import threading
 import pygame
 
 from home_icons import ICONS, ICON_SIZE
+import reader_layout as rl
+from reader_fonts import FONTS as READER_FONTS
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -80,6 +82,8 @@ class Simulator:
         self._pending = None
         self._surface = None
         self._ready   = False
+        self.refreshes = []      # 'P'/'F' for each page the reader has drawn: the refresh kind the OS asked for
+        self._glyphs   = {}
 
     def init(self):
         pygame.init()
@@ -94,6 +98,15 @@ class Simulator:
             return
         with self._lock:
             self._pending = command
+        pygame.event.post(pygame.event.Event(pygame.USEREVENT))
+
+    def render_page(self, frames):
+        """A page of book text: several frames, drawn in order the way the panel does (RTEXT frames draw, the
+        last one, RFOOT, draws the footer and refreshes)."""
+        if not self._ready:
+            return
+        with self._lock:
+            self._pending = list(frames)
         pygame.event.post(pygame.event.Event(pygame.USEREVENT))
 
     def run_loop(self):
@@ -161,12 +174,22 @@ class Simulator:
         return lines or ['']
 
     def _draw(self, command):
-        self._surface.fill(WHITE)
+        if isinstance(command, list):                      # a page of book text
+            for frame in command:
+                self._draw_reader_frame(*(frame.split('|', 1) + [''])[:2])
+            pygame.display.flip()
+            return
         if '|' in command:
             prefix, rest = command.split('|', 1)
         else:
             prefix, rest = command, ''
+        if prefix in ('RTEXT', 'RFOOT'):                   # one reader frame on its own: draws onto what is there
+            self._draw_reader_frame(prefix, rest)
+            if prefix == 'RFOOT':
+                pygame.display.flip()
+            return
 
+        self._surface.fill(WHITE)
         if prefix == 'LOCK':
             self._draw_lock(rest)
         elif prefix == 'HOME2':
@@ -189,6 +212,8 @@ class Simulator:
             self._draw_contact_edit(rest)
         elif prefix == 'CALLS':
             self._draw_calls(rest)
+        elif prefix == 'LIBRARY':
+            self._draw_library(rest)
         elif prefix == 'DIAL':
             self._draw_dial(rest)
         elif prefix == 'CALLSTATE':
@@ -802,6 +827,92 @@ class Simulator:
         self._button('SAVE', self.WIDTH - 24 - save_w, self.HEIGHT - 14 - self.BUTTON_H, 3, True, idx == 3)
         if kind == 'E':                              # nothing to delete on a new contact
             self._button('DELETE', 24, self.HEIGHT - 15 - self.BUTTON_H, 2, False, idx == 4)
+
+    def _draw_library(self, data):
+        # data = "sel|title·author·pct|..."   sel: -1=back, 0..4=row within the 5-row window
+        # Laid out exactly like the texts list: bold title, small author underneath, progress and a chevron on the right.
+        parts = data.split('|')
+        try:
+            idx = int(parts[0])
+        except (ValueError, IndexError):
+            idx = 0
+        entries = [e for e in parts[1:] if e]
+
+        self._draw_header_bar_back_only('READ', idx == -1)
+        if not entries:
+            self._draw_empty_state('NO BOOKS', 'COPY .EPUB FILES INTO THE BOOKS FOLDER ON THE PHONE.', 44, self.HEIGHT)
+            return
+
+        row_h, margin = 111, 28
+        for i, entry in enumerate(entries[:5]):
+            y = 44 + i * row_h
+            title, author, pct = (entry.split('\xb7') + ['', '', ''])[:3]
+            sel = i == idx
+            fg = WHITE if sel else BLACK
+            if sel:
+                pygame.draw.rect(self._surface, BLACK, (0, y, self.WIDTH, row_h))
+            self._text_bl(title, margin, y + 40, 3, fg, bold=True)
+            chev_x = self._text_right('>', self.WIDTH - margin, y + 40, 2, fg)
+            if pct:
+                self._text_right(pct, chev_x - 10, y + 40, 2, fg)
+            self._text_bl(author, margin, y + 77, 2, fg)
+            self._line(y + row_h - 1)
+
+    # ── The reader: book text drawn with the panel's own glyphs ─────────
+
+    def _glyph(self, size, ch):
+        """A pygame surface holding one FreeSerif glyph (black ink on a transparent ground), or None if it has no ink."""
+        key = (size, ch)
+        if key not in self._glyphs:
+            ink = rl.glyph_ink(size, ch)
+            if not ink:
+                self._glyphs[key] = None
+            else:
+                w, h = READER_FONTS[size]['glyphs'][ord(ch)][:2]
+                _w, _h, _xa, xo, yo, _bits = READER_FONTS[size]['glyphs'][ord(ch)]
+                surf = pygame.Surface((w, h))
+                surf.fill(WHITE)
+                surf.set_colorkey(WHITE)
+                for dx, dy in ink:
+                    surf.set_at((dx - xo, dy - yo), BLACK)
+                self._glyphs[key] = surf
+        return self._glyphs[key]
+
+    def _book_text(self, size, x, baseline, text):
+        """Print `text` the way the panel's GFX does: each glyph's bitmap at (cursor + xOffset, baseline + yOffset),
+        the cursor advancing by the glyph's xAdvance."""
+        glyphs = READER_FONTS[size]['glyphs']
+        for ch in text:
+            g = self._glyph(size, ch)
+            if g is not None:
+                self._surface.blit(g, (x + glyphs[ord(ch)][3], baseline + glyphs[ord(ch)][4]))
+            x += glyphs[ord(ch)][2]
+
+    def _draw_reader_frame(self, prefix, rest):
+        if prefix == 'RTEXT':
+            # RTEXT|size|row|S/-|line·line·...   S = first frame of a page: start from a blank screen
+            try:
+                size, row, flag, body = rest.split('|', 3)
+                row = int(row)
+            except ValueError:
+                return
+            if size not in READER_FONTS:
+                return
+            if flag == 'S':
+                self._surface.fill(WHITE)
+            for k, line in enumerate(body.split('\xb7')):
+                if line:
+                    self._book_text(size, rl.TEXT_X, rl.baseline(size, row + k), line)
+        elif prefix == 'RFOOT':
+            # RFOOT|P/F|left|right   the footer, then the refresh (P partial, F full)
+            try:
+                refresh, left, right = (rest.split('|', 2) + ['', ''])[:3]
+            except ValueError:
+                return
+            pygame.draw.line(self._surface, BLACK, (rl.TEXT_X, rl.FOOT_RULE_Y), (rl.TEXT_X + rl.TEXT_W - 1, rl.FOOT_RULE_Y), 1)
+            self._text_bl(left, rl.TEXT_X, rl.FOOT_BASE_Y, 2)
+            self._text_right(right, rl.TEXT_X + rl.TEXT_W, rl.FOOT_BASE_Y, 2)
+            self.refreshes.append(refresh)
 
     def _draw_calls(self, data):
         # data = "sel|name·tag·time·duration|..."

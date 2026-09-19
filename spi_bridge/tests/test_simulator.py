@@ -345,5 +345,137 @@ class WrapParity(unittest.TestCase):
         self.assertEqual(mod.Simulator.HOME_MENU, kyphone_os.HOME_MENU)
 
 
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class ReaderPixels(unittest.TestCase):
+    """The reader draws book text with the panel's own FreeSerif glyphs, frame by frame, like the firmware."""
+
+    @classmethod
+    def setUpClass(cls):
+        import reader_layout
+        cls.rl = reader_layout
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def blank(self):
+        self.sim._surface.fill(WHITE)
+
+    def black(self, y0=0, y1=600):
+        """{(x, y)} of every black pixel in rows y0..y1-1."""
+        data = pygame.image.tostring(self.sim._surface, 'RGB')
+        return {(i // 3 % 600, i // 3 // 600) for i in range(y0 * 1800, y1 * 1800, 3) if data[i] == 0}
+
+    def test_a_line_is_drawn_pixel_for_pixel_like_the_panels_glyphs(self):
+        rl = self.rl
+        for size in reader_fonts_sizes():
+            self.blank()
+            line = 'Hello, World! gjpqy AWVT (fi) "quoted" 0123456789'
+            self.sim._draw('RTEXT|%s|3|S|%s' % (size, line))
+            want = {(x, y) for x, y in rl.text_ink(size, rl.TEXT_X, rl.baseline(size, 3), line) if 0 <= x < 600 and 0 <= y < 600}
+            self.assertEqual(self.black(), want, size)
+
+    def test_lines_land_on_consecutive_rows(self):
+        rl = self.rl
+        self.blank()
+        self.sim._draw('RTEXT|M|2|S|first\xb7\xb7third')
+        want = set()
+        for row, text in ((2, 'first'), (4, 'third')):
+            want |= set(rl.text_ink('M', rl.TEXT_X, rl.baseline('M', row), text))
+        self.assertEqual(self.black(), want)                        # row 3 is blank: a blank line draws nothing
+
+    def test_the_first_frame_clears_the_screen_and_later_frames_add_to_it(self):
+        self.blank()
+        self.sim._draw('STUB|OLD|old screen text')
+        self.assertGreater(len(self.black()), 100)
+        self.sim._draw('RTEXT|M|0|S|one')
+        only_one = self.black()
+        self.assertTrue(all(y < 60 for _x, y in only_one))          # the old screen is gone; only the first row's text remains
+        self.sim._draw('RTEXT|M|5|-|two')
+        both = self.black()
+        self.assertTrue(only_one < both)                            # the first line is still there
+
+    def test_a_whole_page_draws_inside_the_column_and_clear_of_the_footer_rule(self):
+        rl = self.rl
+        import reader_epub
+        text = ' '.join(['gypsy jumping quickly; Wizards Fly Over Big Dwarfs, Xylophones (Q) & "Zebras"'] * 400)
+        for size in reader_fonts_sizes():
+            page = rl.paginate([('p', text)], size)[0]
+            self.blank()
+            self.sim._draw(rl.page_frames(size, page.lines, 'A chapter', '1/9  3%', 'P'))
+            ink = self.black()
+            body = {(x, y) for x, y in ink if y < rl.FOOT_RULE_Y}
+            self.assertTrue(body)
+            self.assertGreaterEqual(min(x for x, _y in body), rl.TEXT_X - 4, size)
+            self.assertLess(max(x for x, _y in body), rl.TEXT_X + rl.TEXT_W + 4, size)
+            self.assertFalse({(x, y) for x, y in ink if rl.TEXT_BOTTOM <= y < rl.FOOT_RULE_Y}, size)   # the gap above the rule
+
+    def test_the_footer_has_a_rule_and_text_at_both_ends(self):
+        rl = self.rl
+        self.blank()
+        self.sim._draw('RFOOT|P|CHAPTER ONE|12/40  35%')
+        ink = self.black()
+        rule = {(x, y) for x, y in ink if y == rl.FOOT_RULE_Y}
+        self.assertEqual({x for x, _y in rule}, set(range(rl.TEXT_X, rl.TEXT_X + rl.TEXT_W)))
+        text = {(x, y) for x, y in ink if y > rl.FOOT_RULE_Y}
+        self.assertLess(min(x for x, _y in text), rl.TEXT_X + 30)                    # left text starts at the margin
+        self.assertLessEqual(max(x for x, _y in text), rl.TEXT_X + rl.TEXT_W)         # right text ends at the margin
+        self.assertGreater(max(x for x, _y in text), rl.TEXT_X + rl.TEXT_W - 40)
+        self.assertFalse({(x, y) for x, y in ink if y < rl.FOOT_RULE_Y})
+
+    def test_the_refresh_kind_of_each_page_is_recorded(self):
+        self.sim.refreshes.clear()
+        self.sim._draw(['RTEXT|M|0|S|x', 'RFOOT|F|a|b'])
+        self.sim._draw(['RTEXT|M|0|S|x', 'RFOOT|P|a|b'])
+        self.assertEqual(self.sim.refreshes, ['F', 'P'])
+
+    def test_a_frame_the_panel_could_not_parse_draws_nothing_and_does_not_crash(self):
+        self.blank()
+        for wire in ('RTEXT|Q|0|S|text', 'RTEXT|M|x|S|text', 'RTEXT|M', 'RTEXT|', 'RFOOT|', 'RFOOT|P'):
+            self.sim._draw(wire)
+        self.assertLess(len(self.black(0, 560)), 1)
+
+    def test_a_footer_can_be_missing_its_right_hand_text(self):
+        self.blank()
+        self.sim._draw('RFOOT|P|only left')
+        self.assertTrue(self.black(self.rl.FOOT_RULE_Y + 1))
+
+    # ── the library ──────────────────────────────────────────────────────────
+    def library(self, sel, n=5):
+        rows = '|'.join('Book %d%sAuthor %d%s%d%%' % (i, CELL, i, CELL, i * 10) for i in range(n))
+        return 'LIBRARY|%d|%s' % (sel, rows)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def test_library_rows_are_111px_like_the_texts_list_and_only_the_selected_one_is_inverted(self):
+        tops = [44 + i * 111 for i in range(5)]
+        for sel in range(5):
+            self.blank()
+            self.sim._draw(self.library(sel))
+            self.assertEqual([i for i, y in enumerate(tops) if self.px(4, y + 4) == BLACK], [sel])
+
+    def test_library_header_selection_inverts_no_row(self):
+        self.blank()
+        self.sim._draw(self.library(-1))
+        self.assertEqual([i for i in range(5) if self.px(4, 44 + i * 111 + 4) == BLACK], [])
+        self.assertEqual(self.px(20, 20), BLACK)                                      # the back control
+
+    def test_the_library_shows_progress_and_a_chevron_at_the_right_of_each_row(self):
+        self.blank()
+        self.sim._draw(self.library(-1, n=2))
+        right = {(x, y) for x, y in self.black(44, 44 + 111) if x > 470}
+        self.assertTrue(right)
+
+    def test_an_empty_library_says_so(self):
+        self.blank()
+        self.sim._draw('LIBRARY|-1')
+        self.assertGreater(len(self.black(100, 600)), 100)
+        self.assertFalse([1 for i in range(5) if self.px(4, 44 + i * 111 + 4) == BLACK])
+
+
+def reader_fonts_sizes():
+    import reader_fonts
+    return reader_fonts.SIZES
+
+
 if __name__ == '__main__':
     unittest.main()
