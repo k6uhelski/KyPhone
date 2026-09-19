@@ -6,47 +6,67 @@ KyPhone is a minimal phone designed to revolt against the attention economy. It 
 
 ---
 
-## **Current Status — April 2026**
+## **Current Status — September 2026**
 
-KyPhoneOS is running on hardware. The Radxa polls for SMS, renders a full navigation UI on the Inkplate, and auto-starts on boot. Local development runs on Mac via a pygame simulator — no hardware needed to iterate on UI.
+KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every screen on the Inkplate over SPI, and a pygame emulator runs the same screens on a Mac so the UI can be built and tested without hardware. The build is on the `os-0.2.1-build` branch until it is merged.
 
 ### **What works today**
-- **SPI transport:** Radxa → Inkplate over 3-wire software SPI + handshake pin. 256-byte payload at 5kHz. ~1.7s end-to-end latency.
-- **Full navigation UI:** HOME → MSG_LIST → MSG_THREAD with keyboard navigation via evdev.
-- **Live SMS via Twilio:** Inbound messages appear on screen within ~2 seconds. Conversation history persisted to disk across reboots.
-- **Partial refresh:** Navigation within the same screen type uses `partialUpdate()` — no full E-ink flash on every keypress.
-- **Auto-start on boot:** systemd service launches KyPhoneOS automatically on Radxa startup.
-- **Pygame simulator:** Run `python3 spi_bridge/kyphone_app.py --sim` on Mac to develop UI without hardware.
+- **SPI transport:** Radxa → Inkplate over 3-wire software SPI plus a handshake pin, 256-byte frames. Every screen is one command of at most 253 characters.
+- **Texting UI:** conversation list, threads, New Message (type a number or pick a contact), and per-message states — SENDING, SENT, NOT SENT with retry from the thread.
+- **Contacts:** look up by name, create, edit and delete (with a confirmation), duplicate and bad-number checks, numbers stored as `(555) 010-0001` and matched by their last ten digits.
+- **Stop alerts:** anything the phone will not do (READ and LISTEN aren't built yet, an empty message, no recipient) says so on screen instead of doing nothing.
+- **Home menu:** TEXT · CALL · CONTACTS · READ · LISTEN with pixel-art icons.
+- **Long lists and long text:** lists are windowed and the composer shows the end of a long draft, so nothing is cut mid-word or overflows a frame.
+- **Auto-start on boot:** the `kyphone` systemd service launches the OS on the Radxa.
+- **Emulator:** the pygame emulator, run with the `--sim` flag as shown under Running it below, mirrors the panel and is what the tests drive.
 
-### **Screens**
-
-**HOME** — ASCII art top-right, large clock + date, 4 buttons (TEXT · CALL · READ · LISTEN) grouped under YAP and CHILL labels, unread badge on TEXT.
-
-**MSG_LIST** — Header bar `<` · TEXT · `+` with active invert on focus. Conversation rows with name, preview, timestamp, chevron.
-
-**MSG_THREAD** — AIM-style `Name: message body`. Centered time separators. Header `<` · contact name · `i`.
+### **What does not work yet**
+- **Nothing can actually be sent.** Twilio is no longer paid for and is switched off, and there is no cellular modem yet, so a sent message ends as NOT SENT. That is the phone's normal outcome for now.
+- **Calls are simulated.** The CALL screens exist but there is no telephony.
+- **READ and LISTEN** are placeholders that show a stop alert.
 
 ### **Running it**
 ```bash
 # On Radxa (hardware — auto-starts via systemd, or manually:)
 sudo systemctl restart kyphone
 
-# On Mac (simulator)
-pip3 install twilio pygame
-export TWILIO_SID=... TWILIO_TOKEN=... TWILIO_NUMBER=...
-python3 spi_bridge/kyphone_app.py --sim
+# On Mac (emulator) — no hardware or credentials needed
+pip3 install pygame
+python3 spi_bridge/kyphone_os.py --sim
+#   KYPHONE_SIM_SEND=sent        make the fake radio succeed (default: not sent)
+#   KYPHONE_HOME_STYLE=icons|both|words
+
+# Tests (name the three files; do not point pytest at the whole tests/ folder)
+pip3 install pytest
+python3 -m pytest spi_bridge/tests/test_state_machine.py \
+                  spi_bridge/tests/test_simulator.py \
+                  spi_bridge/tests/test_firmware_host.py
 ```
+The emulator and the tests read and write `spi_bridge/data/`, so run them on a copy of the folder if it holds real contacts or messages. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
 ### **What's next**
-- Address book / contacts (replace raw phone numbers with names)
-- Compose new message screen (`+` button)
-- SIM7600G-H integration (direct AT commands, replace Twilio)
+- Flash the icon home menu and click through every screen on the real phone
+- Merge the OS 0.2.1 branch
+- SIM7600G-H cellular modem (direct AT commands), so a send can leave the phone
 - BlackBerry Q10 keyboard integration
 - Enclosure + battery design
 
 ---
 
 ## **Development Log**
+
+### **September 2026: OS 0.2.1**
+
+Tested texting, creating a contact and deleting a contact in the emulator, took the gaps to Claude Design, and built the resulting design.
+
+- Sent messages now stay in the thread with SENDING / SENT / NOT SENT states, and NOT SENT can be retried.
+- Contacts can be created and deleted from the UI; before, deletion was only possible by editing `contacts.json` by hand.
+- One confirmation screen for every destructive choice, and one stop-alert screen for everything the phone will not do.
+- Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
+- The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
+- Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
+- There are now 250 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**
 
