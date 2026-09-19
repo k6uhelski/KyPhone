@@ -7,8 +7,8 @@
 | 1 | Music library: scan `data/music`, read tags and lengths from MP3 / FLAC / Ogg / Opus / M4A / WAV (`music_library.py`, 53 tests incl. damaged files and a 5,000-track scan) | done |
 | 2 | Player: `Session` (queue and rules), `SimPlayer`, `GstPlayer` (`music_player.py`, 42 tests; the real player also ran on the Radxa against a silent output) | done |
 | 3 | State machine: music / tracks / nowplaying screens, keys, background playback, ticker, saved volume and resume, alerts (`kyphone_os.py`, `test_music_state.py` 41 tests) | done |
-| 4 | Emulator renderers | next |
-| 5 | Firmware renderers + host harness | |
+| 4 | Emulator renderers (MUSIC / TRACKS / NOWPLAYING, the home mark; 17 pixel tests; real-key click-through of a whole album) | done |
+| 5 | Firmware renderers + host harness | next |
 | 6 | Device: headphones, format matrix, soak (needs Kyle at the phone) | waiting |
 | 7 | Docs | |
 

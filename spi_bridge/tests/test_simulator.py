@@ -487,6 +487,148 @@ class ReaderPixels(unittest.TestCase):
         self.assertFalse([1 for i in range(5) if self.px(4, 44 + i * 111 + 4) == BLACK])
 
 
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class MusicPixels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def draw(self, wire):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def ink_in(self, x0, y0, x1, y1):
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) == BLACK)
+
+    def rows(self, n=4, sel=1):
+        r = lambda *f: CELL.join(f)
+        return 'MUSIC|%d|' % sel + '|'.join(r('Album %d' % i, 'Artist %d' % i, '%d trk' % (i + 3)) for i in range(n))
+
+    # ── the lists ────────────────────────────────────────────────────────────
+    def test_music_rows_are_111px_and_only_the_selected_one_is_inverted(self):
+        tops = [44 + i * 111 for i in range(5)]
+        for sel in range(4):
+            self.draw(self.rows(4, sel))
+            self.assertEqual([i for i, y in enumerate(tops) if self.px(4, y + 4) == BLACK], [sel])
+
+    def test_the_music_header_is_back_only_and_the_back_control_inverts(self):
+        self.draw(self.rows(3, -1))
+        self.assertEqual(self.px(20, 20), BLACK)                       # the back box
+        self.assertEqual(self.ink_in(500, 6, 585, 40), 0)              # no + control
+        self.assertEqual([self.px(4, 44 + i * 111 + 4) for i in range(3)], [WHITE] * 3)
+
+    def test_an_empty_music_list_says_so(self):
+        self.draw('MUSIC|-1')
+        self.assertGreater(self.ink_in(0, 100, 600, 600), 100)
+
+    def test_the_track_list_shows_the_album_name_in_the_header(self):
+        r = lambda *f: CELL.join(f)
+        self.draw('TRACKS|0|Pastel Blues|' + '|'.join([r('One', 'Artist', '3:05'), r('Two', 'Artist', '10:21')]))
+        self.assertGreater(self.ink_in(150, 8, 450, 38), 100)          # the title sits centred in the header strip
+        self.assertEqual(self.px(4, 48), BLACK)                        # first row selected
+        self.assertEqual(self.px(4, 44 + 111 + 4), WHITE)
+
+    # ── now playing ──────────────────────────────────────────────────────────
+    def now(self, state='P', title='A Song', artist='An Artist', album='An Album', elapsed=0, total=200, vol=40, pos='1/9'):
+        return 'NOWPLAYING|%s|%s|%s|%s|%d|%d|%d|%s' % (state, title, artist, album, elapsed, total, vol, pos)
+
+    def test_a_rule_separates_the_status_line_from_the_song(self):
+        self.draw(self.now())
+        self.assertTrue(all(self.px(x, 62) == BLACK for x in range(0, 600)))
+        self.assertEqual(self.px(300, 61), WHITE)
+
+    def test_the_progress_bar_has_an_outline_and_fills_in_proportion(self):
+        self.draw(self.now(elapsed=100, total=200))
+        self.assertEqual((self.px(28, 296), self.px(571, 311)), (BLACK, BLACK))            # the outline's corners
+        self.assertEqual(self.px(30, 297), BLACK)
+        self.assertEqual(self.px(200, 302), BLACK)                                        # filled up to half of 540: x 30..299
+        self.assertEqual(self.px(299, 302), BLACK)
+        self.assertEqual(self.px(320, 302), WHITE)
+        self.draw(self.now(elapsed=0, total=200))
+        self.assertEqual(self.px(200, 302), WHITE)
+        self.draw(self.now(elapsed=200, total=200))
+        self.assertEqual(self.px(560, 302), BLACK)
+
+    def test_an_unknown_length_shows_an_empty_bar_and_dashes(self):
+        self.draw(self.now(elapsed=50, total=0))
+        self.assertEqual(self.px(200, 302), WHITE)
+        self.assertGreater(self.ink_in(440, 328, 575, 348), 20)                             # the "--:--" at the right
+
+    def test_the_bar_never_overflows_if_the_time_passes_the_length(self):
+        self.draw(self.now(elapsed=999, total=200))
+        self.assertEqual(self.px(565, 302), BLACK)
+        self.assertEqual(self.px(575, 302), WHITE)                                          # outside the outline
+
+    def test_the_volume_bar_fills_in_proportion(self):
+        for vol, inside, outside in ((0, None, 100), (50, 250, 400), (100, 500, None)):
+            self.draw(self.now(vol=vol))
+            if inside is not None:
+                self.assertEqual(self.px(inside, 550), BLACK, vol)
+            if outside is not None:
+                self.assertEqual(self.px(outside, 550), WHITE, vol)
+
+    def test_the_middle_control_changes_between_playing_and_paused(self):
+        self.draw(self.now('P'))
+        playing = self.ink_in(240, 395, 360, 445)
+        self.draw(self.now('U'))
+        paused = self.ink_in(240, 395, 360, 445)
+        self.assertGreater(playing, 100)
+        self.assertGreater(paused, 50)
+        self.assertNotEqual(playing, paused)
+        self.assertGreater(self.ink_in(80, 395, 160, 445), 100)                             # previous
+        self.assertGreater(self.ink_in(440, 395, 520, 445), 100)                            # next
+
+    def test_the_status_word_follows_the_state(self):
+        counts = {}
+        for state in 'PUS':
+            self.draw(self.now(state))
+            counts[state] = self.ink_in(20, 25, 200, 50)
+        self.assertGreater(min(counts.values()), 30)
+        self.assertEqual(len(set(counts.values())), 3)                                      # PLAYING, PAUSED, FINISHED differ
+
+    def test_a_long_title_wraps_to_at_most_three_lines_above_the_artist(self):
+        self.draw(self.now(title='Word ' * 11))                                             # 55 characters
+        self.assertGreater(self.ink_in(20, 160, 580, 186), 20)                              # a third line
+        self.assertEqual(self.ink_in(0, 190, 600, 205), 0)                                  # and a gap before the artist
+
+    def test_a_short_title_uses_one_line(self):
+        self.draw(self.now(title='Short'))
+        self.assertGreater(self.ink_in(20, 95, 200, 122), 20)
+        self.assertEqual(self.ink_in(0, 130, 600, 190), 0)
+
+    def test_garbled_fields_do_not_crash(self):
+        for wire in ('NOWPLAYING', 'NOWPLAYING|P', 'NOWPLAYING|P|t|a|b|x|y|z|q', 'NOWPLAYING|||||||', 'MUSIC', 'TRACKS', 'TRACKS|x'):
+            self.draw(wire)
+
+    def test_times_are_shown_as_minutes_and_seconds(self):
+        self.assertEqual([self.sim._clock(x) for x in (0, -5, 5, 65, 621, 3599, 3723)], ['--:--', '--:--', '0:05', '1:05', '10:21', '59:59', '1:02:03'])
+
+    # ── the home menu mark ───────────────────────────────────────────────────
+    def test_the_playing_mark_stands_beside_the_music_icon_and_only_when_playing(self):
+        self.draw('HOME2|12:44 PM|3|0|I|1')                                                 # LISTEN selected: white on black
+        self.assertEqual(self.px(354, 540), WHITE)
+        self.assertEqual(self.px(374, 540), WHITE)
+        self.draw('HOME2|12:44 PM|3|0|I|0')
+        self.assertEqual(self.px(354, 540), BLACK)                                          # no mark: just the fill
+        self.draw('HOME2|12:44 PM|0|0|I|1')                                                 # LISTEN below the fold, unselected
+        self.assertEqual(self.px(354, 540), BLACK)
+        self.draw('HOME2|12:44 PM|0|0|I|0')
+        self.assertEqual(self.px(354, 540), WHITE)
+
+    def test_the_mark_is_on_the_music_row_only(self):
+        self.draw('HOME2|12:44 PM|-1|0|I|1')                                              # header selected: no row is filled
+        for row in range(3):
+            self.assertEqual(self.ink_in(345, 62 + row * 135 + 40, 385, 62 + row * 135 + 100), 0, row)
+
+    def test_an_old_home_command_without_the_flag_still_draws(self):
+        self.draw('HOME2|12:44 PM|0|3|I')
+        self.draw('HOME2|12:44 PM|0|3')
+
+
 def reader_fonts_sizes():
     import reader_fonts
     return reader_fonts.SIZES
