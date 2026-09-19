@@ -10,7 +10,7 @@
 | 4 | State machine: library + reader (`kyphone_os.py`, 44 tests) | done |
 | 5 | Emulator renderers (`render_page`, library list; 13 pixel tests; real-key click-through of both Gutenberg books) | done |
 | 6 | Firmware (`ui_reader.h`, `LIBRARY`), host harness, USB page preview: built, tested on a computer and compile-checked for the board — **NOT flashed** | done except the panel |
-| 6b | Panel: back up, flash, copy Python to the Radxa, preview a page, read a real book, measure page turns | waiting for Kyle at the phone |
+| 6b | Panel: back up, flash, copy Python to the Radxa, preview a page, read a real book, measure page turns | waiting for Kyle at the phone — step-by-step in `planning/phone-session-checklist.md`; push notes in `planning/push-review-2026-09-19.md` |
 | 7 | Docs (CLAUDE.md, README.md) | done |
 
 Measured with real Project Gutenberg books (free): *Alice in Wonderland* (161k characters, 13 chapters) and *The Count of Monte Cristo* (2.6M characters, 123 chapters, largest chapter 61k). **On the Radxa** the first version, which parsed the whole book on open, took **5.7 s** to open Monte Cristo; making chapter loading lazy brought that to **0.09 s** (a mid-book chapter parses in 0.04 s and paginates in 0.06 s). Pagination of the whole book at any size is ~1.3 s on the Mac, but the reader only ever paginates the chapter it is in. At 12pt a page averages 4.1 wire frames (max 5); 9pt averages 6.7 (max 8); 18pt 2.0; 24pt 1.2. Every frame across the whole of Monte Cristo is ≤253 characters.
