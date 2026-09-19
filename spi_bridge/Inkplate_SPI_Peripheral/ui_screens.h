@@ -1,0 +1,675 @@
+// ui_screens.h — KyPhone OS 0.2.1 screen renderers.
+//
+// A port of simulator.py's screens to the Adafruit GFX built-in font. The
+// geometry comes from docs/02-design/design_handoff_os_0_2/GEOMETRY.md; text
+// positions are the baselines measured from the designer's captures, converted
+// to the cell-top coordinates GFX draws at (a size-N glyph is 5x7 in a 6x8 cell,
+// scaled by N: its baseline sits 7*N below the cursor).
+//
+// This file depends ONLY on a global `display` with setCursor / setTextSize /
+// setTextColor / print / fillRect / drawRect, and the BLACK / WHITE macros, so
+// spi_bridge/tests/firmware_host/ can compile the same code against a fake
+// display and render every screen to an image on a computer.
+//
+// Wire formats (all fields split on '|', sub-fields on 0xB7; see
+// planning/os-0.2.1-build-plan.md):
+//   HOME2|time|index|unread            TEXTS|sel|name·preview·unread·time|...
+//   CONTACTSPICK|sel|query|pos|name·number|...   CALLS|sel|name·tag·time·dur|...
+//   THREAD2|name|draft|hdr|code·time·text|...    COMPOSE|to|msg|to_active|hdr|plus|send
+//   CONTACT|title|sub|kind|sel         CONTACTEDIT|first|last|number|idx|kind
+//   STUB|title|body                    CONFIRM|title|body|go|keep|sel
+
+#ifndef KYPHONE_UI_SCREENS_H
+#define KYPHONE_UI_SCREENS_H
+
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+#define UI_SUB       ((char)0xB7)   // '·' — sub-field separator
+#define UI_BUTTON_H  36             // every small button: border + 6-7px padding + an 18px line
+
+// ─── Small helpers ────────────────────────────────────────────────────────────
+
+// Split `s` IN PLACE on `delim` into at most `max` fields (empty fields kept).
+// Returns the number of fields; out[i] point into `s`.
+static int ui_split(char* s, char delim, char** out, int max) {
+    int n = 0;
+    if (max <= 0) return 0;
+    out[n++] = s;
+    for (char* p = s; *p; p++) {
+        if (*p == delim && n < max) { *p = '\0'; out[n++] = p + 1; }
+    }
+    return n;
+}
+
+static int ui_fld_int(char** f, int n, int i, int dflt) {
+    return (i < n && f[i][0] != '\0') ? atoi(f[i]) : dflt;
+}
+static const char* ui_fld(char** f, int n, int i) { return i < n ? f[i] : ""; }
+
+// Draw text with its top-left at (x, y); never wraps or runs off the panel.
+static void ui_put(const char* s, int x, int y, int size, uint16_t color) {
+    int maxc = (600 - x) / (6 * size);
+    if (maxc < 0) maxc = 0;
+    char tmp[96];
+    int n = (int)strlen(s);
+    if (n > maxc) n = maxc;
+    if (n > 95)   n = 95;
+    memcpy(tmp, s, n);
+    tmp[n] = '\0';
+    display.setTextSize(size);
+    display.setTextColor(color);
+    display.setCursor(x, y);
+    display.print(tmp);
+}
+
+// Draw text sitting on `baseline` (GFX draws from the cell top: baseline - 7*size).
+// Bold = printed twice one pixel apart (GFX has no bold face).
+static void ui_text(const char* s, int x, int baseline, int size, uint16_t color, bool bold) {
+    int y = baseline - 7 * size;
+    ui_put(s, x, y, size, color);
+    if (bold) ui_put(s, x + 1, y, size, color);
+}
+static int  ui_tw(const char* s, int size) { return (int)strlen(s) * 6 * size; }
+static void ui_text_right(const char* s, int right, int baseline, int size, uint16_t color, bool bold) {
+    ui_text(s, right - ui_tw(s, size), baseline, size, color, bold);
+}
+static void ui_text_center(const char* s, int baseline, int size, uint16_t color, bool bold) {
+    ui_text(s, (600 - ui_tw(s, size)) / 2, baseline, size, color, bold);
+}
+
+static void ui_rect(int x, int y, int w, int h, int border, uint16_t color) {
+    for (int i = 0; i < border; i++) display.drawRect(x + i, y + i, w - 2 * i, h - 2 * i, color);
+}
+static void ui_hline(int y, int weight) { display.fillRect(0, y, 600, weight, BLACK); }
+
+static void ui_upper(char* s) { for (; *s; s++) if (*s >= 'a' && *s <= 'z') *s -= 32; }
+
+// A 36px bordered button with an 18px label; `selected` inverts it. Returns its width.
+static int ui_button(const char* label, int x, int y, int border, bool bold, bool selected) {
+    int w = (int)strlen(label) * 12 + 36 + 2 * border;
+    if (selected) display.fillRect(x, y, w, UI_BUTTON_H, BLACK);
+    ui_rect(x, y, w, UI_BUTTON_H, border, BLACK);
+    ui_text(label, x + border + 18, y + 23, 2, selected ? WHITE : BLACK, bold);
+    return w;
+}
+static int ui_button_w(const char* label, int border) { return (int)strlen(label) * 12 + 36 + 2 * border; }
+
+// A field label that inverts while its field is active. textSize 2.
+static void ui_field_label(const char* text, int x, int y, bool active) {
+    int w = (int)strlen(text) * 12 + 4;
+    if (active) display.fillRect(x - 2, y - 2, w, 20, BLACK);
+    ui_put(text, x, y, 2, active ? WHITE : BLACK);
+}
+
+// Greedy word wrap into `lines` (stride `stride` bytes, each at most `cols` chars);
+// a word longer than a line fills the current line first, then continues below.
+// MUST match kyphone_os.wrap_words / simulator.wrap_words. Returns the line count.
+static int ui_wrap(const char* text, int cols, char* lines, int stride, int max_lines) {
+    int n = 0, curlen = 0;
+    char cur[64];
+    cur[0] = '\0';
+    if (cols > 60) cols = 60;
+    const char* p = text;
+    #define UI_PUSH() do { if (n < max_lines) { memcpy(lines + n * stride, cur, curlen); lines[n * stride + curlen] = '\0'; n++; } } while (0)
+    for (;;) {
+        const char* ws = p;
+        while (*p && *p != ' ') p++;
+        int wlen = (int)(p - ws);
+        while (wlen > cols) {
+            if (curlen > 0) {
+                int room = cols - curlen - 1;
+                if (room > 0) {
+                    cur[curlen++] = ' ';
+                    memcpy(cur + curlen, ws, room); curlen += room; cur[curlen] = '\0';
+                    ws += room; wlen -= room;
+                }
+                UI_PUSH();
+                curlen = 0; cur[0] = '\0';
+            } else {
+                memcpy(cur, ws, cols); curlen = cols; cur[curlen] = '\0';
+                UI_PUSH();
+                curlen = 0; cur[0] = '\0';
+                ws += cols; wlen -= cols;
+            }
+        }
+        if (curlen == 0) {
+            memcpy(cur, ws, wlen); curlen = wlen; cur[curlen] = '\0';
+        } else if (curlen + 1 + wlen <= cols) {
+            cur[curlen++] = ' ';
+            memcpy(cur + curlen, ws, wlen); curlen += wlen; cur[curlen] = '\0';
+        } else {
+            UI_PUSH();
+            memcpy(cur, ws, wlen); curlen = wlen; cur[curlen] = '\0';
+        }
+        if (*p == '\0') break;
+        p++;                                   // skip the single space between words
+    }
+    UI_PUSH();
+    #undef UI_PUSH
+    return n;
+}
+
+// Centered two-line message for an empty list: a 24px bold line over an 18px hint.
+static void ui_empty_state(const char* title, const char* hint, int top, int bottom) {
+    static char lines[4][48];
+    int nl = ui_wrap(hint, 45, &lines[0][0], 48, 4);
+    int block = 24 + 14 + 22 * nl;
+    int y = top + (bottom - top - block) / 2;
+    ui_text_center(title, y + 21, 3, BLACK, true);
+    for (int i = 0; i < nl; i++) ui_text_center(lines[i], y + 24 + 14 + 22 * i + 14, 2, BLACK, false);
+}
+
+// Back / title / + header used by list screens: 38x34 controls that invert when selected.
+static void ui_header(const char* title, bool back_sel, bool plus_sel, bool show_plus) {
+    ui_hline(43, 1);
+    if (back_sel) display.fillRect(16, 6, 38, 34, BLACK);
+    ui_text("<", 26, 11 + 21, 3, back_sel ? WHITE : BLACK, true);
+    ui_text_center(title, 31, 3, BLACK, true);
+    if (show_plus) {
+        int px = 600 - 16 - 38;
+        if (plus_sel) display.fillRect(px, 6, 38, 34, BLACK);
+        ui_text("+", px + 10, 11 + 21, 3, plus_sel ? WHITE : BLACK, true);
+    }
+}
+
+// ─── HOME2|time|index|unread ──────────────────────────────────────────────────
+
+static void ui_status_group(uint16_t fg, int mid_y) {
+    const int batt_pct = 82;
+    char pct_str[8];
+    snprintf(pct_str, sizeof(pct_str), "%d%%", batt_pct);
+    int pct_w = (int)strlen(pct_str) * 18;
+    const int sig_heights[] = {5, 9, 13, 17};
+    const int sig_w = 4, sig_gap = 3;
+    int sig_group_w = sig_w * 4 + sig_gap * 3;
+    const int batt_w = 34, batt_h = 18, batt_border = 2, nub_w = 3, nub_h = 8;
+    int total_w = batt_w + 2 + nub_w + 14 + pct_w + 14 + sig_group_w;
+    int x = 600 - 24 - total_w;
+    int by = mid_y - batt_h / 2;
+    display.drawRect(x, by, batt_w, batt_h, fg);
+    display.drawRect(x + 1, by + 1, batt_w - 2, batt_h - 2, fg);
+    int fill_w = (int)((batt_w - 2 * batt_border) * (batt_pct / 100.0));
+    display.fillRect(x + batt_border, by + batt_border, fill_w, batt_h - 2 * batt_border, fg);
+    x += batt_w + 2;
+    display.fillRect(x, mid_y - nub_h / 2, nub_w, nub_h, fg);
+    x += nub_w + 14;
+    ui_put(pct_str, x, mid_y - 12, 3, fg);
+    x += pct_w + 14;
+    int sig_bottom = mid_y + sig_heights[3] / 2;
+    for (int i = 0; i < 4; i++) {
+        int h = sig_heights[i];
+        if (i == 3) display.drawRect(x, sig_bottom - h, sig_w, h, fg);
+        else        display.fillRect(x, sig_bottom - h, sig_w, h, fg);
+        x += sig_w + sig_gap;
+    }
+}
+
+static void ui_home(char* data) {
+    char* f[3];
+    int n = ui_split(data, '|', f, 3);
+    const char* time_str = ui_fld(f, n, 0);
+    int home_index = ui_fld_int(f, n, 1, 0);
+    int unread     = ui_fld_int(f, n, 2, 0);
+
+    const int header_h = 60;
+    bool header_sel = (home_index == -1);
+    uint16_t fg = header_sel ? WHITE : BLACK;
+    if (header_sel) display.fillRect(0, 0, 600, header_h, BLACK);
+    ui_put(time_str, 24, 18, 3, fg);
+    ui_status_group(fg, header_h / 2);
+    ui_hline(header_h, 2);
+
+    // TEXT, CALL, CONTACTS, READ, LISTEN — CONTACTS is third so it is on screen
+    // on first view. Must match kyphone_os.HOME_MENU.
+    static const char* labels[] = {"TEXT", "CALL", "CONTACTS", "READ", "LISTEN"};
+    const int n_rows = 5, row_h = 135, view_top = header_h + 2, view_h = 600 - view_top;
+    int shift = ((home_index > 0 ? home_index : 0) + 1) * row_h - view_h;
+    if (shift < 0) shift = 0;
+
+    for (int i = 0; i < n_rows; i++) {
+        int y = view_top + i * row_h - shift;
+        if (y + row_h < view_top || y > 600) continue;
+        bool sel = (i == home_index);
+        uint16_t tc = sel ? WHITE : BLACK;
+        if (sel) {
+            int fy = y < view_top ? view_top : y;
+            int fh = (y + row_h > 600 ? 600 : y + row_h) - fy;
+            display.fillRect(0, fy, 600, fh, BLACK);
+        }
+        int label_w = ui_tw(labels[i], 6);
+        int label_x = (600 - label_w) / 2;
+        int label_y = y + (row_h - 48) / 2;
+        ui_put(labels[i], label_x, label_y, 6, tc);
+        ui_put(labels[i], label_x + 1, label_y, 6, tc);
+        if (i == 0 && unread > 0) {                          // the TEXT row: two-digit unread count, e.g. 03
+            char count[4];
+            snprintf(count, sizeof(count), "%02d", unread > 99 ? 99 : unread);
+            ui_put(count, label_x + label_w + 24, label_y + (48 - 24) / 2, 3, tc);
+        }
+        if (y + row_h <= 600) display.fillRect(0, y + row_h, 600, 1, BLACK);
+    }
+    // "More below" cue: shown while part of the menu is still below the fold.
+    if (n_rows * row_h - shift > view_h) {
+        int cx = 600 - 12, cy = 600 - 6;
+        const int widths[] = {14, 8, 3};
+        for (int i = 0; i < 3; i++) { display.fillRect(cx - widths[i], cy - 3, widths[i], 3, BLACK); cy -= 5; }
+    }
+}
+
+// ─── TEXTS|sel|name·preview·unread·time|... ───────────────────────────────────
+// sel: -1 back, -2 plus, else the row within the 5-row window.
+
+static void ui_texts(char* data) {
+    char* f[8];
+    int n = ui_split(data, '|', f, 8);
+    int sel = ui_fld_int(f, n, 0, 0);
+    ui_header("TEXT", sel == -1, sel == -2, true);
+
+    int rows = 0;
+    for (int i = 1; i < n && rows < 5; i++) if (f[i][0] != '\0') rows++;
+    if (rows == 0) {
+        ui_empty_state("NO CONVERSATIONS", "PRESS + TO WRITE THE FIRST MESSAGE.", 44, 600);
+        return;
+    }
+    const int row_h = 111, margin = 28;
+    int r = 0;
+    for (int i = 1; i < n && r < 5; i++) {
+        if (f[i][0] == '\0') continue;
+        char* sf[4];
+        int sn = ui_split(f[i], UI_SUB, sf, 4);
+        const char* name = ui_fld(sf, sn, 0);
+        const char* prev = ui_fld(sf, sn, 1);
+        bool unread      = ui_fld(sf, sn, 2)[0] == '1';
+        const char* tm   = ui_fld(sf, sn, 3);
+
+        int y = 44 + r * row_h;
+        bool is_sel = (r == sel);
+        uint16_t fg = is_sel ? WHITE : BLACK;
+        if (is_sel) display.fillRect(0, y, 600, row_h, BLACK);
+
+        ui_text(name, margin, y + 40, 3, fg, unread);                 // name: bold if unread
+        int chev_x = 600 - margin - 12;
+        ui_text(">", chev_x, y + 40, 2, fg, false);                   // time + chevron share the name's baseline
+        if (tm[0]) ui_text(tm, chev_x - 10 - ui_tw(tm, 2), y + 40, 2, fg, false);
+        ui_text(prev, margin, y + 77, 2, fg, false);
+        ui_hline(y + row_h - 1, 1);
+        r++;
+    }
+}
+
+// ─── CONTACTSPICK|sel|query|position|name·number|... ──────────────────────────
+// sel: -1 back, -2 plus, else the row within the 7-row window.
+
+static void ui_contacts(char* data) {
+    char* f[12];
+    int n = ui_split(data, '|', f, 12);
+    int sel = ui_fld_int(f, n, 0, 0);
+    const char* query = ui_fld(f, n, 1);
+    const char* pos   = ui_fld(f, n, 2);
+    ui_header("CONTACTS", sel == -1, sel == -2, true);
+
+    const int row_h = 64, bar_h = 45;
+    int rows = 0, r = 0;
+    for (int i = 3; i < n && r < 7; i++) {
+        if (f[i][0] == '\0') continue;
+        char* sf[2];
+        int sn = ui_split(f[i], UI_SUB, sf, 2);
+        const char* name = ui_fld(sf, sn, 0);
+        const char* num  = ui_fld(sf, sn, 1);
+        int y = 44 + r * row_h;
+        bool is_sel = (r == sel);
+        uint16_t fg = is_sel ? WHITE : BLACK;
+        if (is_sel) display.fillRect(0, y, 600, row_h, BLACK);
+        ui_text(name, 28, y + 38, 3, fg, true);
+        ui_text_right(num[0] ? num : "NO NUMBER", 600 - 28, y + 36, 2, fg, false);
+        ui_hline(y + row_h - 1, 1);
+        r++; rows++;
+    }
+    if (rows == 0) {
+        if (query[0]) ui_empty_state("NO MATCH", "NO NAME STARTS WITH THAT. PRESS BACKSPACE TO WIDEN THE SEARCH.", 44, 600 - bar_h - 2);
+        else          ui_empty_state("NO CONTACTS", "PRESS + TO SAVE THE FIRST ONE.", 44, 600 - bar_h - 2);
+    }
+    // Footer: a 2px rule riding the top of a 45px strip; LOOK UP left, position right.
+    display.fillRect(0, 600 - bar_h - 2, 600, 2, BLACK);
+    const char* label = "LOOK UP:";
+    ui_text(label, 28, 583, 2, BLACK, false);
+    int qx = 28 + ui_tw(label, 2) + 14;
+    ui_text(query, qx, 584, 3, BLACK, false);
+    display.fillRect(qx + ui_tw(query, 3), 566, 18, 24, BLACK);
+    if (pos[0]) ui_text_right(pos, 600 - 28, 583, 2, BLACK, false);
+}
+
+// ─── CALLS|sel|name·tag·time·duration|... ─────────────────────────────────────
+// sel: -1 back, else the row within the 6-row window (DIAL A NUMBER is the list's first row).
+
+static void ui_calls(char* data) {
+    char* f[9];
+    int n = ui_split(data, '|', f, 9);
+    int sel = ui_fld_int(f, n, 0, 0);
+    ui_header("CALL", sel == -1, false, false);
+
+    int r = 0;
+    for (int i = 1; i < n && r < 6; i++) {
+        if (f[i][0] == '\0') continue;
+        char* sf[4];
+        int sn = ui_split(f[i], UI_SUB, sf, 4);
+        const char* name = ui_fld(sf, sn, 0);
+        const char* tag  = ui_fld(sf, sn, 1);
+        const char* tm   = ui_fld(sf, sn, 2);
+        const char* dur  = ui_fld(sf, sn, 3);
+        int y = 44 + r * 92;
+        bool is_sel = (r == sel);
+        uint16_t fg = is_sel ? WHITE : BLACK;
+        if (is_sel) display.fillRect(0, y, 600, 92, BLACK);
+        ui_text(name, 28, y + 53, 3, fg, true);
+        if (tag[0]) {
+            int tx = 28 + ui_tw(name, 3) + 12;
+            ui_rect(tx, y + 35, ui_tw(tag, 2) + 12, 22, 1, fg);
+            ui_text(tag, tx + 6, y + 51, 2, fg, false);
+        }
+        if (tm[0])  ui_text_right(tm, 600 - 28, y + 40, 2, fg, false);
+        if (dur[0]) ui_text_right(dur, 600 - 28, y + 62, 2, fg, false);
+        ui_hline(y + 91, 1);
+        r++;
+    }
+}
+
+// ─── THREAD2|name|draft|hdr|code·time·text|... ────────────────────────────────
+// hdr '' composer / 'B' back / 'I' info. code: R received, Y0 sending, Y1 sent,
+// Y2 not sent, Y3 not sent + selected (the retry prompt).
+
+#define UI_BUBBLES     3
+#define UI_BUB_LINES   16
+#define UI_BUB_STRIDE  24
+
+static char ui_bub_lines[UI_BUBBLES][UI_BUB_LINES][UI_BUB_STRIDE];
+
+static void ui_thread(char* data) {
+    char* f[3 + UI_BUBBLES + 2];
+    int n = ui_split(data, '|', f, 3 + UI_BUBBLES + 2);
+    char name_up[40];
+    snprintf(name_up, sizeof(name_up), "%s", ui_fld(f, n, 0));
+    const char* draft = ui_fld(f, n, 1);
+    char hdr = ui_fld(f, n, 2)[0];
+
+    // Parse the bubbles (oldest first).
+    struct Bub { const char* code; const char* tm; const char* text; int nlines; int bubble_h; int h; bool out; };
+    Bub b[UI_BUBBLES];
+    int nb = 0;
+    bool any_selected = false;
+    for (int i = 3; i < n && nb < UI_BUBBLES; i++) {
+        if (f[i][0] == '\0') continue;
+        char* sf[3];
+        int sn = ui_split(f[i], UI_SUB, sf, 3);
+        b[nb].code = ui_fld(sf, sn, 0);
+        b[nb].tm   = ui_fld(sf, sn, 1);
+        b[nb].text = ui_fld(sf, sn, 2);
+        b[nb].out  = (b[nb].code[0] == 'Y');
+        if (strcmp(b[nb].code, "Y3") == 0) any_selected = true;
+        nb++;
+    }
+    bool composer_active = (hdr == '\0') && !any_selected;
+
+    // Composer: '> ' + draft, word-wrapped to 30 columns, at most three lines.
+    static char clines[5][34];
+    char ctext[130];
+    snprintf(ctext, sizeof(ctext), "> %s", draft);
+    int nc = ui_wrap(ctext, 30, &clines[0][0], 34, 5);
+    if (nc > 3) nc = 3;
+    int composer_h = 45 + (nc - 1) * 34;
+
+    // Message area: a bottom-anchored column of bubbles, 16px apart. Older or
+    // taller bubbles run off the top; that is clipped afterwards by repainting
+    // the header strip.
+    const int line_h = 35, pad_x = 12, name_h = 27, meta_h = 25, gap = 16;
+    int area_top = 62, area_bottom = 600 - composer_h - 17;
+    for (int i = 0; i < nb; i++) {
+        b[i].nlines = ui_wrap(b[i].text, 20, &ui_bub_lines[i][0][0], UI_BUB_STRIDE, UI_BUB_LINES);
+        b[i].bubble_h = 4 + 16 + line_h * b[i].nlines;
+        b[i].h = (b[i].out ? 0 : name_h) + b[i].bubble_h + meta_h;
+    }
+    int y_bottom = area_bottom;
+    for (int i = nb - 1; i >= 0; i--) {
+        int top = y_bottom - b[i].h;
+        int y0 = top;
+        if (top + b[i].h < 0) { y_bottom = top - gap; continue; }
+        if (!b[i].out) {
+            char nm[40]; snprintf(nm, sizeof(nm), "%s", name_up); ui_upper(nm);
+            ui_text(nm, 30, top + 16, 2, BLACK, true);
+            y0 += name_h;
+        }
+        int widest = 0;
+        for (int j = 0; j < b[i].nlines; j++) { int l = (int)strlen(ui_bub_lines[i][j]); if (l > widest) widest = l; }
+        int bw = widest * 18 + 2 * pad_x + 4;
+        if (bw > 400) bw = 400;
+        int bx = b[i].out ? (600 - 16 - 14 - bw) : 30;
+        bool filled = (strcmp(b[i].code, "Y1") == 0);
+        if (filled) display.fillRect(bx, y0, bw, b[i].bubble_h, BLACK);
+        ui_rect(bx, y0, bw, b[i].bubble_h, 2, BLACK);
+        if (strcmp(b[i].code, "Y3") == 0) ui_rect(bx + 5, y0 + 5, bw - 10, b[i].bubble_h - 10, 2, BLACK);   // selection ring
+        for (int j = 0; j < b[i].nlines; j++)
+            ui_text(ui_bub_lines[i][j], bx + 2 + pad_x, y0 + 10 + line_h * j + 25, 3, filled ? WHITE : BLACK, false);
+        // Tail: five stacked bars on the bubble's outer edge.
+        const int tw[5] = {4, 8, 14, 8, 4};
+        int tail_y = y0 + (b[i].bubble_h - 20) / 2;
+        for (int k = 0; k < 5; k++) {
+            int tx = b[i].out ? (bx + bw) : (bx - tw[k]);
+            display.fillRect(tx, tail_y + k * 4, tw[k], 4, BLACK);
+        }
+        // Meta label under the bubble.
+        char meta[40];
+        const char* code = b[i].code;
+        if      (strcmp(code, "Y0") == 0) snprintf(meta, sizeof(meta), "SENDING...");
+        else if (strcmp(code, "Y1") == 0) snprintf(meta, sizeof(meta), "SENT %s", b[i].tm);
+        else if (strcmp(code, "Y2") == 0) snprintf(meta, sizeof(meta), "NOT SENT");
+        else if (strcmp(code, "Y3") == 0) snprintf(meta, sizeof(meta), "NOT SENT - ENTER TO RETRY");
+        else                              snprintf(meta, sizeof(meta), "%s", b[i].tm);
+        bool bold = (strcmp(code, "Y2") == 0 || strcmp(code, "Y3") == 0);
+        int baseline = y0 + b[i].bubble_h + 20;
+        if (b[i].out) ui_text_right(meta, bx + bw, baseline, 2, BLACK, bold);
+        else          ui_text(meta, bx, baseline, 2, BLACK, bold);
+        y_bottom = top - gap;
+    }
+    // Clip: repaint everything above the message area, then draw the header over it.
+    display.fillRect(0, 0, 600, area_top, WHITE);
+    display.fillRect(0, area_bottom, 600, 600 - area_bottom, WHITE);
+
+    // Header: back, name, info.
+    if (hdr == 'B') display.fillRect(16, 6, 38, 34, BLACK);
+    ui_text("<", 26, 11 + 21, 3, hdr == 'B' ? WHITE : BLACK, true);
+    ui_text_center(name_up, 31, 3, BLACK, true);
+    if (hdr == 'I') display.fillRect(600 - 16 - 38, 6, 38, 34, BLACK);
+    ui_text("i", 600 - 16 - 38 + 10, 11 + 21, 3, hdr == 'I' ? WHITE : BLACK, true);
+    display.fillRect(0, 46, 600, 2, BLACK);
+
+    // Composer.
+    display.fillRect(0, 600 - composer_h - 2, 600, 2, BLACK);
+    for (int i = 0; i < nc; i++) {
+        int base = 600 - composer_h + 8 + 34 * i + 26;
+        ui_text(clines[i], 24, base, 3, BLACK, false);
+        if (i == nc - 1 && composer_active)
+            display.fillRect(24 + ui_tw(clines[i], 3), base - 19, 18, 24, BLACK);
+    }
+}
+
+// ─── COMPOSE|to|msg|to_active|hdr|plus_sel|send_sel ───────────────────────────
+
+static void ui_compose(char* data) {
+    char* f[6];
+    int n = ui_split(data, '|', f, 6);
+    const char* to  = ui_fld(f, n, 0);
+    const char* msg = ui_fld(f, n, 1);
+    bool to_active  = ui_fld(f, n, 2)[0] != '0';
+    bool x_sel      = ui_fld(f, n, 3)[0] == 'X';
+    bool plus_sel   = ui_fld(f, n, 4)[0] == '1';
+    bool send_sel   = ui_fld(f, n, 5)[0] == '1';
+
+    ui_text("NEW MESSAGE", 24, 10 + 21, 3, BLACK, true);
+    if (x_sel) display.fillRect(600 - 16 - 38, 8, 38, 34, BLACK);
+    ui_text("X", 600 - 16 - 38 + 10, 8 + 5 + 21, 3, x_sel ? WHITE : BLACK, true);
+    ui_hline(44, 2);
+
+    ui_field_label("TO:", 24, 58, to_active);
+    ui_put(to, 24, 84, 3, BLACK);
+    if (to_active && to[0] == '\0') {
+        int px = 600 - 24 - 38;
+        if (plus_sel) display.fillRect(px, 79, 38, 34, BLACK);
+        ui_text("+", px + 10, 79 + 5 + 21, 3, plus_sel ? WHITE : BLACK, true);
+    } else if (to_active && !plus_sel) {
+        display.fillRect(24 + ui_tw(to, 3), 84, 18, 24, BLACK);
+    }
+    ui_hline(122, 1);
+
+    ui_field_label("MESSAGE:", 24, 134, !to_active);
+    bool msg_active = !to_active && !send_sel;
+    static char mlines[13][34];
+    char mtext[240];
+    snprintf(mtext, sizeof(mtext), "%s", msg);
+    int nl = ui_wrap(mtext, 30, &mlines[0][0], 34, 12);
+    for (int i = 0; i < nl; i++) {
+        int base = 162 + 34 * i + 26;
+        ui_text(mlines[i], 24, base, 3, BLACK, false);
+        if (i == nl - 1 && msg_active) display.fillRect(24 + ui_tw(mlines[i], 3), base - 19, 18, 24, BLACK);
+    }
+    int sw = ui_button_w("SEND", 3);
+    ui_button("SEND", 600 - 24 - sw, 600 - 14 - UI_BUTTON_H, 3, true, send_sel);
+}
+
+// ─── Stop alerts and confirmations ────────────────────────────────────────────
+
+// A boxed '!' and a prose paragraph: what happened, why, what to do instead.
+static void ui_alert_body(int top, const char* body) {
+    ui_rect(56, top, 46, 46, 2, BLACK);
+    ui_text("!", 56 + 14, top + 11 + 21, 3, BLACK, true);
+    static char lines[10][28];
+    int text_x = 56 + 46 + 22;
+    int cols = (600 - 56 - text_x) / 18;
+    int nl = ui_wrap(body, cols, &lines[0][0], 28, 10);
+    for (int i = 0; i < nl; i++) ui_put(lines[i], text_x, top + 34 * i, 3, BLACK);
+}
+
+// STUB|title|body — every stop alert; OK is the only control, so it is inverted.
+static void ui_stub(char* data) {
+    char* f[2];
+    int n = ui_split(data, '|', f, 2);
+    ui_text(ui_fld(f, n, 0), 24, 10 + 21, 3, BLACK, true);
+    ui_hline(44, 2);
+    ui_alert_body(212, ui_fld(f, n, 1));
+    int w = ui_button_w("OK", 3);
+    ui_button("OK", 600 - 24 - w, 600 - 24 - UI_BUTTON_H, 3, true, true);
+}
+
+// CONFIRM|title|body|go|keep|sel — one layout for every destructive choice: the
+// destructive button left (2px, never the default), the safe one right (3px,
+// selected when the screen opens). sel: D or K.
+static void ui_confirm(char* data) {
+    char* f[5];
+    int n = ui_split(data, '|', f, 5);
+    ui_text(ui_fld(f, n, 0), 24, 10 + 21, 3, BLACK, true);
+    ui_hline(44, 2);
+    ui_alert_body(196, ui_fld(f, n, 1));
+    bool go_sel = ui_fld(f, n, 4)[0] == 'D';
+    int y = 600 - 24 - UI_BUTTON_H;
+    ui_button(ui_fld(f, n, 2), 56, y, 2, false, go_sel);
+    const char* keep = ui_fld(f, n, 3);
+    ui_button(keep, 600 - 24 - ui_button_w(keep, 3), y, 3, true, !go_sel);
+}
+
+// ─── CONTACT|title|sub|kind|sel ───────────────────────────────────────────────
+// kind: S saved, N saved with no number, U not in the address book.
+// sel:  B back, E edit, C call, T text, V save, A add number.
+
+static void ui_contact(char* data) {
+    char* f[4];
+    int n = ui_split(data, '|', f, 4);
+    const char* title = ui_fld(f, n, 0);
+    const char* sub   = ui_fld(f, n, 1);
+    char kind = ui_fld(f, n, 2)[0];
+    char sel  = ui_fld(f, n, 3)[0];
+    if (kind == '\0') kind = 'S';
+
+    if (sel == 'B') display.fillRect(16, 6, 38, 34, BLACK);
+    ui_text("<", 26, 11 + 21, 3, sel == 'B' ? WHITE : BLACK, true);
+    ui_text_center("CONTACT", 31, 3, BLACK, true);
+    if (kind == 'S' || kind == 'N') {                        // EDIT is only there for a saved contact
+        int ew = 4 * 12 + 20, ex = 600 - 16 - ew;
+        if (sel == 'E') display.fillRect(ex, 6, ew, 34, BLACK);
+        ui_text("EDIT", ex + 10, 6 + 17 + 6, 2, sel == 'E' ? WHITE : BLACK, true);
+    }
+    ui_hline(43, 1);
+
+    ui_text(title, 28, 187, 6, BLACK, true);
+    ui_text(sub, 28, 234, 3, BLACK, false);
+    display.fillRect(28, 330, 600 - 56, 2, BLACK);
+
+    const char* labels[3]; char codes[3]; int na = 0;
+    if (kind == 'S')      { labels[0] = "CALL"; codes[0] = 'C'; labels[1] = "TEXT"; codes[1] = 'T'; na = 2; }
+    else if (kind == 'N') { labels[0] = "ADD NUMBER"; codes[0] = 'A'; na = 1; }
+    else                  { labels[0] = "CALL"; codes[0] = 'C'; labels[1] = "TEXT"; codes[1] = 'T'; labels[2] = "SAVE"; codes[2] = 'V'; na = 3; }
+    int x = 28;
+    for (int i = 0; i < na; i++) {
+        int w = (int)strlen(labels[i]) * 18 + 44 + 6;       // 22px padding a side + 3px border a side
+        bool picked = (sel == codes[i]);
+        if (picked) display.fillRect(x, 360, w, 46, BLACK);
+        ui_rect(x, 360, w, 46, 3, BLACK);
+        ui_text(labels[i], x + 25, 391, 3, picked ? WHITE : BLACK, true);
+        x += w + 16;
+    }
+}
+
+// ─── CONTACTEDIT|first|last|number|idx|kind ───────────────────────────────────
+// idx: -1 cancel, 0-2 the fields, 3 save, 4 delete. kind: N new, E edit (DELETE shown).
+
+static void ui_contact_edit(char* data) {
+    char* f[5];
+    int n = ui_split(data, '|', f, 5);
+    const char* vals[3] = { ui_fld(f, n, 0), ui_fld(f, n, 1), ui_fld(f, n, 2) };
+    int idx   = ui_fld_int(f, n, 3, 0);
+    char kind = ui_fld(f, n, 4)[0];
+
+    if (idx == -1) display.fillRect(16, 6, 38, 34, BLACK);
+    ui_text("X", 26, 11 + 21, 3, idx == -1 ? WHITE : BLACK, true);
+    ui_text_center(kind == 'N' ? "NEW CONTACT" : "EDIT CONTACT", 31, 3, BLACK, true);
+    ui_hline(43, 1);
+
+    static const char* labels[3] = { "FIRST NAME:", "LAST NAME:", "PHONE NUMBER:" };
+    static const int ly[3] = { 70, 158, 246 }, vy[3] = { 100, 188, 276 }, ry[3] = { 138, 226, 314 };
+    for (int i = 0; i < 3; i++) {
+        ui_field_label(labels[i], 24, ly[i], idx == i);
+        ui_put(vals[i], 24, vy[i], 3, BLACK);
+        if (idx == i) display.fillRect(24 + ui_tw(vals[i], 3), vy[i], 18, 24, BLACK);
+        ui_hline(ry[i], 1);
+    }
+    int sw = ui_button_w("SAVE", 3);
+    ui_button("SAVE", 600 - 24 - sw, 600 - 14 - UI_BUTTON_H, 3, true, idx == 3);
+    if (kind == 'E') ui_button("DELETE", 24, 600 - 15 - UI_BUTTON_H, 2, false, idx == 4);
+}
+
+// ─── Dispatch ─────────────────────────────────────────────────────────────────
+// Shared by the panel firmware and the host harness. Draws the screen named by
+// `text` (a command such as "TEXTS|0|..."; modified in place) and returns true,
+// or returns false for a command it does not own (the legacy renderers).
+
+static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
+    struct Cmd { const char* prefix; void (*fn)(char*); };
+    static const Cmd cmds[] = {
+        {"HOME2|", ui_home},         {"TEXTS|", ui_texts},         {"CONTACTSPICK|", ui_contacts},
+        {"CALLS|", ui_calls},        {"THREAD2|", ui_thread},      {"COMPOSE|", ui_compose},
+        {"STUB|", ui_stub},          {"CONFIRM|", ui_confirm},     {"CONTACTEDIT|", ui_contact_edit},
+        {"CONTACT|", ui_contact},
+    };
+    for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
+        size_t len = strlen(cmds[i].prefix);
+        if (strncmp(text, cmds[i].prefix, len) == 0) {
+            if (screen_out && screen_out_len > 0) snprintf(screen_out, screen_out_len, "%.*s", (int)len - 1, cmds[i].prefix);
+            cmds[i].fn(text + len);
+            return true;
+        }
+    }
+    return false;
+}
+
+#endif  // KYPHONE_UI_SCREENS_H

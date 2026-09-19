@@ -1,0 +1,61 @@
+"""Representative wire commands for every OS 0.2.1 screen, shared by the firmware host tests and by
+tools/preview_screens.py. Each value is (wire command, designer capture or None). The sub-field
+separator is the single byte 0xB7, so strings are meant to be encoded as latin-1."""
+
+O = '\xb7'
+
+
+def r(*f):
+    return O.join(f)
+
+
+SCREENS = {
+    'home': ('HOME2|12:44 PM|0|3', '12_home_contacts_third.png'),
+    'home_contacts': ('HOME2|12:44 PM|2|3', None),
+    'texts': ('TEXTS|2|' + '|'.join([
+        r('Pip Okonkwo', 'omw, 5 min', '1', '6:57 PM'), r('(555) 019-9002', 'Where are you?', '0', '9:29 AM'),
+        r('(555) 019-9014', '! thank you!', '0', '8:31 AM'), r('Therapist', 'See you Thursday at 3.', '0', '2:14 PM'),
+        r('Bestie', 'STOP EVERYTHING. call me', '0', 'Yesterday')]), '01_texts_list_5_rows.png'),
+    'texts_empty': ('TEXTS|0', None),
+    'contacts': ('CONTACTSPICK|0||6 / 12|' + '|'.join([
+        r('Gina Rossi', '(312) 555-0188'), r('Jordan Reyes', '(646) 555-0118'), r('Mom', '(203) 555-0187'),
+        r('Pip Okonkwo', '(917) 555-0101'), r('Rafael Ortiz', '(305) 555-0121'), r('Sam Whitfield', ''),
+        r('Therapist', '(212) 555-0199')]), '11_contacts_windowed_end_of_list.png'),
+    'contacts_nomatch': ('CONTACTSPICK|0|zz|', None),
+    'calls': ('CALLS|1|' + '|'.join([
+        r('DIAL A NUMBER', 'NEW', '', ''), r('Pip', 'OUT', '4:03 PM', '12:04'),
+        r('(555) 019-9002', 'MISS', '11:47 AM', ''), r('Mom', 'IN', 'Yesterday', '3:12')]), None),
+    'thread_sending': ('THREAD2|Pip Okonkwo|||' + '|'.join([
+        r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now'), r('Y0', '6:55 PM', 'still here?')]),
+        '04_thread_sending_and_sent.png'),
+    'thread_retry': ('THREAD2|Pip Okonkwo|||' + '|'.join([
+        r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now'), r('Y3', '6:55 PM', 'still here?')]),
+        '03_thread_not_sent_selected_retry.png'),
+    'thread_notsent': ('THREAD2|Pip Okonkwo|||' + '|'.join([
+        r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now'), r('Y2', '6:55 PM', 'still here?')]), None),
+    'thread_long': ('THREAD2|Pip Okonkwo|...seat near the window if you can, the back row is impossible to|B|' + '|'.join([
+        r('R', '6:52 PM', 'you close?'),
+        r('Y2', '6:55 PM', 'This is a longer message that wraps onto several lines of the bubble')]), None),
+    'compose': ('COMPOSE|Alice Test|hey are you free tonight? I was thinking we could grab dinner|0||0|1', None),
+    'compose_empty': ('COMPOSE|||1||0|0', None),
+    'alert_bad_number': ('STUB|CONTACT|THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. '
+                         'SPACES, DASHES AND BRACKETS ARE FINE.', '10_validation_bad_number.png'),
+    'alert_read': ('STUB|READ|READ CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO BOOKS ARE ON THE PHONE. '
+                   'PRESS ENTER TO GO BACK TO THE MENU.', None),
+    'confirm_delete': ('CONFIRM|DELETE CONTACT|DELETE PIP OKONKWO? THE MESSAGES STAY IN THE TEXT LIST, LABELED WITH THE '
+                       'NUMBER. THE NAME CANNOT BE BROUGHT BACK.|DELETE|KEEP CONTACT|K', '09_delete_contact_confirm.png'),
+    'confirm_delete_go': ('CONFIRM|DELETE CONTACT|DELETE PIP OKONKWO? THE MESSAGES STAY IN THE TEXT LIST, LABELED WITH THE '
+                          'NUMBER. THE NAME CANNOT BE BROUGHT BACK.|DELETE|KEEP CONTACT|D', None),
+    'confirm_discard': ('CONFIRM|NEW MESSAGE|DISCARD THIS MESSAGE? IT HAS NOT BEEN SENT, AND THE PHONE KEEPS NO DRAFTS, '
+                        'SO THE TEXT CANNOT BE BROUGHT BACK.|DISCARD|KEEP EDITING|K', None),
+    'contact_saved': ('CONTACT|Pip Okonkwo|(917) 555-0101|S|C', None),
+    'contact_unsaved': ('CONTACT|(555) 019-9002|NOT IN CONTACTS|U|V', '06_contact_unsaved_number_save.png'),
+    'contact_nonum': ('CONTACT|Sam Whitfield|NO NUMBER SAVED|N|A', None),
+    'edit_new': ('CONTACTEDIT|||(555) 019-9002|0|N', '07_new_contact_prefilled.png'),
+    'edit_edit': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|3|E', None),
+    'edit_delete': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|4|E', '08_edit_contact_delete_selected.png'),
+}
+
+
+def encode(wire):
+    return wire.encode('latin-1')
