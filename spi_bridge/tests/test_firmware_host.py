@@ -107,6 +107,12 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.ink(f, 300, 43))                      # the header rule
         self.assertFalse(self.has_ink(f, 500, 6, 585, 40))         # back only: no + control
 
+    def test_an_empty_texts_list_shows_the_plus_control_selected(self):
+        f = self.frames['texts_empty']                             # TEXTS|-2
+        self.assertTrue(self.ink(f, 548, 8))                       # the + box (546..583 x 6..39) is filled
+        self.assertFalse(self.ink(f, 18, 8))                       # the back box is not
+        self.assertGreater(self.ink_count(f), 300)                 # and the NO CONVERSATIONS message is still drawn
+
     def test_an_empty_library_says_so(self):
         f = self.frames['library_empty']
         self.assertGreater(self.ink_count(f), 300)

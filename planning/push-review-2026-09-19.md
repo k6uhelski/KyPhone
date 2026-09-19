@@ -93,7 +93,7 @@ patterns, checked separately):
 > `kyphone_os.py`; emulator renderers using the panel's own glyph bitmaps; `ui_reader.h` and a `LIBRARY` screen in the
 > firmware; test harness support for GFX custom fonts; `preview_screens.py --book`.
 >
-> **Testing.** 413 tests. The firmware code (built on a computer) draws pixel-identical pages to the emulator and to the
+> **Testing.** 423 tests. The firmware code (built on a computer) draws pixel-identical pages to the emulator and to the
 > layout module at all four sizes; 2,500 random reader frames under ASan/UBSan; firmware compile-checked for the Inkplate
 > 4 TEMPERA (12% of program space); real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
 > **Not yet run on the panel** — see `planning/phone-session-checklist.md`.

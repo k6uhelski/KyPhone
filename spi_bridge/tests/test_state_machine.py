@@ -154,7 +154,7 @@ class TestHomeScreen(unittest.TestCase):
 
     @patch.object(kyphone_os, 'push_screen')
     def test_enter_text_goes_to_texts_list(self, _ps):
-        reset_state(screen='home', home_index=0)
+        reset_state(screen='home', home_index=0, messages=list(_MSGS))     # with conversations: starts on the first row
         kyphone_os.handle_key('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'texts_list')
         self.assertEqual(kyphone_os.state['texts_index'], 0)
@@ -268,6 +268,81 @@ class TestTextsListScreen(unittest.TestCase):
         reset_state(screen='texts_list', texts_index=-1, texts_header_sel='back', messages=list(_MSGS))
         kyphone_os.handle_key('KEY_DOWN')
         self.assertEqual(kyphone_os.state['texts_index'], 0)
+
+
+class TestEmptyTextsList(unittest.TestCase):
+    """An empty list has no row to select, so it opens with `+` selected: the one useful action."""
+
+    def setUp(self):
+        reset_state(screen='home', home_index=0, texts_index=0, texts_header_sel='back', messages=[])
+        self._save_patch = patch.object(kyphone_os, 'save_messages')
+        self._save_patch.start()
+        self._ps = patch.object(kyphone_os, 'push_screen')
+        self.ps = self._ps.start()
+
+    def tearDown(self):
+        self._ps.stop()
+        self._save_patch.stop()
+
+    def open_texts(self):
+        kyphone_os.handle_key('KEY_ENTER')                                    # TEXT is the first home row
+        self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+
+    def test_it_opens_with_plus_selected(self):
+        self.open_texts()
+        self.assertEqual(_wire(self.ps), 'TEXTS|-2')
+        self.assertEqual((kyphone_os.state['texts_index'], kyphone_os.state['texts_header_sel']), (-1, 'plus'))
+
+    def test_however_it_is_reached_an_empty_list_shows_plus_selected(self):
+        reset_state(screen='texts_list', texts_index=0, texts_header_sel='back', messages=[])
+        kyphone_os.push_texts()                                               # e.g. returning from another screen
+        self.assertEqual(_wire(self.ps), 'TEXTS|-2')
+
+    def test_left_and_right_move_between_back_and_plus_straight_away(self):
+        self.open_texts()
+        kyphone_os.handle_key('KEY_LEFT')
+        self.assertEqual(_wire(self.ps), 'TEXTS|-1')
+        kyphone_os.handle_key('CHAR:d')                                       # D is Right
+        self.assertEqual(_wire(self.ps), 'TEXTS|-2')
+        kyphone_os.handle_key('CHAR:a')                                       # A is Left
+        self.assertEqual(_wire(self.ps), 'TEXTS|-1')
+        kyphone_os.handle_key('KEY_RIGHT')
+        self.assertEqual(_wire(self.ps), 'TEXTS|-2')
+
+    def test_enter_on_plus_writes_a_message_and_enter_on_back_goes_home(self):
+        self.open_texts()
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        reset_state(screen='texts_list', texts_index=-1, texts_header_sel='back', messages=[])
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+
+    def test_down_and_up_have_nowhere_to_go_and_change_nothing(self):
+        self.open_texts()
+        count = self.ps.call_count
+        kyphone_os.handle_key('KEY_DOWN')
+        kyphone_os.handle_key('KEY_UP')
+        self.assertEqual(self.ps.call_count, count)
+        self.assertEqual((kyphone_os.state['texts_index'], kyphone_os.state['texts_header_sel']), (-1, 'plus'))
+
+    def test_down_does_not_undo_a_back_selection(self):
+        self.open_texts()
+        kyphone_os.handle_key('KEY_LEFT')
+        kyphone_os.handle_key('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['texts_header_sel'], 'back')
+
+    def test_the_plus_key_and_esc_still_work(self):
+        self.open_texts()
+        kyphone_os.handle_key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+        reset_state(screen='texts_list', texts_index=-1, texts_header_sel='plus', messages=[])
+        kyphone_os.handle_key('CHAR:+')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+
+    def test_a_list_with_conversations_still_opens_on_its_first_row(self):
+        reset_state(screen='home', home_index=0, texts_index=0, messages=list(_MSGS))
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertTrue(_wire(self.ps).startswith('TEXTS|0|'))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -632,9 +707,9 @@ class TestTextsWindow(ListWindowBase):
             self.assertEqual(row.count(CELL), 3)              # no row cut mid-field
             self.assertEqual(row.split(CELL)[3], 'WEDNESDAY')  # the time survives intact
 
-    def test_empty_list_sends_no_rows(self):
+    def test_empty_list_sends_no_rows_and_selects_plus(self):
         reset_state(screen='texts_list', messages=[])
-        self.assertEqual(self._push(), 'TEXTS|0')
+        self.assertEqual(self._push(), 'TEXTS|-2')
 
 
 class TestContactsWindow(ListWindowBase):
@@ -1763,7 +1838,7 @@ class TestHomeMenuOrder(unittest.TestCase):
                           kyphone_os.state['contacts_start'], kyphone_os.state['contacts_return']), ('', 0, 0, 'home'))
 
     def test_texts_and_calls_open_with_their_windows_at_the_top(self):
-        self.enter_row(0, texts_index=6, texts_start=4)
+        self.enter_row(0, texts_index=6, texts_start=4, messages=list(_MSGS))
         self.assertEqual((kyphone_os.state['texts_index'], kyphone_os.state['texts_start']), (0, 0))
         self.enter_row(1, calls_index=5, calls_start=2)
         self.assertEqual((kyphone_os.state['calls_index'], kyphone_os.state['calls_start']), (0, 0))

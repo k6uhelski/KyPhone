@@ -21,7 +21,7 @@ SCREENS = {
         r('Pip Okonkwo', 'omw, 5 min', '1', '6:57 PM'), r('(555) 019-9002', 'Where are you?', '0', '9:29 AM'),
         r('(555) 019-9014', '! thank you!', '0', '8:31 AM'), r('Therapist', 'See you Thursday at 3.', '0', '2:14 PM'),
         r('Bestie', 'STOP EVERYTHING. call me', '0', 'Yesterday')]), '01_texts_list_5_rows.png'),
-    'texts_empty': ('TEXTS|0', None),
+    'texts_empty': ('TEXTS|-2', None),                # an empty list opens with + selected
     'library': ('LIBRARY|1|' + '|'.join([
         r("Alice's Adventures in Wond", 'Lewis Carroll', '35%'), r('The Count of Monte Cristo', 'Alexandre Dumas', ''),
         r('Frankenstein', 'Mary Shelley', '100%')]), None),

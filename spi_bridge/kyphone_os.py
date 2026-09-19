@@ -653,11 +653,19 @@ def push_home2():
     push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}")
 
 
+def _settle_texts_selection(threads):
+    """An empty list has no row to select, so its selection lives in the header, on `+` (the one useful action:
+    PRESS + TO WRITE THE FIRST MESSAGE). Returns (index, header_sel)."""
+    with state['lock']:
+        if not threads and state['texts_index'] >= 0:
+            state['texts_index'] = -1
+            state['texts_header_sel'] = 'plus'
+        return state['texts_index'], state['texts_header_sel']
+
+
 def push_texts():
     threads = get_threads()
-    with state['lock']:
-        idx = state['texts_index']
-        hdr = state['texts_header_sel']
+    idx, hdr = _settle_texts_selection(threads)
 
     # Clamp row index
     if idx >= 0 and threads:
@@ -1126,20 +1134,18 @@ def _from_home(keycode):
 
 
 def _from_texts_list(keycode):
-    with state['lock']:
-        idx = state['texts_index']
-        hdr = state['texts_header_sel']
-
     threads = get_threads()
+    idx, hdr = _settle_texts_selection(threads)
     max_idx = max(0, len(threads) - 1)
 
     if keycode == 'KEY_DOWN':
         changed = False
         if idx == -1:
-            # From header → first row
-            with state['lock']:
-                state['texts_index'] = 0
-            changed = True
+            # From header → first row (an empty list has none: stay on the header)
+            if threads:
+                with state['lock']:
+                    state['texts_index'] = 0
+                changed = True
         else:
             new_idx = min(idx + 1, max_idx)
             if new_idx != idx:

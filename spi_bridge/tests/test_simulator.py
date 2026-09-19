@@ -65,6 +65,14 @@ class SimulatorPixels(unittest.TestCase):
             self.draw(self.texts_wire(sel))
             self.assertEqual(self.inverted_rows(tops), [sel])
 
+    def test_an_empty_texts_list_can_show_the_plus_control_selected(self):
+        self.draw('TEXTS|-2')                                         # what the OS sends for an empty list
+        self.assertEqual(self.px(548, 8), BLACK)                      # the + box (546..583 x 6..39) is filled
+        self.assertEqual(self.px(18, 8), WHITE)                       # the back box is not
+        self.draw('TEXTS|-1')
+        self.assertEqual(self.px(18, 8), BLACK)
+        self.assertEqual(self.px(548, 8), WHITE)
+
     def test_texts_header_selection_inverts_no_row(self):
         self.draw(self.texts_wire(-1))
         self.assertEqual(self.inverted_rows([44 + i * 111 for i in range(5)]), [])

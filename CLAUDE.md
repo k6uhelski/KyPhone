@@ -103,7 +103,7 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | :--- | :--- |
 | lock | any → home |
 | home | ↑↓ move (−1 = header; Enter there → lock). Enter opens TEXT / CALL / READ / CONTACTS (list windows reset) or a stop alert for LISTEN. Esc → lock. `i` = incoming-call demo. Menu order (Kyle's, 2026-09-19: texts, calls, books, music, address book): TEXT, CALL, READ, LISTEN, CONTACTS — the design handoff had CONTACTS third; only the first three rows are on screen without scrolling. The order lives in four places that must agree (`kyphone_os.HOME_MENU`, `simulator.HOME_MENU`, `labels[]` in `ui_screens.h`, `tools/make_icons.py` ORDER → the generated icon tables); a test checks them |
-| texts_list | ↑↓; ↑ past the first row → header (←→ back/plus); Enter → thread (marks read); `+` or header plus → compose; Esc → home |
+| texts_list | ↑↓; ↑ past the first row → header (←→ back/plus); Enter → thread (marks read); `+` or header plus → compose; Esc → home. **An empty list opens with `+` selected** (there is no row to select), so ←→ and Enter work at once; ↓ has nowhere to go |
 | thread | typing edits the draft; Enter sends (empty → alert). ↑ from the composer selects the newest **NOT SENT** bubble (else the header); Enter on it **retries**; ↑ again → header; ↓ → composer. Header ←→ back/info; info → contact page. Esc → texts_list |
 | compose | Tab toggles TO/MESSAGE. ↑ walks SEND → MESSAGE → TO → the X in the header; ↓ MESSAGE → SEND. Enter: TO empty → contact picker, TO set → MESSAGE, MESSAGE or SEND → send (alerts if no recipient / empty message). `+` beside an empty TO opens the picker. Esc with a draft → discard confirm. TO holds 20 chars; the message is uncapped |
 | confirm | ← destructive button, → safe button; **opens on the safe one**; Esc is the safe choice; Enter acts on the selection |
@@ -166,7 +166,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Seven suites, 413 tests (`test_state_machine.py` 196, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_simulator.py` 47, `test_firmware_host.py` 37):
+Seven suites, 423 tests (`test_state_machine.py` 204, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_simulator.py` 48, `test_firmware_host.py` 38):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
@@ -175,7 +175,7 @@ Seven suites, 413 tests (`test_state_machine.py` 196, `test_reader_state.py` 44,
 ```
 KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
 ```
-Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `413 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `423 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 

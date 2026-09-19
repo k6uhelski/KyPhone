@@ -27,7 +27,7 @@ cd ~/kyphone && git branch --show-current          # reader-build
 KYPHONE_DATA_DIR=$(mktemp -d) ~/.venvs/kyphone/bin/python -m pytest -q -p no:cacheprovider \
   spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py      # expect: 413 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py      # expect: 423 passed
 ```
 
 ## 1. Back up both devices (about 8 minutes)
@@ -109,7 +109,7 @@ With the Bluetooth keyboard connected. Tick these off; note anything odd.
 - [ ] Esc: back to the library, now showing a percentage. Enter: it resumes on the same page.
 - [ ] `ssh radxa 'sudo systemctl restart kyphone'`, then READ → the book resumes where you left it.
 - [ ] Open Monte Cristo (a huge book): it should open instantly.
-- [ ] Regression: TEXT list and a thread, CONTACTS, CALL screens all still draw normally. (A send ending in NOT SENT is
+- [ ] Regression: TEXT list (an empty one opens with `+` selected) and a thread, CONTACTS, CALL screens all still draw normally. (A send ending in NOT SENT is
       normal: Twilio is off.)
 - [ ] Optional: unplug nothing, just watch `tail -f /tmp/inkplate_serial.log` on the Mac while you turn pages: you should see
       one `SUCCESS! MSG: RTEXT…` line per frame and `Full refresh (reader page)` on the flashes.
