@@ -55,17 +55,20 @@ def main():
     ser.open()
     with ser:
         time.sleep(0.5)
-        ser.reset_input_buffer()
+        ser.reset_input_buffer()        # NB: closing the port pulses the board's reset line; it reboots after the last screen
         for name, wire in todo:
             print('%-18s %s' % (name, wire[:70]))
             ser.write(b'@' + encode(wire) + b'\n')
             t0 = time.time()
             while time.time() - t0 < 20:                  # e-ink refreshes take a couple of seconds
                 line = ser.readline().decode('latin-1', 'replace').strip()
+                if line.startswith('>> PREVIEW:') or 'Full refresh' in line:
+                    print('   board: ' + line[:90])
                 if 'PREVIEW DONE' in line:
+                    print('   drawn')
                     break
             else:
-                print('   (no acknowledgement from the board)', file=sys.stderr)
+                print('   NO ACKNOWLEDGEMENT from the board (did it just reset? try again)', file=sys.stderr)
             time.sleep(args.pause)
     return 0
 
