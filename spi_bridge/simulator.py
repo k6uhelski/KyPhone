@@ -177,8 +177,8 @@ class Simulator:
             self._draw_compose(rest)
         elif prefix == 'STUB':
             self._draw_stub(rest)
-        elif prefix == 'CONFIRMDISCARD':
-            self._draw_confirm_discard(rest)
+        elif prefix == 'CONFIRM':
+            self._draw_confirm(rest)
         elif prefix == 'CONTACTSPICK':
             self._draw_contacts_pick(rest)
         elif prefix == 'CONTACT':
@@ -370,6 +370,18 @@ class Simulator:
         does not depend on the font's own leading."""
         font = self._font(text_size, bold)
         self._surface.blit(font.render(str(text), True, color), (x, baseline - font.get_ascent()))
+
+    BUTTON_H = 36     # every small button: border + 6-7px padding + an 18px line
+
+    def _button(self, label, x, y, border, bold, selected):
+        """A bordered 36px button with an 18px label. `selected` inverts it.
+        Returns its width (18px padding a side, plus the border)."""
+        w = len(label) * self._char_w(2) + 36 + 2 * border
+        if selected:
+            pygame.draw.rect(self._surface, BLACK, (x, y, w, self.BUTTON_H))
+        pygame.draw.rect(self._surface, BLACK, (x, y, w, self.BUTTON_H), border)
+        self._text_bl(label, x + border + 18, y + 23, 2, WHITE if selected else BLACK, bold=bold)
+        return w
 
     def _text_right(self, text, right, baseline, text_size, color=BLACK, bold=False):
         font = self._font(text_size, bold)
@@ -594,14 +606,8 @@ class Simulator:
                 pygame.draw.rect(self._surface, BLACK, (cx, base - 19, 18, 24))
 
         # SEND — bottom right; activates the same as Enter on a filled-out message
-        send_str = 'SEND'
-        send_w   = len(send_str) * self._char_w(2) + 36
-        send_x   = self.WIDTH - 24 - send_w
-        send_y   = self.HEIGHT - 14 - (16 + 12)
-        if send_sel:
-            pygame.draw.rect(self._surface, BLACK, (send_x, send_y, send_w, 16 + 12))
-        pygame.draw.rect(self._surface, BLACK, (send_x, send_y, send_w, 16 + 12), 3)
-        self._text(send_str, send_x + 18, send_y + 6, 2, WHITE if send_sel else BLACK, bold=True)
+        send_w = len('SEND') * self._char_w(2) + 36 + 6
+        self._button('SEND', self.WIDTH - 24 - send_w, self.HEIGHT - 14 - self.BUTTON_H, 3, True, send_sel)
 
     def _draw_alert_icon_body(self, top, body):
         """Boxed '!' + prose paragraph — the alert pattern used by stub
@@ -629,35 +635,19 @@ class Simulator:
         self._line(44, weight=2)
         self._draw_alert_icon_body(212, body)
 
-        label = 'OK'
-        w, h  = len(label) * self._char_w(2) + 36, 16 + 12
-        x, y  = self.WIDTH - 24 - w, self.HEIGHT - 24 - h
-        pygame.draw.rect(self._surface, BLACK, (x, y, w, h))              # OK is the only control: inverted
-        self._text(label, x + 18, y + 6, 2, WHITE, bold=True)
+        w = len('OK') * self._char_w(2) + 36 + 6
+        self._button('OK', self.WIDTH - 24 - w, self.HEIGHT - 24 - self.BUTTON_H, 3, True, True)   # the only control: inverted
 
-    def _draw_confirm_discard(self, data):
-        discard_sel = data.strip() == 'D'
-        self._text('NEW MESSAGE', 24, 10, 3, bold=True)
+    def _draw_confirm(self, data):
+        # data = "title|body|go|keep|sel"   sel: D = the destructive button, K = the safe one
+        title, body, go, keep, sel = (data.split('|') + [''] * 5)[:5]
+        self._text(title, 24, 10, 3, bold=True)
         self._line(44, weight=2)
-        body = ("DISCARD THIS MESSAGE? IT HAS NOT BEEN SENT, AND THE PHONE KEEPS "
-                "NO DRAFTS, SO THE TEXT CANNOT BE BROUGHT BACK.")
         self._draw_alert_icon_body(196, body)
-
-        d_label, d_h = 'DISCARD', 16 + 14
-        d_w = len(d_label) * self._char_w(2) + 36
-        d_x, d_y = 56, self.HEIGHT - 24 - d_h
-        if discard_sel:
-            pygame.draw.rect(self._surface, BLACK, (d_x, d_y, d_w, d_h))
-        pygame.draw.rect(self._surface, BLACK, (d_x, d_y, d_w, d_h), 2)
-        self._text(d_label, d_x + 18, d_y + 7, 2, WHITE if discard_sel else BLACK)
-
-        k_label, k_h = 'KEEP EDITING', 16 + 12
-        k_w = len(k_label) * self._char_w(2) + 36
-        k_x, k_y = self.WIDTH - 24 - k_w, self.HEIGHT - 24 - k_h
-        if not discard_sel:
-            pygame.draw.rect(self._surface, BLACK, (k_x, k_y, k_w, k_h))
-        pygame.draw.rect(self._surface, BLACK, (k_x, k_y, k_w, k_h), 3)
-        self._text(k_label, k_x + 18, k_y + 6, 2, WHITE if not discard_sel else BLACK, bold=True)
+        y = self.HEIGHT - 24 - self.BUTTON_H
+        self._button(go, 56, y, 2, False, sel == 'D')                              # destructive: left, 2px, never the default
+        keep_w = len(keep) * self._char_w(2) + 36 + 6
+        self._button(keep, self.WIDTH - 24 - keep_w, y, 3, True, sel != 'D')       # safe: right, 3px, selected on open
 
     def _draw_contacts_pick(self, data):
         # data = "sel|query|position|name·number|..."
@@ -780,14 +770,10 @@ class Simulator:
         _field('LAST NAME:', last, 158, 188, 226, idx == 1)
         _field('PHONE NUMBER:', number, 246, 276, 314, idx == 2)
 
-        save_sel = idx == 3
-        label = 'SAVE'
-        w, h  = len(label) * self._char_w(2) + 36, 16 + 12
-        x, y  = self.WIDTH - 24 - w, self.HEIGHT - 14 - h
-        if save_sel:
-            pygame.draw.rect(self._surface, BLACK, (x, y, w, h))
-        pygame.draw.rect(self._surface, BLACK, (x, y, w, h), 3)
-        self._text(label, x + 18, y + 6, 2, WHITE if save_sel else BLACK, bold=True)
+        save_w = len('SAVE') * self._char_w(2) + 36 + 6
+        self._button('SAVE', self.WIDTH - 24 - save_w, self.HEIGHT - 14 - self.BUTTON_H, 3, True, idx == 3)
+        if kind == 'E':                              # nothing to delete on a new contact
+            self._button('DELETE', 24, self.HEIGHT - 15 - self.BUTTON_H, 2, False, idx == 4)
 
     def _draw_calls(self, data):
         # data = "sel|name·tag·time·duration|..."

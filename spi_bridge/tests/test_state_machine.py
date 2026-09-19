@@ -1559,5 +1559,155 @@ class TestComposeArrowUp(SendBase):
         self.assertTrue(kyphone_os.state['compose_plus_sel'])
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Delete a contact, and the confirmation screen (OS 0.2.1 step 6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class DeleteBase(ContactBase):
+    def open_edit(self, row):
+        """Contacts list -> the edit form of the contact in `row`."""
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        self.key(*(['KEY_DOWN'] * row), 'KEY_ENTER', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
+
+    def to_delete_button(self, row):
+        self.open_edit(row)
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_LEFT')      # ... SAVE, then left to DELETE
+
+
+class TestDeleteButton(DeleteBase):
+    def test_left_from_save_reaches_delete_and_right_returns_to_save(self):
+        self.open_edit(0)
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)
+        self.key('KEY_LEFT')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_DELETE)
+        self.key('KEY_RIGHT')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)
+
+    def test_arrow_up_from_delete_goes_to_the_number_field_and_down_never_reaches_it(self):
+        self.to_delete_button(0)
+        self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['edit_index'], 2)
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)
+
+    def test_a_new_contact_has_no_delete_button(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                   # + -> NEW CONTACT
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_LEFT')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)
+
+    def test_typing_does_nothing_while_delete_is_selected(self):
+        self.to_delete_button(0)
+        self.key('CHAR:x', 'KEY_BACKSPACE')
+        self.assertEqual(kyphone_os.state['edit_first'], 'Alice')
+        self.assertEqual(kyphone_os.state['edit_number'], '+15550100001')
+
+
+class TestDeleteConfirm(DeleteBase):
+    def confirm_wire(self, row=0):
+        self.to_delete_button(row)
+        return self.key('KEY_ENTER')
+
+    def test_enter_on_delete_asks_first_and_the_safe_button_is_selected(self):
+        wire = self.confirm_wire(0)
+        self.assertEqual(kyphone_os.state['screen'], 'confirm')
+        self.assertEqual(wire, 'CONFIRM|DELETE CONTACT|DELETE ALICE TEST? THE MESSAGES STAY IN THE TEXT LIST, '
+                               'LABELED WITH THE NUMBER. THE NAME CANNOT BE BROUGHT BACK.|DELETE|KEEP CONTACT|K')
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)                   # nothing deleted yet
+
+    def test_left_selects_the_destructive_button_and_right_the_safe_one(self):
+        self.confirm_wire()
+        self.assertTrue(self.key('KEY_LEFT').endswith('|D'))
+        self.assertTrue(self.key('KEY_RIGHT').endswith('|K'))
+
+    def test_enter_on_the_safe_button_keeps_the_contact_and_returns_to_the_form(self):
+        self.confirm_wire()
+        self.key('KEY_ENTER')
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_DELETE)
+
+    def test_esc_is_the_safe_choice_too_even_with_delete_selected(self):
+        self.confirm_wire()
+        self.key('KEY_LEFT', 'KEY_ESC')
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual(kyphone_os.state['confirm_sel'], 'keep')       # and it re-opens on the safe button
+
+    def test_the_destructive_button_deletes_and_lands_on_the_contacts_list(self):
+        self.confirm_wire(0)
+        wire = self.key('KEY_LEFT', 'KEY_ENTER')
+        self.assertEqual([kyphone_os.dispname(c) for c in kyphone_os.CONTACTS], ['Bob', 'Sam Whitfield', 'Bob'])
+        self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+        self.assertEqual((kyphone_os.state['contacts_query'], kyphone_os.state['contacts_index'],
+                          kyphone_os.state['contacts_start'], kyphone_os.state['contacts_header_sel'],
+                          kyphone_os.state['contacts_return']), ('', 0, 0, 'back', 'home'))
+        self.assertTrue(wire.startswith('CONTACTSPICK|0||1 / 3|'))
+
+    def test_the_change_is_saved(self):
+        self.confirm_wire(0)
+        self.key('KEY_LEFT', 'KEY_ENTER')
+        saved = self._cs_patch.target._save_contacts                    # the mock installed by ListWindowBase
+        self.assertEqual(len(saved.call_args[0][0]), 3)
+
+    def test_deleting_the_second_of_two_same_named_contacts_removes_that_one(self):
+        self.confirm_wire(3)                                            # the second "Bob"
+        wire = self.key('KEY_LEFT', 'KEY_ENTER')
+        self.assertEqual([c['number'] for c in kyphone_os.CONTACTS],
+                         ['+15550100001', '(555) 010-0002', ''])        # the first Bob (with his number) is still there
+
+    def test_the_conversation_stays_and_falls_back_to_the_formatted_number(self):
+        self.to_delete_button(0)
+        kyphone_os.state['messages'] = [_inbound('still here', peer='+15550100001')]   # after the helper's reset
+        self.assertEqual(kyphone_os.get_threads()[0]['name'], 'Alice Test')
+        self.key('KEY_ENTER', 'KEY_LEFT', 'KEY_ENTER')
+        threads = kyphone_os.get_threads()
+        self.assertEqual(len(threads), 1)                               # no thread disappears
+        self.assertEqual(threads[0]['name'], '(555) 010-0001')          # the row falls back to the number
+        self.assertEqual(threads[0]['messages'][0]['body'], 'still here')
+
+    def test_the_wire_fits_the_frame_for_the_longest_name(self):
+        kyphone_os.CONTACTS[0].update(first='F' * 18, last='L' * 18)
+        wire = self.confirm_wire(0)
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+
+
+class TestDiscardConfirmStillWorks(SendBase):
+    def start(self, msg='hello'):
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg=msg, compose_to_active=False)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_ESC')
+        return _wire(ps)
+
+    def test_leaving_a_message_in_progress_asks_with_the_safe_button_selected(self):
+        wire = self.start()
+        self.assertEqual(kyphone_os.state['screen'], 'confirm')
+        self.assertEqual(wire, 'CONFIRM|NEW MESSAGE|DISCARD THIS MESSAGE? IT HAS NOT BEEN SENT, AND THE PHONE KEEPS NO '
+                               'DRAFTS, SO THE TEXT CANNOT BE BROUGHT BACK.|DISCARD|KEEP EDITING|K')
+
+    def test_keep_editing_returns_to_the_message(self):
+        self.start()
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        self.assertEqual(kyphone_os.state['compose_msg'], 'hello')
+
+    def test_discard_clears_the_message_and_goes_to_the_texts_list(self):
+        self.start()
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.handle_key('KEY_LEFT')
+            kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+        self.assertEqual(kyphone_os.state['compose_msg'], '')
+        self.assertEqual(kyphone_os.state['compose_to'], '')
+
+    def test_an_empty_compose_leaves_without_asking(self):
+        reset_state(screen='compose', compose_to='', compose_msg='')
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.handle_key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+
+
 if __name__ == '__main__':
     unittest.main()

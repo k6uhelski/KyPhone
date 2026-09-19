@@ -166,7 +166,7 @@ class SimulatorPixels(unittest.TestCase):
     # ── stop alerts, edit form title, New Message wrapping ───────────────────
     def test_ok_on_a_stop_alert_is_inverted_because_it_is_the_only_control(self):
         self.draw('STUB|CONTACT|A CONTACT NEEDS A FIRST NAME.')
-        x, y = 600 - 24 - (2 * 12 + 36), 600 - 24 - 28                        # OK box, bottom right
+        x, y = 600 - 24 - (2 * 12 + 36 + 6), 600 - 24 - 36                    # OK box (36px tall), bottom right
         self.assertEqual(self.px(x + 8, y + 8), BLACK)
 
     def test_the_edit_form_is_titled_new_or_edit_contact(self):
@@ -181,6 +181,36 @@ class SimulatorPixels(unittest.TestCase):
         self.assertFalse(self.region_has_ink(24, 236, 300, 262))
         self.draw('COMPOSE|Alice|' + 'ab ' * 25 + '|0||0|0')                    # 74 characters
         self.assertTrue(self.region_has_ink(24, 236, 300, 262))
+
+    # ── delete button and the confirm screen ─────────────────────────────────
+    def test_delete_is_only_on_an_edit_form_not_a_new_contact(self):
+        self.draw('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|1|E')
+        self.assertTrue(self.region_has_ink(24, 549, 140, 585))
+        self.draw('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|1|N')
+        self.assertFalse(self.region_has_ink(24, 549, 140, 585))
+
+    def test_delete_button_inverts_when_selected(self):
+        self.draw('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|4|E')
+        self.assertEqual(self.px(30, 556), BLACK)                              # inside the 2px border: filled
+        self.draw('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|1|E')
+        self.assertEqual(self.px(30, 556), WHITE)
+
+    def test_confirm_opens_with_the_safe_button_on_the_right_selected(self):
+        keep_x = 600 - 24 - (len('KEEP') * 12 + 36 + 6)
+        self.draw('CONFIRM|T|Body text here.|GO|KEEP|K')
+        self.assertEqual(self.px(keep_x + 8, 548), BLACK)                      # safe button filled
+        self.assertEqual(self.px(56 + 6, 548), WHITE)                          # destructive one is not
+        self.draw('CONFIRM|T|Body text here.|GO|KEEP|D')
+        self.assertEqual(self.px(keep_x + 8, 548), WHITE)
+        self.assertEqual(self.px(56 + 6, 548), BLACK)
+
+    def test_the_safe_button_has_the_heavier_border(self):
+        keep_x = 600 - 24 - (len('KEEP') * 12 + 36 + 6)
+        self.draw('CONFIRM|T|Body text here.|GO|KEEP|D')                       # neither filled the same way
+        self.assertEqual((self.px(keep_x + 2, 556), self.px(keep_x + 3, 556)), (BLACK, WHITE))   # 3px border
+        self.assertEqual((self.px(57, 556), self.px(58, 556)), (BLACK, BLACK))                    # (filled: selected)
+        self.draw('CONFIRM|T|Body text here.|GO|KEEP|K')
+        self.assertEqual((self.px(57, 556), self.px(58, 556)), (BLACK, WHITE))                    # 2px border
 
 
 class WrapParity(unittest.TestCase):

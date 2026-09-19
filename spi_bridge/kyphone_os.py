@@ -1,7 +1,7 @@
 """
 kyphone_os.py — KyPhone OS 0.2
 
-Screens: lock | home | texts_list | thread | compose | confirm_discard |
+Screens: lock | home | texts_list | thread | compose | confirm |
          contacts_pick | contact | contact_edit | stub |
          calls_list | dial | outgoing | incoming | in_call
 
@@ -241,7 +241,8 @@ state = {
     'compose_header_sel': None,     # None=typing | 'x'
     'compose_plus_sel': False,      # '+' next to an empty TO field selected
     'compose_send_sel': False,      # SEND button selected
-    'confirm_sel':      'keep',     # 'keep' | 'discard' — leaving compose with a draft
+    'confirm_kind':     'discard_message',   # 'discard_message' | 'delete_contact'
+    'confirm_sel':      'keep',     # 'keep' (the safe, right-hand default) | 'go' (the destructive one)
     'stub_key':         '',
     'stub_return':      'home',     # screen to return to on Esc/Enter
     'stub_text':        None,       # (title, body) for a stop alert; None = STUB_INFO[stub_key]
@@ -718,10 +719,26 @@ def _show_alert(key, ret, **fields):
     push_stub()
 
 
-def push_confirm_discard():
+def push_confirm():
+    """One confirmation layout for every destructive choice: the destructive
+    button is on the left, the safe one on the right, and the safe one holds
+    the selection when the screen opens."""
     with state['lock']:
-        sel = state['confirm_sel']
-    push_screen(f"CONFIRMDISCARD|{'D' if sel == 'discard' else 'K'}")
+        kind = state['confirm_kind']
+        sel  = state['confirm_sel']
+        eidx = state['edit_idx']
+    if kind == 'delete_contact':
+        name = sanitize(dispname(CONTACTS[eidx])).upper() if eidx is not None and 0 <= eidx < len(CONTACTS) else ''
+        title = 'DELETE CONTACT'
+        body  = (f'DELETE {name}? THE MESSAGES STAY IN THE TEXT LIST, LABELED WITH THE NUMBER. '
+                 'THE NAME CANNOT BE BROUGHT BACK.')
+        go, keep = 'DELETE', 'KEEP CONTACT'
+    else:
+        title = 'NEW MESSAGE'
+        body  = ('DISCARD THIS MESSAGE? IT HAS NOT BEEN SENT, AND THE PHONE KEEPS NO DRAFTS, '
+                 'SO THE TEXT CANNOT BE BROUGHT BACK.')
+        go, keep = 'DISCARD', 'KEEP EDITING'
+    push_screen(f"CONFIRM|{title}|{body}|{go}|{keep}|{'D' if sel == 'go' else 'K'}")
 
 
 def _filtered_contacts():
@@ -861,7 +878,7 @@ def _push_for_screen(screen_name):
     pushers = {
         'home': push_home2, 'lock': push_lock, 'texts_list': push_texts,
         'thread': push_thread2, 'compose': push_compose, 'stub': push_stub,
-        'confirm_discard': push_confirm_discard, 'contacts_pick': push_contacts,
+        'confirm': push_confirm, 'contacts_pick': push_contacts,
         'contact': push_contact, 'contact_edit': push_contact_edit,
         'calls_list': push_calls, 'dial': push_dial,
         'outgoing': push_call_screen, 'incoming': push_call_screen,
@@ -915,8 +932,8 @@ def handle_key(keycode):
     elif screen == 'compose':
         _from_compose(keycode)
 
-    elif screen == 'confirm_discard':
-        _from_confirm_discard(keycode)
+    elif screen == 'confirm':
+        _from_confirm(keycode)
 
     elif screen == 'contacts_pick':
         _from_contacts_pick(keycode)
@@ -1226,10 +1243,11 @@ def _compose_has_draft():
 def _leave_compose():
     if _compose_has_draft():
         with state['lock']:
-            state['screen']             = 'confirm_discard'
+            state['screen']             = 'confirm'
+            state['confirm_kind']       = 'discard_message'
             state['confirm_sel']        = 'keep'
             state['compose_header_sel'] = None
-        push_confirm_discard()
+        push_confirm()
     else:
         with state['lock']:
             state['screen']             = 'texts_list'
@@ -1364,24 +1382,59 @@ def _from_compose(keycode):
         push_compose()
 
 
-def _from_confirm_discard(keycode):
+def _cancel_confirm():
+    """Esc, or Enter on the safe button: back to where the question came from."""
+    with state['lock']:
+        kind   = state['confirm_kind']
+        target = 'compose' if kind == 'discard_message' else 'contact_edit'
+        state['screen']      = target
+        state['confirm_sel'] = 'keep'
+    _push_for_screen(target)
+
+
+def _delete_contact():
+    """Remove the contact being edited. Its conversations are left alone: a
+    thread is keyed on the number, so the row simply falls back to the
+    formatted number — nothing disappears and nothing is orphaned."""
+    with state['lock']:
+        eidx = state['edit_idx']
+    if eidx is not None and 0 <= eidx < len(CONTACTS):
+        del CONTACTS[eidx]
+        _save_contacts(CONTACTS)
+    with state['lock']:
+        state['screen']              = 'contacts_pick'
+        state['contacts_query']      = ''
+        state['contacts_index']      = 0
+        state['contacts_start']      = 0
+        state['contacts_header_sel'] = 'back'
+        state['contacts_return']     = 'home'
+        state['confirm_sel']         = 'keep'
+        state['contact_idx']         = None
+        state['contact_number']      = ''
+        state['edit_idx']            = None
+    push_contacts()
+
+
+def _from_confirm(keycode):
     if keycode == 'KEY_LEFT':
         with state['lock']:
-            state['confirm_sel'] = 'discard'
-        push_confirm_discard()
+            state['confirm_sel'] = 'go'
+        push_confirm()
     elif keycode == 'KEY_RIGHT':
         with state['lock']:
             state['confirm_sel'] = 'keep'
-        push_confirm_discard()
+        push_confirm()
     elif keycode == 'KEY_ESC':
-        with state['lock']:
-            state['screen']      = 'compose'
-            state['confirm_sel'] = 'keep'
-        push_compose()
+        _cancel_confirm()                          # Esc is the safe choice too
     elif keycode == 'KEY_ENTER':
         with state['lock']:
-            sel = state['confirm_sel']
-        if sel == 'discard':
+            kind = state['confirm_kind']
+            sel  = state['confirm_sel']
+        if sel != 'go':
+            _cancel_confirm()
+        elif kind == 'delete_contact':
+            _delete_contact()
+        else:
             with state['lock']:
                 state['screen']             = 'texts_list'
                 state['compose_to']         = ''
@@ -1389,11 +1442,6 @@ def _from_confirm_discard(keycode):
                 state['compose_header_sel'] = None
                 state['confirm_sel']        = 'keep'
             push_texts()
-        else:
-            with state['lock']:
-                state['screen']      = 'compose'
-                state['confirm_sel'] = 'keep'
-            push_compose()
 
 
 def _leave_contacts():
@@ -1531,6 +1579,8 @@ def _from_contact(keycode):
 
 
 EDIT_FIELDS = ['first', 'last', 'number']
+EDIT_SAVE   = len(EDIT_FIELDS)        # 3
+EDIT_DELETE = EDIT_SAVE + 1           # 4 — bottom left, only when editing an existing contact
 
 
 def _open_new_contact(number, ret):
@@ -1640,23 +1690,38 @@ def _save_contact_edit():
 
 def _from_contact_edit(keycode):
     with state['lock']:
-        idx = state['edit_index']
+        idx        = state['edit_index']
+        can_delete = state['edit_idx'] is not None      # a new contact has nothing to delete
 
     if keycode == 'KEY_ESC':
         _leave_contact_edit()
     elif keycode == 'KEY_UP':
         with state['lock']:
-            state['edit_index'] = max(-1, idx - 1)
+            state['edit_index'] = EDIT_SAVE - 1 if idx == EDIT_DELETE else max(-1, idx - 1)
         push_contact_edit()
     elif keycode == 'KEY_DOWN':
         with state['lock']:
-            state['edit_index'] = min(len(EDIT_FIELDS), idx + 1)
+            state['edit_index'] = min(EDIT_SAVE, idx + 1)
+        push_contact_edit()
+    elif keycode == 'KEY_LEFT' and idx == EDIT_SAVE and can_delete:
+        with state['lock']:
+            state['edit_index'] = EDIT_DELETE
+        push_contact_edit()
+    elif keycode == 'KEY_RIGHT' and idx == EDIT_DELETE:
+        with state['lock']:
+            state['edit_index'] = EDIT_SAVE
         push_contact_edit()
     elif keycode == 'KEY_ENTER':
         if idx == -1:
             _leave_contact_edit()
-        elif idx == len(EDIT_FIELDS):
+        elif idx == EDIT_SAVE:
             _save_contact_edit()
+        elif idx == EDIT_DELETE:
+            with state['lock']:
+                state['screen']       = 'confirm'
+                state['confirm_kind'] = 'delete_contact'
+                state['confirm_sel']  = 'keep'
+            push_confirm()
         else:
             with state['lock']:
                 state['edit_index'] = idx + 1
