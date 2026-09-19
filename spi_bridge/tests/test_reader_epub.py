@@ -81,10 +81,16 @@ class TempBooks(unittest.TestCase):
     def book(self, chapters, **kw):
         p = self.path()
         make_epub(p, chapters, **kw)
-        return reader_epub.load(p)
+        book = reader_epub.load(p)
+        self.addCleanup(book.close)
+        return book
+
+    @staticmethod
+    def chapters(book):
+        return [book.chapter(i) for i in range(len(book))]
 
     def assertDrawable(self, book):
-        for ch in book.chapters:
+        for ch in self.chapters(book):
             for text in [ch.title] + [t for _k, t in ch.paras]:
                 for c in text:
                     self.assertTrue(' ' <= c <= '~' and c != '|', repr(text))
@@ -177,38 +183,43 @@ class LoadBooks(TempBooks):
     def test_metadata_and_reading_order(self):
         book = self.book(self.CH, title='The Book', author='A. Writer')
         self.assertEqual((book.title, book.author), ('The Book', 'A. Writer'))
-        self.assertEqual([c.paras[1][1] for c in book.chapters], ['The first chapter.', 'The second chapter.'])
-        self.assertGreater(book.char_count(), 20)
+        self.assertEqual(len(book), 2)
+        self.assertEqual([c.paras[1][1] for c in self.chapters(book)], ['The first chapter.', 'The second chapter.'])
         self.assertDrawable(book)
 
     def test_epub3_navigation_document_names_the_chapters(self):
         book = self.book(self.CH, toc={'one.xhtml': 'I. Morning', 'two.xhtml': 'II. Evening'})
-        self.assertEqual([c.title for c in book.chapters], ['I. Morning', 'II. Evening'])
+        self.assertEqual([c.title for c in self.chapters(book)], ['I. Morning', 'II. Evening'])
 
     def test_epub2_ncx_names_the_chapters(self):
         book = self.book(self.CH, version=2, toc={'one.xhtml#top': 'Morning', 'two.xhtml': 'Evening'})
-        self.assertEqual([c.title for c in book.chapters], ['Morning', 'Evening'])
+        self.assertEqual([c.title for c in self.chapters(book)], ['Morning', 'Evening'])
 
     def test_without_a_toc_the_heading_then_a_part_number_name_the_chapter(self):
         book = self.book(self.CH + [('three.xhtml', xhtml('<p>No heading here.</p>'))])
-        self.assertEqual([c.title for c in book.chapters], ['Dawn', 'Dusk', 'PART 3'])
+        self.assertEqual([c.title for c in self.chapters(book)], ['Dawn', 'Dusk', 'PART 3'])
 
     def test_non_linear_items_and_non_text_media_are_skipped(self):
         book = self.book(self.CH, manifest_extra='<item id="pic" href="a.jpg" media-type="image/jpeg"/>'
                                                  '<item id="note" href="one.xhtml" media-type="application/xhtml+xml"/>',
                          spine_extra='<itemref idref="pic"/><itemref idref="note" linear="no"/>')
-        self.assertEqual(len(book.chapters), 2)
+        self.assertEqual(len(book), 2)
 
-    def test_empty_chapters_and_missing_files_are_dropped(self):
+    def test_empty_chapters_are_kept_but_skipped_and_missing_files_are_dropped(self):
         book = self.book([('cover.xhtml', xhtml('<img src="c.jpg"/>'))] + self.CH + [('gone.xhtml', xhtml('<p>x</p>'))],
                          skip_files=('gone.xhtml',))
-        self.assertEqual([c.title for c in book.chapters], ['Dawn', 'Dusk'])
+        self.assertEqual(len(book), 3)                       # the cover page counts; the missing file does not
+        self.assertEqual(book.chapter(0).paras, [])
+        self.assertEqual(book.first_with_text(), 1)
+        self.assertEqual(book.next_with_text(1, +1), 2)
+        self.assertIsNone(book.next_with_text(2, +1))
+        self.assertIsNone(book.next_with_text(1, -1))        # only the empty cover lies before it
 
     def test_encoded_hrefs_nested_folders_and_the_opf_at_the_root(self):
         book = self.book([('text/chap one.xhtml', xhtml('<p>spaced</p>'))])
-        self.assertEqual(book.chapters[0].paras, [('p', 'spaced')])
+        self.assertEqual(book.chapter(0).paras, [('p', 'spaced')])
         book = self.book([('x.xhtml', xhtml('<p>root</p>'))], opf_dir='')
-        self.assertEqual(book.chapters[0].paras, [('p', 'root')])
+        self.assertEqual(book.chapter(0).paras, [('p', 'root')])
 
     def test_member_names_match_regardless_of_case(self):
         p = self.path()
@@ -219,7 +230,8 @@ class LoadBooks(TempBooks):
         with zipfile.ZipFile(p, 'w') as z:
             for n, d in data.items():
                 z.writestr(n, d)
-        self.assertEqual(reader_epub.load(p).chapters[0].paras, [('p', 'case')])
+        with reader_epub.load(p) as book:
+            self.assertEqual(book.chapter(0).paras, [('p', 'case')])
 
     def test_a_missing_title_falls_back_to_the_file_name(self):
         book = self.book(self.CH, title='')
@@ -239,7 +251,62 @@ class LoadBooks(TempBooks):
         enc = ('<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData>'
                '<EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/></EncryptedData></encryption>')
         book = self.book(self.CH, extra={'META-INF/encryption.xml': enc.encode()})
-        self.assertEqual(len(book.chapters), 2)
+        self.assertEqual(len(book), 2)
+
+
+class LazyLoading(TempBooks):
+    def many(self, n=8):
+        return self.book([('c%d.xhtml' % i, xhtml('<h1>Ch %d</h1><p>%s</p>' % (i, 'text ' * (10 * (i + 1))))) for i in range(n)])
+
+    def test_only_the_chapters_asked_for_are_parsed(self):
+        calls = []
+        real = reader_epub.html_to_paras
+        reader_epub.html_to_paras = lambda data: (calls.append(1), real(data))[1]
+        self.addCleanup(setattr, reader_epub, 'html_to_paras', real)
+        book = self.many()
+        self.assertEqual(len(calls), 1)                      # opening looked for the first chapter with text, no more
+        book.chapter(5)
+        book.chapter(5)                                      # cached
+        self.assertEqual(len(calls), 2)
+
+    def test_a_few_chapters_stay_cached_and_old_ones_are_dropped(self):
+        book = self.many()
+        for i in range(8):
+            book.chapter(i)
+        self.assertLessEqual(len(book._cache), reader_epub.Book.CACHE)
+        self.assertEqual(book.chapter(7).title, 'Ch 7')     # the newest is still there
+        self.assertEqual(book.chapter(0).title, 'Ch 0')      # an evicted one parses again
+
+    def test_a_chapter_number_out_of_range_is_an_error(self):
+        book = self.many(3)
+        with self.assertRaises(IndexError):
+            book.chapter(3)
+        with self.assertRaises(IndexError):
+            book.chapter(-1)
+
+    def test_progress_runs_from_zero_to_one_and_never_goes_backwards(self):
+        book = self.many()
+        self.assertEqual(book.progress(0, 0.0), 0.0)
+        self.assertAlmostEqual(book.progress(len(book) - 1, 1.0), 1.0)
+        last = -1
+        for i in range(len(book)):
+            for frac in (0.0, 0.5, 1.0):
+                now = book.progress(i, frac)
+                self.assertGreaterEqual(now, last)
+                last = now
+        self.assertEqual(book.progress(2, -3), book.progress(2, 0))         # out-of-range fractions are clamped
+        self.assertEqual(book.progress(2, 9), book.progress(2, 1))
+
+    def test_a_larger_chapter_weighs_more(self):
+        book = self.many()
+        self.assertLess(book.weights[0], book.weights[7])
+
+    def test_closing_the_book_closes_the_file(self):
+        p = self.path()
+        make_epub(p, [('a.xhtml', xhtml('<p>hi</p>'))])
+        with reader_epub.load(p) as book:
+            zf = book._pkg.zip
+        self.assertIsNone(zf.fp)
 
 
 # ─── Books that cannot be read ────────────────────────────────────────────────

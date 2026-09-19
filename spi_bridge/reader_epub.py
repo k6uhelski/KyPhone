@@ -374,21 +374,89 @@ class _NavCollector(HTMLParser):
 class Chapter:
     def __init__(self, title, paras):
         self.title = title
-        self.paras = paras                        # [('p'|'h', text)]
+        self.paras = paras                        # [('p'|'h', text)]; empty for a cover page or a blank divider
 
     def char_count(self):
         return sum(len(t) for _k, t in self.paras)
 
 
 class Book:
-    def __init__(self, path, title, author, chapters):
+    """An opened book. Chapters are parsed only when asked for (a large novel is millions of characters and the
+    phone's processor is slow), so opening is instant; keep the Book while reading and close() it afterwards.
+
+        book = load(path)
+        book.title, book.author, len(book)          # len = number of chapters in reading order
+        book.chapter(i).paras                       # parsed on first use; the last few stay cached
+        book.next_with_text(i, +1)                  # the next chapter that has any text, or None
+        book.progress(i, fraction)                  # 0..1 through the whole book (by size, so approximate)
+    """
+    CACHE = 4
+
+    def __init__(self, pkg, path, title, author, order, titles):
+        self._pkg = pkg
         self.path = path
         self.title = title
         self.author = author
-        self.chapters = chapters
+        self._order = order                       # [(zip member, resolved name)]
+        self._titles = titles                     # {resolved name: title}
+        self._cache = {}
+        self._used = []
+        self.weights = [max(1, pkg.zip.getinfo(member).file_size) for member, _n in order]
+        self._total = float(sum(self.weights))
 
-    def char_count(self):
-        return sum(c.char_count() for c in self.chapters)
+    def __len__(self):
+        return len(self._order)
+
+    def close(self):
+        self._pkg.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def chapter(self, i):
+        if not 0 <= i < len(self._order):
+            raise IndexError('chapter %d of %d' % (i, len(self._order)))
+        if i in self._cache:
+            self._used.remove(i)
+            self._used.append(i)
+            return self._cache[i]
+        member, name = self._order[i]
+        paras = html_to_paras(self._pkg.read(member))
+        title = self._titles.get(name)
+        if not title:
+            heading = next((t for k, t in paras[:3] if k == 'h'), None)
+            title = heading or 'PART %d' % (i + 1)
+        chapter = self._cache[i] = Chapter(title, paras)
+        self._used.append(i)
+        while len(self._used) > self.CACHE:
+            del self._cache[self._used.pop(0)]
+        return chapter
+
+    def next_with_text(self, i, step):
+        """The nearest chapter after (step=+1) or before (step=-1) chapter i that has text; None at the ends."""
+        j = i + step
+        while 0 <= j < len(self._order):
+            if self.chapter(j).paras:
+                return j
+            j += step
+        return None
+
+    def first_with_text(self):
+        """Index of the first chapter with any text. Raises EpubError if the book has none."""
+        if self.chapter(0).paras:
+            return 0
+        j = self.next_with_text(0, +1)
+        if j is None:
+            raise EpubError('THE BOOK HAS NO READABLE TEXT')
+        return j
+
+    def progress(self, i, fraction):
+        """How far through the book (0..1) a position `fraction` of the way through chapter i is, by file size."""
+        before = float(sum(self.weights[:i]))
+        return min(1.0, max(0.0, (before + self.weights[i] * min(1.0, max(0.0, fraction))) / self._total))
 
 
 def _title_of(pkg, path):
@@ -409,29 +477,17 @@ def read_info(path):
 
 
 def load(path):
-    """Parse the whole book. Raises EpubError (message fit for an alert) if it cannot be read."""
+    """Open a book. Raises EpubError (message fit for an alert) if it cannot be read. Close it when done."""
     pkg = _Package(path)
     try:
         order = pkg.reading_order()[:MAX_CHAPTERS]
         if not order:
             raise EpubError('THE BOOK HAS NO READABLE TEXT')
-        titles = pkg.toc_titles()
-        chapters, total = [], 0
-        for member, name in order:
-            data = pkg.read(member)
-            total += len(data)
-            if total > MAX_TOTAL_BYTES:
-                raise EpubError('THE BOOK IS TOO LARGE')
-            paras = html_to_paras(data)
-            if not paras:
-                continue                          # a cover page, a blank divider
-            title = titles.get(name)
-            if not title:
-                heading = next((t for k, t in paras[:3] if k == 'h'), None)
-                title = heading or 'PART %d' % (len(chapters) + 1)
-            chapters.append(Chapter(title, paras))
-        if not chapters:
-            raise EpubError('THE BOOK HAS NO READABLE TEXT')
-        return Book(path, _title_of(pkg, path), _squash(pkg.author), chapters)
-    finally:
+        if sum(pkg.zip.getinfo(member).file_size for member, _n in order) > MAX_TOTAL_BYTES:
+            raise EpubError('THE BOOK IS TOO LARGE')
+        book = Book(pkg, path, _title_of(pkg, path), _squash(pkg.author), order, pkg.toc_titles())
+        book.first_with_text()                    # a book of nothing but pictures is refused now, not at page one
+        return book
+    except Exception:
         pkg.close()
+        raise
