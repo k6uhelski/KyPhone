@@ -91,7 +91,11 @@ if not all([ACCOUNT_SID, AUTH_TOKEN, TWILIO_NUMBER]):
 # --- Contacts ---
 # Address book records: [{first, last, number}, ...]. OS 0.1 stored a flat
 # {number: name} dict; that shape is auto-migrated to this one on load.
-_contacts_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'contacts.json')
+# KYPHONE_DATA_DIR moves contacts.json and messages.json (tests and the emulator
+# point it at a scratch folder so they never touch the real data).
+DATA_DIR = os.path.abspath(os.path.expanduser(os.environ.get('KYPHONE_DATA_DIR') or
+                                              os.path.join(os.path.dirname(__file__), '..', 'data')))
+_contacts_path = os.path.join(DATA_DIR, 'contacts.json')
 
 
 def _save_contacts(contacts):
@@ -187,8 +191,7 @@ def contact_index_for(number):
     return None
 
 # --- Persistence Paths ---
-DATA_DIR      = os.path.join(os.path.dirname(__file__), '..', 'data')
-MESSAGES_FILE = os.path.join(DATA_DIR, 'messages.json')
+MESSAGES_FILE = os.path.join(DATA_DIR, 'messages.json')     # DATA_DIR is defined with the contacts path above
 
 # --- Lock Screen Quotes ---
 # Matches the fixed list in the OS 0.2 design prototype. Quotes cycle each

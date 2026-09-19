@@ -151,17 +151,17 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Three suites, 250 tests (`test_state_machine.py` 193, `test_simulator.py` 34, `test_firmware_host.py` 23):
+Three suites, 253 tests (`test_state_machine.py` 196, `test_simulator.py` 34, `test_firmware_host.py` 23):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_firmware_host.py`** — builds `ui_screens.h` for the computer with `tests/firmware_host/` (a fake display using the real GFX font) and checks exact geometry, that firmware and emulator agree on every rule and inverted row, and memory safety (thousands of malformed and maximum-length commands under the address and undefined-behaviour sanitizers). Needs `clang++` and Adafruit_GFX's `glcdfont.c`; skips otherwise.
 
 ```
-python3 -m pytest spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_state_machine.py
+KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
 ```
-Name the three files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. **Keep this order:** `test_state_machine.py` puts a fake pygame in `sys.modules` if pygame is not loaded yet, so if it is collected first the simulator and firmware tests skip silently ("220 passed, 30 skipped" instead of "250 passed"). Check the total. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the three files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `253 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
-**Run tests on a copy of `spi_bridge/` with an empty `data/`**, not in place: importing `kyphone_os` loads (and can rewrite) `data/contacts.json`. The same applies to the simulator, which reads and writes the real `data/` — see Known constraints.
+**Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 
 Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/preview_screens.py` (draw screens on the real panel over USB; use the system `/usr/bin/python3`, which has pyserial), `flash_macmini.sh` (compile and flash from the Mac mini), `serial_log_macmini.py` (streams the Inkplate's serial output to `/tmp/inkplate_serial.log`).
 
@@ -169,7 +169,7 @@ Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/preview_scre
 ```
 python3 spi_bridge/kyphone_os.py --sim
 ```
-Renders every screen in a 600×600 pygame window with full keyboard navigation. Environment: `KYPHONE_SIM_SEND=sent|not_sent`, `KYPHONE_HOME_STYLE=icons|both|words`. The emulator's text is narrower than the panel's fixed 6×8-cell font, so wrapping follows the device figures (composer 30 columns, bubbles 20) rather than the font.
+Renders every screen in a 600×600 pygame window with full keyboard navigation. Environment: `KYPHONE_SIM_SEND=sent|not_sent`, `KYPHONE_HOME_STYLE=icons|both|words`, `KYPHONE_DATA_DIR=<folder>` (where `contacts.json` and `messages.json` live; default `data/` beside `spi_bridge/`). The emulator's text is narrower than the panel's fixed 6×8-cell font, so wrapping follows the device figures (composer 30 columns, bubbles 20) rather than the font.
 
 ### **Deploying**
 *   **Radxa:** systemd `kyphone.service` runs `spi_bridge/kyphone_os.py` as root from `~/kyphone`. To update: copy `kyphone_os.py`, `simulator.py`, `home_icons.py`; `sudo systemctl restart kyphone`; check `journalctl -u kyphone` and `/tmp/inkplate_serial.log` (the Inkplate logs each command it receives). The Radxa's git clone is not kept in step — files are copied in.
@@ -224,7 +224,7 @@ Non-obvious facts that will bite future maintainers if undocumented.
 *   **`PAYLOAD_BYTES = 256` must stay in sync** between `kyphone_os.py` and the `.ino` (and `MAX_COMMAND_CHARS` = 253 follows from it). There is no compile-time check.
 *   **Wire changes need every layer at once:** `kyphone_os.py`, `simulator.py`, `ui_screens.h`, the tests, and the wire table above. Several things exist in more than one place and are guarded by tests: `wrap_words` (`kyphone_os.py` and `simulator.py`, asserted equal; `ui_screens.h` covered by the host geometry tests), the home menu order (`HOME_MENU`, the simulator's list, `labels[]` in `ui_screens.h`, `make_icons.ORDER`), and the generated icon files (`make_icons.py --check`).
 *   **`state['lock']` is not re-entrant.** Never call a helper that takes it (`_contact_view`, `_thread_messages`, `resolve_peer`, `get_threads`, …) from inside a `with state['lock']:` block — that deadlocks. It happened twice during development; compute the value first, then take the lock.
-*   **Importing `kyphone_os` touches `data/`** (it loads contacts and may migrate/rewrite the file). Run tests on a copy with an empty `data/`. The simulator also reads and writes the real `data/`. There is no data-directory override; adding one (an environment variable read where `data/` paths are built) would fix both.
+*   **Importing `kyphone_os` touches `data/`** (it loads contacts and may migrate/rewrite the file), and the simulator reads and writes it too. Set `KYPHONE_DATA_DIR` to a scratch folder for tests and experiments; it is read once at import, so it must be set before the process starts.
 *   **Closing the Inkplate's USB serial port resets it** (the DTR/RTS pulse), so the preview tool leaves the board rebooting after its last screen; the panel keeps its image. Open the port with DTR and RTS off, as `serial_log_macmini.py` does.
 *   **The middot separator is one byte, 0xB7** (latin-1). Anything above 255 in a payload would be garbled by the SPI byte list, which is why text is sanitized before it is sent.
 *   **e-ink refresh:** the first screen after boot is a full refresh; otherwise partial, with a full refresh every 10 minutes to clear ghosting.

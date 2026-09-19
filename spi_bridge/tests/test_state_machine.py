@@ -17,8 +17,12 @@ sys.argv = ['test', '--sim']  # force SIM_MODE=True so hardware imports are skip
 sys.modules.setdefault('spidev', MagicMock())
 sys.modules.setdefault('gpiod', MagicMock())
 sys.modules.setdefault('input_handler', MagicMock())
-sys.modules.setdefault('pygame', MagicMock())
-sys.modules.setdefault('simulator', MagicMock())
+# pygame and simulator are faked only for the import below and only if the real ones are not
+# already loaded. The fakes are removed afterwards: left in sys.modules they made the simulator
+# and firmware test files skip silently when this file was collected first.
+_faked = [name for name in ('pygame', 'simulator') if name not in sys.modules]
+for _name in _faked:
+    sys.modules[_name] = MagicMock()
 sys.modules.setdefault('evdev', MagicMock())
 _twilio_mock = MagicMock()
 sys.modules.setdefault('twilio', _twilio_mock)
@@ -26,6 +30,9 @@ sys.modules.setdefault('twilio.rest', _twilio_mock)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import kyphone_os  # noqa: E402  (import after sys.path manipulation)
+for _name in _faked:
+    if isinstance(sys.modules.get(_name), MagicMock):
+        del sys.modules[_name]
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1791,6 +1798,72 @@ class TestHomeStyle(unittest.TestCase):
 
     def test_the_setting_names_map_to_the_wire_letters(self):
         self.assertEqual(kyphone_os.HOME_STYLES, {'icons': 'I', 'both': 'B', 'words': 'W'})
+
+
+class TestDataDirOverride(unittest.TestCase):
+    """KYPHONE_DATA_DIR moves the data folder. Each case imports kyphone_os in a fresh
+    interpreter, because the paths are fixed when the module is imported. The snippet
+    only prints the paths; the tests save nothing except into their own scratch folder, and never
+    import the real module without the override (that would load, and could migrate, the real data)."""
+
+    SNIPPET = (
+        "import sys, json\n"
+        "from unittest.mock import MagicMock\n"
+        "sys.argv = ['x', '--sim']\n"
+        "for m in ('spidev', 'gpiod', 'input_handler', 'pygame', 'simulator', 'evdev', 'twilio', 'twilio.rest'):\n"
+        "    sys.modules[m] = MagicMock()\n"
+        "sys.path.insert(0, %r)\n"
+        "import kyphone_os as k\n"
+        "%s"
+        "print(json.dumps([k.DATA_DIR, k._contacts_path, k.MESSAGES_FILE]))\n"
+    )
+
+    def run_import(self, env_value, save=False, module_dir=None):
+        import json
+        import subprocess
+        import tempfile
+        env = {k: v for k, v in os.environ.items() if k != 'KYPHONE_DATA_DIR'}
+        if env_value is not None:
+            env['KYPHONE_DATA_DIR'] = env_value
+        here = module_dir or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+        save_line = "k._save_contacts([{'first': 'Ada', 'last': '', 'number': '(555) 010-0001'}])\n" if save else ''
+        out = subprocess.run([sys.executable, '-c', self.SNIPPET % (here, save_line)],
+                             env=env, capture_output=True, text=True, timeout=60, cwd=tempfile.gettempdir())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_the_override_moves_contacts_and_messages(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = os.path.join(tmp, 'scratch')
+            data_dir, contacts, messages = self.run_import(scratch, save=True)
+            self.assertEqual(data_dir, scratch)
+            self.assertEqual(contacts, os.path.join(scratch, 'contacts.json'))
+            self.assertEqual(messages, os.path.join(scratch, 'messages.json'))
+            # the save created the folder and wrote there
+            self.assertTrue(os.path.exists(contacts))
+
+    def test_a_relative_or_home_path_is_made_absolute(self):
+        data_dir, _, _ = self.run_import('~/kyphone-scratch-not-created')
+        self.assertEqual(data_dir, os.path.join(os.path.expanduser('~'), 'kyphone-scratch-not-created'))
+        self.assertTrue(os.path.isabs(self.run_import('some/relative/dir')[0]))
+
+    def test_without_it_the_data_folder_sits_beside_spi_bridge(self):
+        # Importing kyphone_os loads (and may migrate) whatever data folder it resolves, so this
+        # must never import the real module without the override: it imports a COPY of it placed
+        # in a scratch tree, where "beside spi_bridge" is the scratch tree's own data/.
+        import shutil
+        import tempfile
+        real = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'kyphone_os.py'))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            os.makedirs(os.path.join(tmp, 'spi_bridge'))
+            shutil.copy(real, os.path.join(tmp, 'spi_bridge', 'kyphone_os.py'))
+            for unset in (None, ''):                  # an empty value means "not set"
+                data_dir, contacts, messages = self.run_import(unset, module_dir=os.path.join(tmp, 'spi_bridge'))
+                self.assertEqual(data_dir, os.path.join(tmp, 'data'))
+                self.assertEqual(contacts, os.path.join(tmp, 'data', 'contacts.json'))
+                self.assertEqual(messages, os.path.join(tmp, 'data', 'messages.json'))
 
 
 if __name__ == '__main__':

@@ -150,3 +150,10 @@ otherwise.
 - Mac clone brought up to `origin/main`; earlier local edits are in `git stash` (`stash@{0}`).
 - Emulator environment: `~/.venvs/kyphone` (Python 3.9, pygame, pytest).
 - Design feedback pack sent to Claude Design; its handoff produced this spec.
+
+## Follow-up: test hygiene (2026-09-18)
+
+- `KYPHONE_DATA_DIR` moves `contacts.json` and `messages.json`; the tests and the emulator can now run against a scratch folder. Read once at import.
+- `test_state_machine.py` no longer leaves a fake `pygame`/`simulator` in `sys.modules`; collected first, it used to make 30 simulator and firmware tests skip silently. The suite is 253 tests and passes in any file order.
+- **Incident:** while verifying this, a new test imported the real `kyphone_os` with no override, which loaded and migrated this Mac's `data/contacts.json` from the OS 0.1 `{number: name}` shape to the OS 0.2 list in place (content preserved, format changed). Fixed: that test now imports a copy of the module inside a scratch tree, and the whole run was re-proved against an old-format data file (byte-identical afterwards). The Radxa's data was not involved.
+

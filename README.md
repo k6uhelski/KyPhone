@@ -38,11 +38,11 @@ python3 spi_bridge/kyphone_os.py --sim
 
 # Tests (name the three files; do not point pytest at the whole tests/ folder)
 pip3 install pytest
-python3 -m pytest spi_bridge/tests/test_simulator.py \
-                  spi_bridge/tests/test_firmware_host.py \
-                  spi_bridge/tests/test_state_machine.py   # keep this order; expect 250 passed
+KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py \
+                  spi_bridge/tests/test_simulator.py \
+                  spi_bridge/tests/test_firmware_host.py   # expect 253 passed
 ```
-The emulator and the tests read and write `spi_bridge/data/`, so run them on a copy of the folder if it holds real contacts or messages. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
+The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
 ### **What's next**
 - Flash the icon home menu and click through every screen on the real phone
@@ -65,7 +65,7 @@ Tested texting, creating a contact and deleting a contact in the emulator, took 
 - Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
 - The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
 - Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
-- There are now 250 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- There are now 253 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
 - Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**
