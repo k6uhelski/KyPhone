@@ -84,15 +84,16 @@ class Session:
             return Now(track, self._index, len(self._tracks), self._state, position, duration, self._volume)
 
     # -- doing --
-    def play_tracks(self, tracks, index=0, start=0.0):
-        """Queue `tracks` and play from `index` (0-based), `start` seconds in."""
+    def play_tracks(self, tracks, index=0, start=0.0, play=True):
+        """Queue `tracks` and play from `index` (0-based), `start` seconds in. With play=False the track is loaded
+        paused (to resume where you stopped)."""
         tracks = list(tracks)
         if not tracks:
             return False
         with self._lock:
             self._tracks, self._bad = tracks, set()
             self._index = max(0, min(index, len(tracks) - 1))
-        return self._start_current(start, True)
+        return self._start_current(start, play)
 
     def toggle(self):
         with self._lock:

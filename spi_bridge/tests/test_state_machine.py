@@ -167,12 +167,14 @@ class TestHomeScreen(unittest.TestCase):
         kyphone_os.handle_key('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'library')
 
+    @patch.object(kyphone_os, 'LISTENING_FILE', '/nonexistent-kyphone/listening.json')
+    @patch.object(kyphone_os, 'MUSIC_INDEX_FILE', '/nonexistent-kyphone/music_index.json')
+    @patch.object(kyphone_os, 'MUSIC_DIR', '/nonexistent-kyphone/music')
     @patch.object(kyphone_os, 'push_screen')
-    def test_enter_listen_goes_to_stub(self, _ps):
+    def test_enter_listen_opens_the_music_list(self, _ps):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('LISTEN'))
         kyphone_os.handle_key('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['screen'], 'stub')
-        self.assertEqual(kyphone_os.state['stub_key'], 'LISTEN')
+        self.assertEqual(kyphone_os.state['screen'], 'music')
 
     @patch.object(kyphone_os, 'push_screen')
     def test_esc_goes_to_lock_and_advances_quote(self, _ps):
@@ -1825,12 +1827,10 @@ class TestHomeMenuOrder(unittest.TestCase):
         with patch.object(kyphone_os, 'BOOKS_DIR', '/nonexistent-kyphone/books'), \
                 patch.object(kyphone_os, 'READING_FILE', '/nonexistent-kyphone/reading.json'):
             self.enter_row(self.ROW('READ'));  self.assertEqual(kyphone_os.state['screen'], 'library')
-        self.enter_row(self.ROW('LISTEN'));  self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'LISTEN'))
-
-    def test_the_listen_alert_uses_its_own_text_not_a_leftover_alert(self):
-        kyphone_os.state['stub_text'] = ('CONTACT', 'A LEFTOVER ALERT')
-        wire = self.enter_row(self.ROW('LISTEN'))
-        self.assertTrue(wire.startswith('STUB|LISTEN|LISTEN CANNOT OPEN YET.'))
+            with patch.object(kyphone_os, 'MUSIC_DIR', '/nonexistent-kyphone/music'), \
+                    patch.object(kyphone_os, 'MUSIC_INDEX_FILE', '/nonexistent-kyphone/music_index.json'), \
+                    patch.object(kyphone_os, 'LISTENING_FILE', '/nonexistent-kyphone/listening.json'):
+                self.enter_row(self.ROW('LISTEN'));  self.assertEqual(kyphone_os.state['screen'], 'music')
 
     def test_contacts_opens_a_fresh_list_returning_to_home(self):
         self.enter_row(self.ROW('CONTACTS'), contacts_query='old', contacts_index=5, contacts_start=3)
@@ -1874,9 +1874,9 @@ class TestHomeStyle(unittest.TestCase):
 
     def test_the_wire_carries_the_style_and_icons_are_the_default(self):
         self.assertEqual(kyphone_os.HOME_STYLE, 'I')
-        self.assertTrue(self.wire().endswith('|I'))
-        self.assertTrue(self.wire('B').endswith('|B'))
-        self.assertTrue(self.wire('W').endswith('|W'))
+        self.assertTrue(self.wire().endswith('|I|0'))                       # style, then the "music is playing" flag
+        self.assertTrue(self.wire('B').endswith('|B|0'))
+        self.assertTrue(self.wire('W').endswith('|W|0'))
 
     def test_the_setting_names_map_to_the_wire_letters(self):
         self.assertEqual(kyphone_os.HOME_STYLES, {'icons': 'I', 'both': 'B', 'words': 'W'})
@@ -1941,7 +1941,8 @@ class TestDataDirOverride(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
-            for src in [os.path.join(here, 'kyphone_os.py')] + glob.glob(os.path.join(here, 'reader_*.py')):
+            for src in ([os.path.join(here, 'kyphone_os.py')] + glob.glob(os.path.join(here, 'reader_*.py'))
+                        + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
                 data_dir, contacts, messages = self.run_import(unset, module_dir=os.path.join(tmp, 'spi_bridge'))

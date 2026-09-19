@@ -6,15 +6,15 @@
 |---|---|---|
 | 1 | Music library: scan `data/music`, read tags and lengths from MP3 / FLAC / Ogg / Opus / M4A / WAV (`music_library.py`, 53 tests incl. damaged files and a 5,000-track scan) | done |
 | 2 | Player: `Session` (queue and rules), `SimPlayer`, `GstPlayer` (`music_player.py`, 42 tests; the real player also ran on the Radxa against a silent output) | done |
-| 3 | State machine: music / tracks / nowplaying screens | next |
-| 4 | Emulator renderers | |
+| 3 | State machine: music / tracks / nowplaying screens, keys, background playback, ticker, saved volume and resume, alerts (`kyphone_os.py`, `test_music_state.py` 41 tests) | done |
+| 4 | Emulator renderers | next |
 | 5 | Firmware renderers + host harness | |
 | 6 | Device: headphones, format matrix, soak (needs Kyle at the phone) | waiting |
 | 7 | Docs | |
 
 **Checked on the Radxa 2026-09-19 (silent, nothing changed):** every decoder the plan worried about is there — `mpg123audiodec` (MP3), `flacdec`, `vorbisdec`, `opusdec`, `avdec_aac`/`faad`, `avdec_alac`, `wavparse`, plus the Ogg, QuickTime and ID3 demuxers (my first plugin listing was truncated, which is why FLAC and Vorbis looked missing). `GstPlayer` was run from a temp folder with `KYPHONE_AUDIO_DEVICE=fake` (a clocked fakesink): position follows real time, pause holds it, seek works and clamps, a text file posing as an MP3 is reported ("THIS APPEARS TO BE A TEXT FILE") and skipped, the queue continues and finishes. Still to be heard on real headphones: step 6. Lesson: ALSA's `null` device is not paced, so it "plays" everything instantly; `fake` is the silent option that keeps time.
 
-Deviations from the plan as built: `python3-mutagen` is **not** used at all (the stdlib readers cover MP3, FLAC, Ogg/Opus, M4A/AAC and WAV; anything else is described by its file name), which keeps the phone free of new dependencies; albums with no album-artist tag are grouped by album name **and folder** (two artists can each have a "Greatest Hits"; "Disc 1"/"CD 2" subfolders join their parent album).
+Deviations from the plan as built: **Up/Down change the volume** (so the trackpad, which only has arrows and a click, can do everything: swipe left/right = previous/next, click = play/pause, up/down = volume) and **`,` / `.` seek 15 s** back/forward (the plan had Up/Down seek); `+`/`-` still change volume. A bad track only raises its alert if the now-playing screen is showing (a skip in the background is silent, so music never interrupts a book or a text). The player is never a silent stand-in on the phone: if GStreamer is missing, choosing a track shows a NO_AUDIO alert. RESUME (after a restart) is the first row of the album list when the last track is still on the phone; `python3-mutagen` is **not** used at all (the stdlib readers cover MP3, FLAC, Ogg/Opus, M4A/AAC and WAV; anything else is described by its file name), which keeps the phone free of new dependencies; albums with no album-artist tag are grouped by album name **and folder** (two artists can each have a "Greatest Hits"; "Disc 1"/"CD 2" subfolders join their parent album).
 
 ## Context
 LISTEN (the music row on the home menu) is a stop alert today. Kyle wants a music player. Decisions made with Kyle:

@@ -98,6 +98,14 @@ class Playing(SessionCase):
         self.assertTrue(s.playing and s.active)
         self.assertEqual(self.events, ['track'])
 
+    def test_a_track_can_be_loaded_paused_at_a_position_to_resume(self):
+        s = self.make()
+        s.play_tracks(self.tracks, 1, start=42.0, play=False)
+        self.assertEqual(self.player.calls[-1], ('load', '/music/t1.mp3', 42.0, False))
+        self.assertEqual((s.now().state, s.now().index, s.playing), ('paused', 1, False))
+        s.toggle()
+        self.assertEqual(s.now().state, 'playing')
+
     def test_an_empty_queue_or_a_wild_index_is_handled(self):
         s = self.make()
         self.assertFalse(s.play_tracks([], 0))

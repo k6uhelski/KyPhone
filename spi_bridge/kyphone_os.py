@@ -43,6 +43,8 @@ from twilio.rest import Client
 
 import reader_epub
 import reader_layout as rl
+import music_library
+import music_player
 
 # --- Config ---
 CHIP            = 'gpiochip3'
@@ -211,6 +213,18 @@ LIBRARY_AUTHOR_MAX = 14
 READER_FULL_EVERY  = 8        # a full (flashing) refresh at least this often while turning pages, to clear ghosting
 DEFAULT_READER_SIZE = 'M'
 
+# --- Music (LISTEN) ---
+MUSIC_DIR         = os.path.join(DATA_DIR, 'music')             # drop music files here, in any folders
+MUSIC_INDEX_FILE  = os.path.join(DATA_DIR, 'music_index.json')  # cache of what each file's tags say
+LISTENING_FILE    = os.path.join(DATA_DIR, 'listening.json')    # {'volume': 40, 'last': {'path', 'position'}}
+MUSIC_ROWS        = 5
+MUSIC_TITLE_MAX   = 22
+MUSIC_SUB_MAX     = 24
+NOW_TITLE_MAX     = 56       # two 28-character lines
+NOW_LINE_MAX      = 44
+MUSIC_TICK_SECONDS = 30      # while the now-playing screen is up, redraw this often so the time moves
+_MUSIC_CLOCK      = time.monotonic
+
 # --- Lock Screen Quotes ---
 # Matches the fixed list in the OS 0.2 design prototype. Quotes cycle each
 # time the device returns to lock.
@@ -229,12 +243,7 @@ QUOTES = [
 
 # An unbuilt feature is a stop alert, not a silent no-op: each one says what
 # happened, why it happened, and what to do instead.
-STUB_INFO = {
-    'LISTEN': {
-        'title': 'LISTEN',
-        'body': 'LISTEN CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO AUDIO IS ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.',
-    },
-}
+STUB_INFO = {}       # (READ and LISTEN were the last two; both are real screens now)
 
 # Stop alerts for input the phone will not act on: a no-op is never silent (the
 # only deliberate silence is a rejected keystroke).
@@ -248,6 +257,8 @@ ALERTS = {
     'BAD_BOOK':     ('READ', 'THIS BOOK CANNOT BE OPENED. {reason}. PRESS ENTER TO GO BACK TO YOUR BOOKS.'),
     'END_OF_BOOK':  ('READ', 'THAT WAS THE LAST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE, THEN ESC FOR YOUR BOOKS.'),
     'START_OF_BOOK': ('READ', 'THIS IS THE FIRST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE.'),
+    'BAD_TRACK':    ('LISTEN', '{title} CANNOT BE PLAYED: {reason}. IT WAS SKIPPED. PRESS ENTER TO GO ON.'),
+    'NO_AUDIO':     ('LISTEN', 'THIS PHONE HAS NO SOUND OUTPUT RIGHT NOW: {reason}. PRESS ENTER TO GO BACK.'),
     'BIGGEST_FONT': ('READ', 'THE TEXT IS ALREADY AT ITS LARGEST SIZE. PRESS ENTER TO GO BACK TO THE PAGE.'),
     'SMALLEST_FONT': ('READ', 'THE TEXT IS ALREADY AT ITS SMALLEST SIZE. PRESS ENTER TO GO BACK TO THE PAGE.'),
 }
@@ -326,6 +337,15 @@ state = {
     'r_pages':        None,         # pages of the current chapter at the current size
     'r_pages_key':    None,         # (chapter, size) those pages belong to
     'r_turns':        0,            # partial refreshes since the last full one
+
+    'music_lib':      None,         # the scanned music_library.Library
+    'music_index':    0,            # -1=header | row in the album list (NOW PLAYING / RESUME first, when there is one)
+    'music_start':    0,            # first row in the 5-row window
+    'album':          None,         # the Album whose tracks are showing
+    'tracks_index':   0,            # -1=header | track in that album
+    'tracks_start':   0,
+    'music_return':   'music',      # where Esc on the now-playing screen goes: 'music' | 'tracks'
+    'music_last':     None,         # {'path', 'position'} from listening.json, offered as RESUME
 
     'running': True,
     'lock':    threading.Lock(),
@@ -650,7 +670,8 @@ def push_home2():
     with state['lock']:
         unread = sum(1 for m in state['messages'] if not m['read'])
         home_index = state['home_index']
-    push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}")
+    playing = 1 if (_music is not None and _music.playing) else 0        # the equalizer mark on the music row
+    push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}|{playing}")
 
 
 def _settle_texts_selection(threads):
@@ -968,6 +989,7 @@ def _push_for_screen(screen_name):
         'outgoing': push_call_screen, 'incoming': push_call_screen,
         'in_call': push_call_screen,
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
+        'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
     }
     pusher = pushers.get(screen_name)
     if pusher:
@@ -1050,6 +1072,15 @@ def handle_key(keycode):
     elif screen == 'reader':
         _from_reader(keycode)
 
+    elif screen == 'music':
+        _from_music(keycode)
+
+    elif screen == 'tracks':
+        _from_tracks(keycode)
+
+    elif screen == 'nowplaying':
+        _from_nowplaying(keycode)
+
     elif screen == 'stub':
         if keycode in ('KEY_ESC', 'KEY_ENTER'):
             with state['lock']:
@@ -1112,13 +1143,8 @@ def _from_home(keycode):
             push_contacts()
         elif HOME_MENU[idx] == 'READ':
             _open_library()
-        else:  # LISTEN — not built yet
-            with state['lock']:
-                state['screen']      = 'stub'
-                state['stub_key']    = HOME_MENU[idx]
-                state['stub_text']   = None
-                state['stub_return'] = 'home'
-            push_stub()
+        elif HOME_MENU[idx] == 'LISTEN':
+            _open_music()
     elif keycode == 'CHAR:i':
         # Demo shortcut: simulate an incoming call.
         with state['lock']:
@@ -2264,6 +2290,346 @@ def _reader_key(keycode):
         push_reader(force_full=True)
 
 
+# ─── Music (LISTEN) ───────────────────────────────────────────────────────────
+# LISTEN opens the albums found in MUSIC_DIR (music_library.py); an album opens its tracks; a track starts playing
+# the album from there and shows the now-playing screen. Music keeps playing when you leave (Esc), the home menu shows
+# a small mark while it does, and LISTEN offers NOW PLAYING (or RESUME after a restart) as its first row.
+#
+# The player (music_player.py) makes the sound; this only decides what to show and what each key does. The e-ink is
+# redrawn when something changes on the now-playing screen, and every MUSIC_TICK_SECONDS so the time moves; no other
+# screen is ever redrawn by the player, except the home menu when the music finishes (so its mark does not lie).
+#
+# Keys on now-playing: Space/Enter play-pause, Right next, Left previous, Up/Down volume (so a trackpad can do it all),
+# + and - volume, . and , seek 15 s forward/back, Esc/q back (the music goes on).
+
+_music = None                 # the music_player.Session, made the first time something must play
+_music_problem = None         # why there is no real player, if there is not
+_music_lengths = {}           # path -> seconds from the last scan (the silent player needs them)
+_music_tick_count = 0
+_music_save_count = 0
+
+
+def _load_listening():
+    """LISTENING_FILE as {'volume': 0-100, 'last': {'path', 'position'} or None}; anything unreadable gives defaults."""
+    try:
+        with open(LISTENING_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    volume = data.get('volume')
+    last = data.get('last')
+    if not (isinstance(last, dict) and isinstance(last.get('path'), str) and isinstance(last.get('position'), (int, float))):
+        last = None
+    return {'volume': volume if isinstance(volume, int) and 0 <= volume <= 100 else music_player.DEFAULT_VOLUME,
+            'last': last}
+
+
+def _save_listening():
+    """Remember the volume and where we are (so LISTEN can offer RESUME after a restart)."""
+    sess = _music
+    saved = _load_listening()
+    now = sess.now() if sess is not None else None
+    if sess is not None:
+        saved['volume'] = sess.volume
+    if now is not None:
+        saved['last'] = {'path': now.track.path, 'position': 0 if now.state == 'stopped' else int(now.position)}
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = LISTENING_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(saved, f)
+        os.replace(tmp, LISTENING_FILE)
+    except OSError as e:
+        print(f"Warning: could not save listening state: {e}")
+
+
+def _music_session():
+    """The playback session, made on first use. None (and _music_problem says why) when the phone has no sound
+    system: a silent stand-in is only ever used in the emulator, never quietly on the phone."""
+    global _music, _music_problem
+    if _music is not None:
+        return _music
+    player, problem = music_player.create_player(sim=SIM_MODE, clock=_MUSIC_CLOCK, duration_of=_music_lengths.get)
+    if problem and not SIM_MODE:
+        _music_problem = problem
+        return None
+    _music = music_player.Session(player, volume=_load_listening()['volume'],
+                                  on_change=_music_changed, on_bad_track=_music_bad_track)
+    return _music
+
+
+def _music_changed(kind):
+    """The session says something changed. Runs on whatever thread caused it, with no session lock held."""
+    if kind in ('track', 'state', 'finished', 'volume'):
+        _save_listening()
+    with state['lock']:
+        screen = state['screen']
+    if screen == 'nowplaying':
+        push_nowplaying()
+    elif screen == 'home' and kind == 'finished':
+        push_home2()                                       # the mark for "music is playing" goes out
+
+
+def _music_bad_track(track, message):
+    """A file would not play and was skipped. Only interrupt if the now-playing screen is what you are looking at."""
+    with state['lock']:
+        screen = state['screen']
+    if screen == 'nowplaying':
+        _show_alert('BAD_TRACK', 'nowplaying', title=sanitize(track.title)[:30], reason=sanitize(message)[:40])
+
+
+def _find_track(lib, path):
+    """(album, index) of the track with this file path, or None."""
+    for album in (lib.albums if lib else []):
+        for i, t in enumerate(album.tracks):
+            if t.path == path:
+                return album, i
+    return None
+
+
+def _music_rows():
+    """The rows of the album list: NOW PLAYING (or RESUME) first when there is one, then every album A to Z."""
+    with state['lock']:
+        lib, last = state['music_lib'], state['music_last']
+    rows = []
+    now = _music.now() if _music is not None else None
+    if now is not None:
+        rows.append({'kind': 'now', 'cols': ['NOW PLAYING', f"{now.track.title} - {now.track.artist}",
+                                            {'playing': 'PLAYING', 'paused': 'PAUSED'}.get(now.state, '')]})
+    elif last is not None and lib is not None:
+        found = _find_track(lib, last['path'])
+        if found:
+            track = found[0].tracks[found[1]]
+            rows.append({'kind': 'resume', 'cols': ['RESUME', f"{track.title} - {track.artist}", '']})
+    for album in (lib.albums if lib else []):
+        rows.append({'kind': 'album', 'album': album, 'cols': [album.name, album.artist, f"{len(album.tracks)} trk"]})
+    return rows
+
+
+def _open_music():
+    lib = music_library.scan(MUSIC_DIR, MUSIC_INDEX_FILE)
+    _music_lengths.clear()
+    _music_lengths.update({t.path: t.seconds for a in lib.albums for t in a.tracks if t.seconds})
+    last = _load_listening()['last']
+    with state['lock']:
+        state['screen']     = 'music'
+        state['music_lib']  = lib
+        state['music_last'] = last
+        state['music_start'] = 0
+    state['music_index'] = 0 if _music_rows() else -1
+    push_music()
+
+
+def push_music():
+    rows = _music_rows()
+    with state['lock']:
+        idx = min(state['music_index'], len(rows) - 1)
+        state['music_index'] = idx
+        start = window_start(state['music_start'], max(0, idx), MUSIC_ROWS, len(rows))
+        state['music_start'] = start
+    send_idx = idx if idx < 0 else idx - start
+    shown = [[sanitize(c[0])[:MUSIC_TITLE_MAX], sanitize(c[1])[:MUSIC_SUB_MAX], c[2]] for c in
+             (r['cols'] for r in rows[start:start + MUSIC_ROWS])]
+    push_screen(_list_command(["MUSIC", str(send_idx)], shown, shrink_order=(0, 1)))
+
+
+def _from_music(keycode):
+    rows = _music_rows()
+    with state['lock']:
+        idx = state['music_index']
+    if keycode == 'KEY_UP':
+        with state['lock']:
+            state['music_index'] = max(-1, idx - 1)
+        push_music()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['music_index'] = min(len(rows) - 1, idx + 1)
+        push_music()
+    elif keycode == 'KEY_ENTER':
+        if idx == -1 or not rows:
+            with state['lock']:
+                state['screen'] = 'home'
+            push_home2()
+        elif rows[idx]['kind'] == 'now':
+            _open_nowplaying('music')
+        elif rows[idx]['kind'] == 'resume':
+            _resume_last()
+        else:
+            _open_tracks(rows[idx]['album'])
+    elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+        with state['lock']:
+            state['screen'] = 'home'
+        push_home2()
+
+
+def _open_tracks(album):
+    with state['lock']:
+        state['screen']       = 'tracks'
+        state['album']        = album
+        state['tracks_index'] = 0
+        state['tracks_start'] = 0
+    push_tracks()
+
+
+def push_tracks():
+    with state['lock']:
+        album, idx = state['album'], state['tracks_index']
+        start = window_start(state['tracks_start'], max(0, idx), MUSIC_ROWS, len(album.tracks))
+        state['tracks_start'] = start
+    send_idx = idx if idx < 0 else idx - start
+    shown = [[sanitize(t.title)[:MUSIC_TITLE_MAX], sanitize(t.artist)[:MUSIC_SUB_MAX], t.time()]
+             for t in album.tracks[start:start + MUSIC_ROWS]]
+    push_screen(_list_command(["TRACKS", str(send_idx), sanitize(album.name)[:20]], shown, shrink_order=(0, 1)))
+
+
+def _from_tracks(keycode):
+    with state['lock']:
+        album, idx = state['album'], state['tracks_index']
+    if keycode == 'KEY_UP':
+        with state['lock']:
+            state['tracks_index'] = max(-1, idx - 1)
+        push_tracks()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['tracks_index'] = min(len(album.tracks) - 1, idx + 1)
+        push_tracks()
+    elif keycode == 'KEY_ENTER':
+        if idx == -1:
+            _leave_tracks()
+        else:
+            _play_from(album, idx)
+    elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+        _leave_tracks()
+
+
+def _leave_tracks():
+    with state['lock']:
+        state['screen'] = 'music'
+    push_music()
+
+
+def _play_from(album, index):
+    """Play `album` from track `index` and show it. Choosing the track that is already playing just shows it."""
+    sess = _music_session()
+    if sess is None:
+        _show_alert('NO_AUDIO', 'tracks', reason=sanitize(_music_problem or 'NO PLAYER')[:50])
+        return
+    now = sess.now()
+    with state['lock']:
+        state['screen']       = 'nowplaying'                   # first, so alerts and redraws from the player land here
+        state['music_return'] = 'tracks'
+    if now is not None and now.track.path == album.tracks[index].path and now.count == len(album.tracks):
+        push_nowplaying()
+    else:
+        sess.play_tracks(album.tracks, index)
+
+
+def _resume_last():
+    with state['lock']:
+        lib, last = state['music_lib'], state['music_last']
+    found = _find_track(lib, last['path']) if last else None
+    sess = _music_session()
+    if found is None:
+        _open_music()
+        return
+    if sess is None:
+        _show_alert('NO_AUDIO', 'music', reason=sanitize(_music_problem or 'NO PLAYER')[:50])
+        return
+    with state['lock']:
+        state['screen']       = 'nowplaying'
+        state['music_return'] = 'music'
+    sess.play_tracks(found[0].tracks, found[1], start=last['position'], play=False)
+    push_nowplaying()
+
+
+def _open_nowplaying(return_to):
+    with state['lock']:
+        state['screen']       = 'nowplaying'
+        state['music_return'] = return_to
+    push_nowplaying()
+
+
+def _now_command(now):
+    t = now.track
+    return "|".join(["NOWPLAYING", {'playing': 'P', 'paused': 'U'}.get(now.state, 'S'),
+                     sanitize(t.title)[:NOW_TITLE_MAX], sanitize(t.artist)[:NOW_LINE_MAX], sanitize(t.album)[:NOW_LINE_MAX],
+                     str(int(now.position)), str(int(now.duration or 0)), str(now.volume), f"{now.index + 1}/{now.count}"])
+
+
+def push_nowplaying():
+    now = _music.now() if _music is not None else None
+    if now is None:                                        # nothing is queued: the album list is the place to be
+        with state['lock']:
+            state['screen'] = 'music'
+        push_music()
+        return
+    push_screen(_now_command(now))
+
+
+def _from_nowplaying(keycode):
+    sess = _music
+    if keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+        with state['lock']:
+            target = 'tracks' if state['music_return'] == 'tracks' and state['album'] is not None else 'music'
+            state['screen'] = target
+        _push_for_screen(target)
+        return
+    if sess is None:
+        push_nowplaying()
+        return
+    step, seek = music_player.VOLUME_STEP, music_player.SEEK_STEP
+    actions = {
+        'KEY_ENTER': sess.toggle, 'CHAR: ': sess.toggle,
+        'KEY_RIGHT': sess.next, 'KEY_LEFT': sess.previous,
+        'KEY_UP': lambda: sess.step_volume(step) or True, 'CHAR:+': lambda: sess.step_volume(step) or True,
+        'CHAR:=': lambda: sess.step_volume(step) or True,
+        'KEY_DOWN': lambda: sess.step_volume(-step) or True, 'CHAR:-': lambda: sess.step_volume(-step) or True,
+        'CHAR:_': lambda: sess.step_volume(-step) or True,
+        'CHAR:.': lambda: sess.seek_by(seek), 'CHAR:>': lambda: sess.seek_by(seek),
+        'CHAR:,': lambda: sess.seek_by(-seek), 'CHAR:<': lambda: sess.seek_by(-seek),
+    }
+    action = actions.get(keycode)
+    if action is None:
+        return
+    if not action():                                       # nothing changed (the end of the album, say): still redraw,
+        push_nowplaying()                                  # so the key press is visibly answered
+
+
+def _music_tick():
+    """Once a second: let the silent player notice the end of a track, redraw now-playing every MUSIC_TICK_SECONDS
+    while it is showing and playing, and remember where we are now and then."""
+    global _music_tick_count, _music_save_count
+    sess = _music
+    if sess is None:
+        return
+    sess.poll()
+    with state['lock']:
+        screen = state['screen']
+    if sess.playing:
+        _music_save_count += 1
+        if _music_save_count >= MUSIC_TICK_SECONDS:
+            _music_save_count = 0
+            _save_listening()
+    if screen == 'nowplaying' and sess.playing:
+        _music_tick_count += 1
+        if _music_tick_count >= MUSIC_TICK_SECONDS:
+            _music_tick_count = 0
+            push_nowplaying()
+    else:
+        _music_tick_count = 0
+
+
+def music_tick_loop():
+    while state['running']:
+        time.sleep(1)
+        try:
+            _music_tick()
+        except Exception as e:                             # the ticker must never die
+            print(f"Warning: music tick failed: {e}")
+
+
 def _run_async(fn):
     """Run `fn` off the input thread, so a slow radio never freezes the keyboard.
     (Tests replace this with a direct call.)"""
@@ -2431,6 +2797,7 @@ def main():
     threading.Thread(target=clock_loop,      daemon=True).start()
     threading.Thread(target=sms_loop,        daemon=True).start()
     threading.Thread(target=call_timer_loop, daemon=True).start()
+    threading.Thread(target=music_tick_loop, daemon=True).start()
 
     if not SIM_MODE:
         threading.Thread(target=_spi_sender_loop, daemon=True).start()
