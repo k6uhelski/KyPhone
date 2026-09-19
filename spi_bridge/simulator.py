@@ -583,17 +583,15 @@ class Simulator:
         # MESSAGE: field — label inverts while active
         self._draw_field_label('MESSAGE:', 24, 134, not to_active)
         msg_active = not to_active and not send_sel
-        lines  = self._wrap_lines(msg_str, 3, self.WIDTH - 48) if msg_str else ['']
-        msg_y  = 162
+        lines  = wrap_words(msg_str + '\0', 30)          # 30 columns; '\0' stands for the cursor cell
         line_h = 34
-        for line in lines:
-            self._text(line, 24, msg_y, 3)
-            msg_y += line_h
-        if msg_active:
-            last_line = lines[-1] if lines else ''
-            cursor_x  = 24 + len(last_line) * self._char_w(3)
-            cursor_y  = msg_y - line_h
-            pygame.draw.rect(self._surface, BLACK, (cursor_x, cursor_y, 12, 16))
+        for i, line in enumerate(lines):
+            base  = 162 + line_h * i + 26
+            shown = line.replace('\0', '')
+            self._text_bl(shown, 24, base, 3)
+            if '\0' in line and msg_active:
+                cx = 24 + self._font(3).size(shown)[0]
+                pygame.draw.rect(self._surface, BLACK, (cx, base - 19, 18, 24))
 
         # SEND — bottom right; activates the same as Enter on a filled-out message
         send_str = 'SEND'
@@ -634,8 +632,8 @@ class Simulator:
         label = 'OK'
         w, h  = len(label) * self._char_w(2) + 36, 16 + 12
         x, y  = self.WIDTH - 24 - w, self.HEIGHT - 24 - h
-        pygame.draw.rect(self._surface, BLACK, (x, y, w, h), 3)
-        self._text(label, x + 18, y + 6, 2, bold=True)
+        pygame.draw.rect(self._surface, BLACK, (x, y, w, h))              # OK is the only control: inverted
+        self._text(label, x + 18, y + 6, 2, WHITE, bold=True)
 
     def _draw_confirm_discard(self, data):
         discard_sel = data.strip() == 'D'
@@ -750,7 +748,7 @@ class Simulator:
             x += w + 16
 
     def _draw_contact_edit(self, data):
-        # data = "first|last|number|idx"  idx: -1=cancel, 0/1/2=field, 3=save
+        # data = "first|last|number|idx|kind"  idx: -1=cancel, 0/1/2=field, 3=save; kind: N new, E edit
         parts = data.split('|')
         first  = parts[0] if len(parts) > 0 else ''
         last   = parts[1] if len(parts) > 1 else ''
@@ -759,6 +757,7 @@ class Simulator:
             idx = int(parts[3]) if len(parts) > 3 else 0
         except ValueError:
             idx = 0
+        kind = parts[4] if len(parts) > 4 else 'E'
         box_w, box_h = 38, 34
 
         cancel_sel = idx == -1
@@ -766,7 +765,7 @@ class Simulator:
             pygame.draw.rect(self._surface, BLACK, (16, 6, box_w, box_h))
         self._text('X', 16 + (box_w - self._char_w(3)) // 2, 6 + (box_h - 24) // 2, 3,
                     WHITE if cancel_sel else BLACK, bold=True)
-        self._text_centered('EDIT CONTACT', 10, 3, bold=True)
+        self._text_centered('NEW CONTACT' if kind == 'N' else 'EDIT CONTACT', 10, 3, bold=True)
         self._line(43)
 
         def _field(label, value, y_label, y_value, y_rule, active):

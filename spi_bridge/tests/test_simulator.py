@@ -163,6 +163,25 @@ class SimulatorPixels(unittest.TestCase):
         self.draw('CONTACT|Alice Test|(555) 010-0001|S|C')
         self.assertEqual((self.px(300, 330), self.px(300, 331), self.px(300, 332)), (BLACK, BLACK, WHITE))
 
+    # ── stop alerts, edit form title, New Message wrapping ───────────────────
+    def test_ok_on_a_stop_alert_is_inverted_because_it_is_the_only_control(self):
+        self.draw('STUB|CONTACT|A CONTACT NEEDS A FIRST NAME.')
+        x, y = 600 - 24 - (2 * 12 + 36), 600 - 24 - 28                        # OK box, bottom right
+        self.assertEqual(self.px(x + 8, y + 8), BLACK)
+
+    def test_the_edit_form_is_titled_new_or_edit_contact(self):
+        self.draw('CONTACTEDIT||||0|N')
+        new_form = pygame.image.tostring(self.sim._surface, 'RGB')
+        self.draw('CONTACTEDIT||||0|E')
+        self.assertNotEqual(new_form, pygame.image.tostring(self.sim._surface, 'RGB'))
+
+    def test_the_new_message_text_wraps_at_30_columns_line_by_line(self):
+        # message lines are 34px apart from y=162; a third line only exists for 61+ characters
+        self.draw('COMPOSE|Alice|hi|0||0|0')
+        self.assertFalse(self.region_has_ink(24, 236, 300, 262))
+        self.draw('COMPOSE|Alice|' + 'ab ' * 25 + '|0||0|0')                    # 74 characters
+        self.assertTrue(self.region_has_ink(24, 236, 300, 262))
+
 
 class WrapParity(unittest.TestCase):
     """The simulator draws with its own copy of wrap_words; it must match the OS's."""

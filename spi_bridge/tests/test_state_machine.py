@@ -54,6 +54,8 @@ def reset_state(**overrides):
         'compose_msg': '',
         'compose_to_active': True,
         'compose_header_sel': None,
+        'compose_plus_sel': False,
+        'compose_send_sel': False,
         'quote_index': 0,
         'messages': [],
         'last_sid': None,
@@ -305,10 +307,12 @@ class TestThreadScreen(unittest.TestCase):
 
     @patch.object(kyphone_os, 'push_screen')
     @patch.object(kyphone_os, 'send_reply')
-    def test_enter_with_empty_draft_noop(self, mock_send, _ps):
+    def test_enter_with_empty_draft_raises_an_alert_and_sends_nothing(self, mock_send, ps):
         kyphone_os.handle_key('KEY_ENTER')
         mock_send.assert_not_called()
-        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.assertEqual(kyphone_os.state['screen'], 'stub')            # never a silent no-op
+        self.assertEqual(kyphone_os.state['stub_return'], 'thread')
+        self.assertTrue(ps.call_args[0][0].startswith('STUB|NEW MESSAGE|THERE IS NOTHING TO SEND'))
 
     @patch.object(kyphone_os, 'push_screen')
     @patch.object(kyphone_os, 'send_reply')
@@ -1226,9 +1230,10 @@ class TestSaveAnUnsavedNumber(ContactBase):
             self.key(f'CHAR:{ch}')
         self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')
         self.assertEqual(len(kyphone_os.CONTACTS), 5)
-        self.assertEqual(kyphone_os.CONTACTS[-1]['first'], 'Dave')
+        names = [kyphone_os.dispname(c) for c in kyphone_os.CONTACTS]
+        self.assertEqual(names, sorted(names, key=str.lower))                 # the address book stays alphabetical
         self.assertEqual(kyphone_os.state['screen'], 'contact')
-        self.assertEqual(kyphone_os.state['contact_idx'], 4)
+        self.assertEqual(kyphone_os.dispname(kyphone_os.CONTACTS[kyphone_os.state['contact_idx']]), 'Dave')
         self.assertEqual(kyphone_os.format_name('+15550199002'), 'Dave')    # the thread now shows the name
 
     def test_cancelling_returns_to_the_unsaved_page(self):
@@ -1257,6 +1262,301 @@ class TestRepliesLandInTheSameThread(SendBase):
             kyphone_os._send_compose()
         self.assertEqual(kyphone_os.state['thread_id'], '+15550199002')
         self.assertEqual(_entries(self.thread_wire())[-1][2], 'hi')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# New contact, validation and stop alerts (OS 0.2.1 step 5)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fill(t, first='', last='', number=''):
+    """Type into the open contact form: first name, then last, then number."""
+    def typ(text):
+        for ch in text:
+            t.key(f'CHAR:{ch}')
+    typ(first)
+    t.key('KEY_DOWN'); typ(last)
+    t.key('KEY_DOWN'); typ(number)
+
+
+class NewContactBase(ContactBase):
+    def open_new_from_list(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_UP')                # header
+            kyphone_os.handle_key('KEY_RIGHT')             # +
+            kyphone_os.handle_key('KEY_ENTER')
+        return _wire(ps)
+
+    def save(self):
+        return self.key('KEY_DOWN', 'KEY_ENTER') if kyphone_os.state['edit_index'] == 2 else self.key('KEY_ENTER')
+
+
+class TestNewContact(NewContactBase):
+    def test_plus_in_the_contacts_header_opens_a_blank_form_titled_new_contact(self):
+        wire = self.open_new_from_list()
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual(wire, 'CONTACTEDIT||||0|N')                         # blank, cursor in FIRST NAME, kind N
+
+    def test_editing_an_existing_contact_is_titled_edit_contact(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_contact_edit()
+        self.assertTrue(_wire(ps).endswith('|E'))
+
+    def test_saving_creates_the_contact_stores_the_number_formatted_and_shows_its_page(self):
+        self.open_new_from_list()
+        _fill(self, 'Zed', '', '5550100077')
+        self.key('KEY_DOWN', 'KEY_ENTER')
+        rec = next(c for c in kyphone_os.CONTACTS if c['first'] == 'Zed')
+        self.assertEqual(rec['number'], '(555) 010-0077')
+        self.assertEqual(rec['last'], '')                                     # last name is optional
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertIs(kyphone_os.CONTACTS[kyphone_os.state['contact_idx']], rec)
+        self.assertEqual(kyphone_os.state['contact_return'], 'contacts_pick')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'call')
+
+    def test_it_lands_in_alphabetical_order(self):
+        self.open_new_from_list()
+        _fill(self, 'Aaron', '', '5550100077')
+        self.key('KEY_DOWN', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.dispname(kyphone_os.CONTACTS[0]), 'Aaron')
+        self.assertEqual(kyphone_os.CONTACTS[kyphone_os.state['contact_idx']]['first'], 'Aaron')
+
+    def test_x_and_esc_go_back_to_the_contacts_list(self):
+        self.open_new_from_list()
+        self.key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+        self.open_new_from_list()
+        self.key('KEY_UP', 'KEY_ENTER')                                       # the X control
+        self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+
+    def test_name_fields_hold_18_characters_and_the_number_field_only_number_characters(self):
+        self.open_new_from_list()
+        _fill(self, 'F' * 25, 'L' * 25, '555-010-0077 x9abc')
+        self.assertEqual(kyphone_os.state['edit_first'], 'F' * 18)
+        self.assertEqual(kyphone_os.state['edit_last'], 'L' * 18)
+        self.assertEqual(kyphone_os.state['edit_number'], '555-010-0077 x9abc'.replace('x', '').replace('abc', '')[:18])
+
+
+class TestValidation(NewContactBase):
+    def alert(self, first='', last='', number=''):
+        self.open_new_from_list()
+        _fill(self, first, last, number)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_DOWN')
+            kyphone_os.handle_key('KEY_ENTER')
+        return _wire(ps)
+
+    def test_a_first_name_is_required_and_the_alert_selects_that_field(self):
+        wire = self.alert('', 'Only', '5550100077')
+        self.assertEqual(wire, 'STUB|CONTACT|A CONTACT NEEDS A FIRST NAME. TYPE ONE IN THE FIRST NAME FIELD, THEN PRESS SAVE.')
+        self.assertEqual(kyphone_os.state['edit_index'], 0)
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+
+    def test_a_number_is_required(self):
+        wire = self.alert('Zed', '', '')
+        self.assertTrue(wire.startswith('STUB|CONTACT|A CONTACT NEEDS A PHONE NUMBER.'))
+        self.assertEqual(kyphone_os.state['edit_index'], 2)
+
+    def test_the_number_must_be_dialable(self):
+        for bad in ('555', '55501000123', '25550100077'):
+            wire = self.alert('Zed', '', bad)
+            self.assertTrue(wire.startswith('STUB|CONTACT|THAT NUMBER CANNOT BE DIALED.'), bad)
+            self.assertEqual(kyphone_os.state['edit_index'], 2)
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+
+    def test_a_duplicate_number_names_the_contact_who_has_it(self):
+        wire = self.alert('Zed', '', '1 555 010 0001')                        # Alice's number, typed differently
+        self.assertEqual(wire, 'STUB|CONTACT|THAT NUMBER IS ALREADY SAVED AS ALICE TEST. '
+                               'EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.')
+        self.assertEqual(kyphone_os.state['edit_index'], 2)
+
+    def test_dismissing_an_alert_returns_to_the_form_with_everything_as_typed(self):
+        self.alert('Zed', 'Ray', '555')
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual((kyphone_os.state['edit_first'], kyphone_os.state['edit_last'],
+                          kyphone_os.state['edit_number']), ('Zed', 'Ray', '555'))
+        self.assertEqual(kyphone_os.state['edit_index'], 2)
+        self.alert('Zed', 'Ray', '555')
+        self.key('KEY_ESC')                                                    # Esc dismisses too
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+
+    def test_saving_a_blank_form_raises_the_first_name_alert(self):
+        wire = self.alert()
+        self.assertTrue(wire.startswith('STUB|CONTACT|A CONTACT NEEDS A FIRST NAME.'))
+
+    def test_saving_an_edit_with_its_own_number_is_not_a_duplicate(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')             # edit Alice
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')             # SAVE, nothing changed
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertEqual(kyphone_os.CONTACTS[0]['number'], '(555) 010-0001')   # and it is now stored formatted
+
+    def test_editing_a_number_to_another_contacts_number_is_a_duplicate(self):
+        reset_state(screen='contacts_pick', contacts_index=0, contacts_return='home')
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
+        self.key('KEY_DOWN', 'KEY_DOWN')
+        for _ in range(20):
+            self.key('KEY_BACKSPACE')
+        for ch in '5550100004':                                                # the second Bob's number
+            self.key(f'CHAR:{ch}')
+        wire = self.key('KEY_DOWN', 'KEY_ENTER')
+        self.assertTrue(wire.startswith('STUB|CONTACT|THAT NUMBER IS ALREADY SAVED AS BOB.'))
+
+
+class TestNewContactFromOtherScreens(NewContactBase):
+    def test_from_the_compose_picker_a_save_returns_to_compose_with_the_contact_in_to(self):
+        reset_state(screen='compose', compose_to='', compose_msg='hello', compose_to_active=True)
+        self.key('KEY_ENTER')                                                  # empty TO: opens the picker
+        self.assertEqual(kyphone_os.state['screen'], 'contacts_pick')
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                           # +
+        _fill(self, 'Zed', '', '5550100077')
+        self.key('KEY_DOWN', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        self.assertEqual(kyphone_os.state['compose_to'], '(555) 010-0077')
+        self.assertFalse(kyphone_os.state['compose_to_active'])
+        self.assertEqual(kyphone_os.state['compose_msg'], 'hello')             # the message in progress survives
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_compose()
+        self.assertTrue(_wire(ps).startswith('COMPOSE|Zed|hello|0|'))          # TO shows the name
+
+    def test_from_the_compose_picker_cancel_returns_to_compose(self):
+        reset_state(screen='compose', compose_to='', compose_msg='hello', compose_to_active=True)
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        self.assertEqual(len(kyphone_os.CONTACTS), 4)
+
+    def test_from_an_unsaved_number_a_save_lands_on_its_page_and_esc_goes_back_to_the_thread(self):
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')     # SAVE
+        for ch in 'Dave':
+            self.key(f'CHAR:{ch}')
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertEqual(kyphone_os.CONTACTS[kyphone_os.state['contact_idx']]['first'], 'Dave')
+        self.key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+
+
+class TestNoSilentNoOps(SendBase):
+    def test_sending_with_an_empty_message_from_compose_raises_the_alert(self):
+        reset_state(screen='compose', compose_to='+15550109999', compose_msg='   ')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os._send_compose()
+        self.assertEqual(_wire(ps), 'STUB|NEW MESSAGE|THERE IS NOTHING TO SEND. TYPE A MESSAGE FIRST, THEN PRESS SEND.')
+        self.assertEqual(kyphone_os.state['stub_return'], 'compose')
+        self.transport.assert_not_called()
+
+    def test_sending_with_no_recipient_raises_the_alert(self):
+        reset_state(screen='compose', compose_to='', compose_msg='hello')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os._send_compose()
+        self.assertTrue(_wire(ps).startswith('STUB|NEW MESSAGE|THERE IS NO ONE TO SEND THIS TO.'))
+        self.transport.assert_not_called()
+
+    def test_no_recipient_is_reported_before_an_empty_message(self):
+        reset_state(screen='compose', compose_to='', compose_msg='')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os._send_compose()
+        self.assertIn('NO ONE TO SEND THIS TO', _wire(ps))
+
+    def test_enter_or_esc_dismisses_the_alert_back_to_compose_intact(self):
+        for dismiss in ('KEY_ENTER', 'KEY_ESC'):
+            reset_state(screen='compose', compose_to='+15550109999', compose_msg='', compose_to_active=False)
+            with patch.object(kyphone_os, 'push_screen'):
+                kyphone_os._send_compose()
+            self.key(dismiss)
+            self.assertEqual(kyphone_os.state['screen'], 'compose')
+            self.assertEqual(kyphone_os.state['compose_to'], '+15550109999')
+
+    def test_a_thread_with_an_empty_draft_raises_the_alert_and_returns_to_the_thread(self):
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'stub')
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.transport.assert_not_called()
+
+    def test_a_rejected_keystroke_is_the_only_silence(self):
+        reset_state(screen='contact_edit', edit_idx=None, edit_first='', edit_last='', edit_number='', edit_index=2)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('CHAR:x')                                    # not a number character
+        self.assertIsNone(ps.call_args)
+        self.assertEqual(kyphone_os.state['edit_number'], '')
+
+
+class TestNewMessageScreenLimits(SendBase):
+    def setUp(self):
+        super().setUp()
+        reset_state(screen='compose', compose_to='', compose_msg='', compose_to_active=True)
+
+    def compose_wire(self):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_compose()
+        return _wire(ps)
+
+    def test_to_holds_20_characters(self):
+        self.type_text('9' * 30)
+        self.assertEqual(kyphone_os.state['compose_to'], '9' * 20)
+
+    def test_the_message_has_no_cap(self):
+        self.key('KEY_TAB')
+        self.type_text('m' * 500)
+        self.assertEqual(len(kyphone_os.state['compose_msg']), 500)
+
+    def test_a_short_message_is_sent_whole_and_a_long_one_shows_its_end_within_the_frame(self):
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg='short one', compose_to_active=False)
+        self.assertIn('|short one|', self.compose_wire())
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg='start ' + 'w' * 400 + ' the end',
+                    compose_to_active=False)
+        wire = self.compose_wire()
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        msg = wire.split('|')[2]
+        self.assertTrue(msg.startswith('...'))
+        self.assertTrue(msg.endswith('w the end'))
+
+    def test_a_long_message_is_still_sent_in_full(self):
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg='x' * 500, compose_to_active=False)
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os._send_compose()
+        self.transport.assert_called_once_with('+15550100001', 'x' * 500)
+
+
+class TestComposeArrowUp(SendBase):
+    """Arrow up moves one step: SEND -> MESSAGE -> TO -> the X in the header."""
+    def press(self, *keys):
+        with patch.object(kyphone_os, 'push_screen'):
+            for k in keys:
+                kyphone_os.handle_key(k)
+
+    def test_up_walks_from_send_to_message_to_to_to_the_header(self):
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg='hi', compose_to_active=False,
+                    compose_send_sel=True)
+        self.press('KEY_UP')
+        self.assertFalse(kyphone_os.state['compose_send_sel'])            # SEND -> MESSAGE
+        self.assertFalse(kyphone_os.state['compose_to_active'])
+        self.assertIsNone(kyphone_os.state['compose_header_sel'])
+        self.press('KEY_UP')
+        self.assertTrue(kyphone_os.state['compose_to_active'])            # MESSAGE -> TO
+        self.assertIsNone(kyphone_os.state['compose_header_sel'])
+        self.press('KEY_UP')
+        self.assertEqual(kyphone_os.state['compose_header_sel'], 'x')     # TO -> the X
+        self.press('KEY_DOWN')
+        self.assertIsNone(kyphone_os.state['compose_header_sel'])         # and back down into the form
+
+    def test_tab_leaving_the_send_button_clears_it(self):
+        reset_state(screen='compose', compose_to='+15550100001', compose_msg='hi', compose_to_active=False,
+                    compose_send_sel=True)
+        self.press('KEY_TAB')
+        self.assertFalse(kyphone_os.state['compose_send_sel'])
+
+    def test_up_on_the_plus_button_does_nothing(self):
+        reset_state(screen='compose', compose_to='', compose_msg='', compose_to_active=True, compose_plus_sel=True)
+        self.press('KEY_UP')
+        self.assertIsNone(kyphone_os.state['compose_header_sel'])
+        self.assertTrue(kyphone_os.state['compose_plus_sel'])
 
 
 if __name__ == '__main__':

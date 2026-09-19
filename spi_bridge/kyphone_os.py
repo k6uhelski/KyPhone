@@ -52,6 +52,10 @@ LIST_NAME_MAX    = 14   # texts + calls name column
 CONTACT_NAME_MAX = 18   # contacts list name column
 PREVIEW_MAX      = 24   # texts list preview line
 
+COMPOSE_TO_MAX     = 20   # New Message TO field
+CONTACT_FIELD_MAX  = 18   # first / last name fields
+NUMBER_FIELD_MAX   = 18   # phone number field
+
 # --- Thread (OS 0.2.1) ---
 THREAD_BUBBLES  = 3     # newest messages drawn per thread screen
 THREAD_NAME_MAX = 20
@@ -205,10 +209,17 @@ STUB_INFO = {
         'title': 'LISTEN',
         'body': 'LISTEN CANNOT OPEN YET. THIS BUILD CARRIES TEXT AND CALL ONLY, AND NO AUDIO IS ON THE PHONE. PRESS ENTER TO GO BACK TO THE MENU.',
     },
-    'NEWCONTACT': {
-        'title': 'NEW CONTACT',
-        'body': 'A CONTACT CANNOT BE SAVED YET. THE PHONE HAS ROOM TO STORE ONE, BUT THIS SCREEN IS NOT BUILT. TYPE THE NUMBER INTO THE TO FIELD FOR NOW.',
-    },
+}
+
+# Stop alerts for input the phone will not act on: a no-op is never silent (the
+# only deliberate silence is a rejected keystroke).
+ALERTS = {
+    'EMPTY_SEND':   ('NEW MESSAGE', 'THERE IS NOTHING TO SEND. TYPE A MESSAGE FIRST, THEN PRESS SEND.'),
+    'NO_RECIPIENT': ('NEW MESSAGE', 'THERE IS NO ONE TO SEND THIS TO. TYPE A NUMBER IN THE TO FIELD, OR PRESS + TO PICK A CONTACT.'),
+    'NEED_FIRST':   ('CONTACT', 'A CONTACT NEEDS A FIRST NAME. TYPE ONE IN THE FIRST NAME FIELD, THEN PRESS SAVE.'),
+    'NEED_NUMBER':  ('CONTACT', 'A CONTACT NEEDS A PHONE NUMBER. TYPE ONE IN THE PHONE NUMBER FIELD, THEN PRESS SAVE.'),
+    'BAD_NUMBER':   ('CONTACT', 'THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
+    'DUP_NUMBER':   ('CONTACT', 'THAT NUMBER IS ALREADY SAVED AS {name}. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.'),
 }
 
 # --- State ---
@@ -233,6 +244,7 @@ state = {
     'confirm_sel':      'keep',     # 'keep' | 'discard' — leaving compose with a draft
     'stub_key':         '',
     'stub_return':      'home',     # screen to return to on Esc/Enter
+    'stub_text':        None,       # (title, body) for a stop alert; None = STUB_INFO[stub_key]
     'quote_index':      0,
     'messages':         [],         # [{sender, name, body, read, ts}]
     'last_sid':         None,
@@ -249,6 +261,7 @@ state = {
     'contact_return': 'contacts_pick',
 
     'edit_idx':    None,            # position of the contact being edited; None = a new one
+    'edit_return': 'contact',       # where X / Esc leads: 'contact' | 'contacts_pick' | 'compose'
     'edit_first':  '',
     'edit_last':   '',
     'edit_number': '',
@@ -661,7 +674,7 @@ def push_thread2():
 def push_compose():
     with state['lock']:
         to_raw    = state['compose_to']
-        msg       = state['compose_msg'][:60]
+        msg       = state['compose_msg']
         to_active = '1' if state['compose_to_active'] else '0'
         hdr       = 'X' if state['compose_header_sel'] == 'x' else ''
         plus_sel  = '1' if state['compose_plus_sel'] else '0'
@@ -670,15 +683,39 @@ def push_compose():
     # "the interactive reference drops the name into the TO field" — while
     # sending still uses the underlying number captured in compose_to.
     to_c = find_contact(number=to_raw) if to_raw else None
-    to_display = (dispname(to_c) if to_c else to_raw)[:40]
-    push_screen(f"COMPOSE|{to_display}|{msg}|{to_active}|{hdr}|{plus_sel}|{send_sel}")
+    to_display = sanitize(dispname(to_c) if to_c else to_raw)[:40]
+    # The message has no cap, but the frame does: past what fits, show the END
+    # of it behind '...' (the same rule as the thread composer).
+    tail = f"|{to_active}|{hdr}|{plus_sel}|{send_sel}"
+    room = MAX_COMMAND_CHARS - len(f"COMPOSE|{to_display}|") - len(tail)
+    msg  = sanitize(msg)
+    if len(msg) > room:
+        msg = '...' + msg[-(room - 3):]
+    push_screen(f"COMPOSE|{to_display}|{msg}{tail}")
 
 
 def push_stub():
     with state['lock']:
-        key = state['stub_key']
-    info = STUB_INFO.get(key, {'title': key, 'body': f'{key} CANNOT OPEN YET.'})
-    push_screen(f"STUB|{info['title']}|{info['body']}")
+        key  = state['stub_key']
+        text = state['stub_text']
+    if text:
+        title, body = text
+    else:
+        info = STUB_INFO.get(key, {'title': key, 'body': f'{key} CANNOT OPEN YET.'})
+        title, body = info['title'], info['body']
+    push_screen(f"STUB|{sanitize(title)}|{sanitize(body)}")
+
+
+def _show_alert(key, ret, **fields):
+    """Raise a stop alert (boxed exclamation, OK bottom right). Enter or Esc
+    dismisses it and returns to `ret` with everything as it was."""
+    title, body = ALERTS[key]
+    with state['lock']:
+        state['screen']      = 'stub'
+        state['stub_key']    = key
+        state['stub_text']   = (title, body.format(**fields))
+        state['stub_return'] = ret
+    push_stub()
 
 
 def push_confirm_discard():
@@ -775,7 +812,8 @@ def push_contact_edit():
         last   = state['edit_last']
         number = state['edit_number']
         idx    = state['edit_index']
-    push_screen(f"CONTACTEDIT|{first}|{last}|{number}|{idx}")
+        kind   = 'N' if state['edit_idx'] is None else 'E'
+    push_screen(f"CONTACTEDIT|{sanitize(first)}|{sanitize(last)}|{sanitize(number)}|{idx}|{kind}")
 
 
 def push_calls():
@@ -965,6 +1003,7 @@ def _from_home(keycode):
             with state['lock']:
                 state['screen']      = 'stub'
                 state['stub_key']    = HOME_MENU[idx]
+                state['stub_text']   = None
                 state['stub_return'] = 'home'
             push_stub()
     elif keycode == 'CHAR:i':
@@ -1169,6 +1208,8 @@ def _from_thread(keycode):
                 state['thread_draft'] = ''
             send_reply(thread_id, draft)
             push_thread2()
+        else:
+            _show_alert('EMPTY_SEND', 'thread')
 
     elif header_sel is None and keycode.startswith('CHAR:'):
         char = keycode[5:]
@@ -1200,7 +1241,11 @@ def _send_compose():
     with state['lock']:
         to_val  = state['compose_to'].strip()
         msg_val = state['compose_msg'].strip()
-    if not (to_val and msg_val):
+    if not to_val:
+        _show_alert('NO_RECIPIENT', 'compose')
+        return
+    if not msg_val:
+        _show_alert('EMPTY_SEND', 'compose')
         return
     send_reply(to_val, msg_val)
     peer = resolve_peer(to_val)          # takes the state lock, so not inside the block below
@@ -1222,13 +1267,13 @@ def _from_compose(keycode):
         plus_sel   = state['compose_plus_sel']
         send_sel   = state['compose_send_sel']
 
-    # Order matches the interactive reference's handleKey exactly — including
-    # the fact that plain ArrowUp always claims the header before send_sel's
-    # own ArrowUp branch ever gets a chance to run.
+    # Order matches the 0.2.1 interactive reference's handleKey. Arrow up moves
+    # one step: SEND -> MESSAGE -> TO -> the X in the header. (0.2 sent every
+    # arrow up straight to the header, so SEND could not go back to the message.)
     if keycode == 'KEY_ESC':
         _leave_compose()
 
-    elif header_sel is None and keycode == 'KEY_UP':
+    elif header_sel is None and not plus_sel and not send_sel and to_active and keycode == 'KEY_UP':
         with state['lock']:
             state['compose_header_sel'] = 'x'
         push_compose()
@@ -1276,6 +1321,12 @@ def _from_compose(keycode):
     elif header_sel is None and keycode == 'KEY_TAB':
         with state['lock']:
             state['compose_to_active'] = not state['compose_to_active']
+            state['compose_send_sel']  = False
+        push_compose()
+
+    elif header_sel is None and not to_active and keycode == 'KEY_UP':
+        with state['lock']:
+            state['compose_to_active'] = True               # MESSAGE -> TO
         push_compose()
 
     elif header_sel is None and keycode == 'KEY_ENTER':
@@ -1306,9 +1357,9 @@ def _from_compose(keycode):
         char = keycode[5:]
         with state['lock']:
             if state['compose_to_active']:
-                state['compose_to']       = (state['compose_to'] + char)[:40]
+                state['compose_to']       = (state['compose_to'] + char)[:COMPOSE_TO_MAX]
             else:
-                state['compose_msg']      = (state['compose_msg'] + char)[:60]
+                state['compose_msg']      = state['compose_msg'] + char
             state['compose_send_sel'] = False
         push_compose()
 
@@ -1391,11 +1442,7 @@ def _from_contacts_pick(keycode):
             if hdr == 'back':
                 _leave_contacts()
             else:
-                with state['lock']:
-                    state['screen']      = 'stub'
-                    state['stub_key']    = 'NEWCONTACT'
-                    state['stub_return'] = 'contacts_pick'
-                push_stub()
+                _open_new_contact('', 'compose' if ret == 'compose' else 'contacts_pick')
         elif idx < len(filtered):
             picked = filtered[idx]
             if ret == 'home':
@@ -1486,24 +1533,58 @@ def _from_contact(keycode):
 EDIT_FIELDS = ['first', 'last', 'number']
 
 
+def _open_new_contact(number, ret):
+    """The edit form with blank fields, titled NEW CONTACT. `number` fills the
+    phone field (formatted); `ret` is where X / Esc leads, and where a save
+    lands when the form was opened from the compose picker."""
+    with state['lock']:
+        state['screen']      = 'contact_edit'
+        state['edit_idx']    = None
+        state['edit_return'] = ret
+        state['edit_first']  = ''
+        state['edit_last']   = ''
+        state['edit_number'] = format_number(number) if number else ''
+        state['edit_index']  = 0
+    push_contact_edit()
+
+
 def _open_contact_edit(new):
-    """The edit form. `new` = a blank contact for a number that is not saved
-    yet (the number is filled in, formatted); otherwise the viewed contact."""
+    """The edit form from the contact page. `new` = SAVE on a number that is
+    not in the address book (a blank form with the number filled in);
+    otherwise EDIT / ADD NUMBER on the viewed contact."""
     rec, number, _ = _contact_view()
     with state['lock']:
         cidx = state['contact_idx']
     if new or rec is None:
-        edit_idx, first, last, num = None, '', '', format_number(number)
-    else:
-        edit_idx, first, last, num = cidx, rec.get('first', ''), rec.get('last', ''), rec.get('number', '')
+        _open_new_contact(number, 'contact')
+        return
     with state['lock']:
         state['screen']      = 'contact_edit'
-        state['edit_idx']    = edit_idx
-        state['edit_first']  = first
-        state['edit_last']   = last
-        state['edit_number'] = num
+        state['edit_idx']    = cidx
+        state['edit_return'] = 'contact'
+        state['edit_first']  = rec.get('first', '')
+        state['edit_last']   = rec.get('last', '')
+        state['edit_number'] = rec.get('number', '')
         state['edit_index']  = 0
     push_contact_edit()
+
+
+def _leave_contact_edit():
+    """X / Esc: back to wherever the form was opened from."""
+    with state['lock']:
+        ret = state['edit_return']
+        state['screen'] = ret
+        if ret == 'compose':
+            state['compose_to_active'] = True
+    _push_for_screen(ret)
+
+
+def _edit_alert(key, field, **fields):
+    """A validation alert; dismissing it returns to the form with the offending
+    field selected."""
+    with state['lock']:
+        state['edit_index'] = field
+    _show_alert(key, 'contact_edit', **fields)
 
 
 def _save_contact_edit():
@@ -1512,21 +1593,48 @@ def _save_contact_edit():
         last     = state['edit_last'].strip()
         number   = state['edit_number'].strip()
         edit_idx = state['edit_idx']
-    if not first and not last:
-        return
-    record = {'first': first, 'last': last, 'number': number}
+        ret      = state['edit_return']
+
+    # Four checks, in this order. Last name is optional.
+    if not first:
+        return _edit_alert('NEED_FIRST', 0)
+    if not number:
+        return _edit_alert('NEED_NUMBER', 2)
+    if not number_valid(number):
+        return _edit_alert('BAD_NUMBER', 2)
+    dup = next((c for i, c in enumerate(CONTACTS)
+                if i != edit_idx and same_number(c.get('number'), number)), None)
+    if dup:                                            # same last ten digits = the same person
+        return _edit_alert('DUP_NUMBER', 2, name=sanitize(dispname(dup)).upper())
+
+    record = {'first': first, 'last': last, 'number': format_number(number)}
     if edit_idx is not None and 0 <= edit_idx < len(CONTACTS):
         CONTACTS[edit_idx].update(record)
-        pos = edit_idx
+        saved = CONTACTS[edit_idx]
     else:
         CONTACTS.append(record)
-        pos = len(CONTACTS) - 1
+        CONTACTS.sort(key=lambda c: dispname(c).lower())      # the address book stays alphabetical
+        saved = record
     _save_contacts(CONTACTS)
+
+    if edit_idx is None and ret == 'compose':
+        # Saved from the compose picker: back to the message being written,
+        # with the new contact in the TO field.
+        with state['lock']:
+            state['screen']            = 'compose'
+            state['compose_to']        = record['number']
+            state['compose_to_active'] = False
+        push_compose()
+        return
+
+    pos = next(i for i, c in enumerate(CONTACTS) if c is saved)
     with state['lock']:
         state['contact_idx']    = pos
         state['contact_number'] = ''
         state['screen']         = 'contact'
-        state['contact_sel']    = 'edit'
+        state['contact_sel']    = 'call'
+        if edit_idx is None and ret == 'contacts_pick':
+            state['contact_return'] = 'contacts_pick'
     push_contact()
 
 
@@ -1535,9 +1643,7 @@ def _from_contact_edit(keycode):
         idx = state['edit_index']
 
     if keycode == 'KEY_ESC':
-        with state['lock']:
-            state['screen'] = 'contact'
-        push_contact()
+        _leave_contact_edit()
     elif keycode == 'KEY_UP':
         with state['lock']:
             state['edit_index'] = max(-1, idx - 1)
@@ -1548,9 +1654,7 @@ def _from_contact_edit(keycode):
         push_contact_edit()
     elif keycode == 'KEY_ENTER':
         if idx == -1:
-            with state['lock']:
-                state['screen'] = 'contact'
-            push_contact()
+            _leave_contact_edit()
         elif idx == len(EDIT_FIELDS):
             _save_contact_edit()
         else:
@@ -1566,8 +1670,8 @@ def _from_contact_edit(keycode):
         char  = keycode[5:]
         field = EDIT_FIELDS[idx]
         if field == 'number' and not re.match(r'^[0-9()+\-. ]$', char):
-            return
-        limit = 18 if field == 'number' else 10
+            return                                     # a rejected keystroke is the one silent no-op
+        limit = NUMBER_FIELD_MAX if field == 'number' else CONTACT_FIELD_MAX
         with state['lock']:
             state[f'edit_{field}'] = (state[f'edit_{field}'] + char)[:limit]
         push_contact_edit()
