@@ -7,6 +7,7 @@ Inkplate display(INKPLATE_1BIT);
 
 // OS 0.2.1 screen renderers (also compiled on a computer by tests/firmware_host).
 #include "ui_screens.h"
+#include "ui_reader.h"
 
 // Shared pins
 #define PIN_MOSI 13
@@ -1261,6 +1262,24 @@ void handle_command(char* text) {
         delay(100);
         display.einkOff();
         reclaim_spi_pins_for_gpio();
+    } else if (ui_is_reader_frame(text)) {
+        // Book page: RTEXT frames only draw (they must not clear or refresh); RFOOT ends the page and refreshes.
+        strncpy(current_screen, "READER", sizeof(current_screen) - 1);
+        int refresh = ui_reader_frame(text);
+        if (refresh != UI_READER_NONE) {
+            unsigned long now_ms = millis();
+            if (refresh == UI_READER_FULL || !did_boot_full_refresh || now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS) {
+                display.display();
+                last_full_refresh_ms  = now_ms;
+                did_boot_full_refresh = true;
+                Serial.println(">> Full refresh (reader page)");
+            } else {
+                display.partialUpdate();
+            }
+            delay(100);
+            display.einkOff();
+            reclaim_spi_pins_for_gpio();
+        }
     } else {
         display.clearDisplay();
         if (ui_dispatch(text, current_screen, sizeof(current_screen))) {

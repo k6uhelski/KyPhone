@@ -31,6 +31,8 @@ FOOT_BASE_Y = 590                             # baseline of the footer's built-i
 FOOT_CELL = 12                                # width of one footer character
 FOOT_COLS = TEXT_W // FOOT_CELL               # 44 characters across the footer
 
+READER_MAX_ROW = 63                           # the firmware ignores rows past this (a page has at most 24)
+
 INDENT = 3                                    # spaces before the first line of a paragraph
 SEP = '\xb7'                                  # sub-field separator on the wire (one byte, 0xB7)
 MAX_COMMAND_CHARS = 253                       # one SPI frame; must match kyphone_os.MAX_COMMAND_CHARS

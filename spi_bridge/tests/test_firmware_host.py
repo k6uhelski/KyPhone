@@ -31,15 +31,17 @@ from screens import SCREENS                  # noqa: E402
 
 GLCDFONT = os.environ.get('GLCDFONT_C') or os.path.expanduser(
     '~/Documents/Arduino/libraries/Adafruit_GFX_Library/glcdfont.c')
+GFXFONT = os.environ.get('GFXFONT_H') or os.path.join(os.path.dirname(GLCDFONT), 'gfxfont.h')
 CLANG = shutil.which('clang++')
-AVAILABLE = bool(CLANG) and os.path.exists(GLCDFONT)
+AVAILABLE = bool(CLANG) and os.path.exists(GLCDFONT) and os.path.exists(GFXFONT)
 
 W = 600
 
 
-def build(out_path, sanitize=False):
+def build(out_path, sanitize=False, source='render_host.cpp'):
     cmd = [CLANG, '-std=c++17', '-Wall', '-Wextra', '-Wno-unused-function', '-DGLCDFONT_C="%s"' % GLCDFONT,
-           '-o', out_path, os.path.join(HOST, 'render_host.cpp')]
+           '-DGFXFONT_H="%s"' % GFXFONT,
+           '-o', out_path, os.path.join(HOST, source)]
     if sanitize:
         cmd[1:1] = ['-g', '-O1', '-fsanitize=address,undefined', '-fno-omit-frame-pointer']
     done = subprocess.run(cmd, capture_output=True, text=True)
@@ -98,6 +100,17 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.ink(f, 300, 553) and self.ink(f, 300, 554))
         self.assertFalse(self.ink(f, 300, 552))
         self.assertTrue(self.ink(f, 4, 48))                        # the first row is selected
+
+    def test_library_rows_are_111px_like_the_texts_list(self):
+        f = self.frames['library']                                 # sel = 1
+        self.assertEqual([self.ink(f, 4, 44 + row * 111 + 4) for row in range(3)], [False, True, False])
+        self.assertTrue(self.ink(f, 300, 43))                      # the header rule
+        self.assertFalse(self.has_ink(f, 500, 6, 585, 40))         # back only: no + control
+
+    def test_an_empty_library_says_so(self):
+        f = self.frames['library_empty']
+        self.assertGreater(self.ink_count(f), 300)
+        self.assertFalse(any(self.ink(f, 4, y) for y in (60, 120, 200, 300, 400)))
 
     def test_calls_rows_are_92px(self):
         f = self.frames['calls']                                   # sel = 1
@@ -208,7 +221,7 @@ class FirmwareFrames(unittest.TestCase):
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMatchesEmulator(unittest.TestCase):
     """Both renderers draw the same rules, fills and borders; only their fonts differ."""
-    NAMES = ['home', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
+    NAMES = ['home', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete']
 
@@ -282,7 +295,7 @@ class FirmwareMemorySafety(unittest.TestCase):
 
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
-                    'CONTACTEDIT|', 'CONTACT|']
+                    'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):
@@ -302,6 +315,204 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long4\tCONFIRM|' + 'T' * 30 + '|' + 'B' * 150 + '|' + 'G' * 30 + '|' + 'K' * 30 + '|D\n',
             'long5\tTEXTS|4|' + '|'.join(('N' * 30 + '\xb7' + 'p' * 60 + '\xb71\xb7' + 't' * 20) for _ in range(9)) + '\n',
         ]
+        env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
+        done = subprocess.run([exe, '-'], input=''.join(lines).encode('latin-1'), capture_output=True, env=env)
+        err = done.stderr.decode('latin-1')
+        self.assertEqual(done.returncode, 0, err[:1200])
+        self.assertNotIn('AddressSanitizer', err)
+        self.assertNotIn('runtime error', err)
+
+
+def reader_pages():
+    """A synthetic chapter laid out at every size: {size: [frames of one page]}, plus the page's lines."""
+    import reader_layout as rl
+    text = ' '.join(['gypsy jumping quickly; Wizards Fly Over Big Dwarfs, Xylophones (Q) & "Zebras" -- well-known'] * 300)
+    out = {}
+    for size in rl.SIZES:
+        page = rl.paginate([('h', 'A HEADING'), ('p', text)], size)[0]
+        out[size] = (page.lines, rl.page_frames(size, page.lines, 'A chapter title', '1/9  3%', 'P'))
+    return out
+
+
+def build_reader(out_path, sanitize=False):
+    build(out_path, sanitize, source='render_reader.cpp')
+
+
+@unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c, gfxfont.h)')
+class FirmwareReader(unittest.TestCase):
+    """The firmware's own RTEXT / RFOOT code (ui_reader.h), built on a computer, play back a page frame by frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        import reader_layout
+        cls.rl = reader_layout
+        cls.tmp = tempfile.mkdtemp(prefix='kyphone-fw-reader-')
+        cls.exe = os.path.join(cls.tmp, 'render_reader')
+        build_reader(cls.exe)
+        cls.pages = reader_pages()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def play(self, frames):
+        """One page (a list of frames) -> (600*600 bytes with 0 = ink, the refresh code the last frame asked for)."""
+        out = os.path.join(self.tmp, 'out')
+        os.makedirs(out, exist_ok=True)
+        done = subprocess.run([self.exe, out], input=('x\t%s\n' % '\t'.join(frames)).encode('latin-1'), capture_output=True)
+        self.assertEqual(done.returncode, 0, done.stderr.decode()[:500])
+        name, refresh = done.stdout.decode().split()
+        return open(os.path.join(out, 'x.raw'), 'rb').read(), int(refresh)
+
+    @staticmethod
+    def ink_set(frame, y0=0, y1=W):
+        return {(i % W, i // W) for i in range(y0 * W, y1 * W) if frame[i] == 0}
+
+    def test_a_page_is_drawn_glyph_for_glyph_where_the_layout_module_says(self):
+        rl = self.rl
+        for size, (lines, frames) in self.pages.items():
+            frame, _ = self.play(frames)
+            want = set()
+            for row, line in enumerate(lines):
+                want |= {(x, y) for x, y in rl.text_ink(size, rl.TEXT_X, rl.baseline(size, row), line) if 0 <= x < W and 0 <= y < W}
+            self.assertEqual(self.ink_set(frame, 0, rl.FOOT_RULE_Y), want, size)
+
+    def test_text_frames_alone_draw_but_ask_for_no_refresh_and_the_footer_frame_refreshes(self):
+        frames = self.pages['M'][1]
+        frame, refresh = self.play(frames[:-1])
+        self.assertEqual(refresh, 0)
+        self.assertGreater(len(self.ink_set(frame)), 1000)
+        self.assertEqual(self.play(frames)[1], 1)                                  # P: partial
+        self.assertEqual(self.play(frames[:-1] + ['RFOOT|F|a|b'])[1], 2)            # F: full
+        self.assertEqual(self.play(['RFOOT|'])[1], 1)                              # anything else: partial
+
+    def test_the_first_frame_clears_and_a_later_one_does_not(self):
+        rl = self.rl
+        frame, _ = self.play(['RTEXT|M|0|S|old old old', 'RTEXT|M|5|S|new'])
+        self.assertEqual(self.ink_set(frame), set(rl.text_ink('M', rl.TEXT_X, rl.baseline('M', 5), 'new')))
+        frame, _ = self.play(['RTEXT|M|0|S|old', 'RTEXT|M|5|-|new'])
+        self.assertEqual(self.ink_set(frame), set(rl.text_ink('M', rl.TEXT_X, rl.baseline('M', 0), 'old'))
+                         | set(rl.text_ink('M', rl.TEXT_X, rl.baseline('M', 5), 'new')))
+
+    def test_blank_lines_leave_their_row_empty(self):
+        rl = self.rl
+        frame, _ = self.play(['RTEXT|L|1|S|one\xb7\xb7three'])
+        want = set(rl.text_ink('L', rl.TEXT_X, rl.baseline('L', 1), 'one')) | set(rl.text_ink('L', rl.TEXT_X, rl.baseline('L', 3), 'three'))
+        self.assertEqual(self.ink_set(frame), want)
+
+    def test_the_footer_is_a_one_pixel_rule_with_text_at_both_margins(self):
+        rl = self.rl
+        frame, _ = self.play(['RFOOT|P|CHAPTER ONE|12/40  35%'])
+        ink = self.ink_set(frame)
+        self.assertEqual({(x, y) for x, y in ink if y == rl.FOOT_RULE_Y}, {(x, rl.FOOT_RULE_Y) for x in range(rl.TEXT_X, rl.TEXT_X + rl.TEXT_W)})
+        self.assertFalse({p for p in ink if p[1] < rl.FOOT_RULE_Y})
+        text = {p for p in ink if p[1] > rl.FOOT_RULE_Y}
+        self.assertTrue(text)
+        self.assertLess(min(x for x, _ in text), rl.TEXT_X + 12)
+        self.assertLessEqual(max(x for x, _ in text), rl.TEXT_X + rl.TEXT_W)
+        self.assertGreater(max(x for x, _ in text), rl.TEXT_X + rl.TEXT_W - 24)
+        self.assertLess(max(y for _, y in text), 600)
+
+    def test_the_footer_is_drawn_in_the_built_in_font_even_after_book_text(self):
+        rl = self.rl
+        alone, _ = self.play(['RFOOT|P|CHAPTER ONE|12/40  35%'])
+        after, _ = self.play(['RTEXT|X|0|S|Some text', 'RFOOT|P|CHAPTER ONE|12/40  35%'])
+        self.assertEqual(self.ink_set(alone, rl.FOOT_RULE_Y), self.ink_set(after, rl.FOOT_RULE_Y))
+
+    def test_a_line_wider_than_the_screen_does_not_wrap_onto_the_next_row(self):
+        rl = self.rl
+        frame, _ = self.play(['RTEXT|M|2|S|' + 'W' * 60])
+        rows = {y for _x, y in self.ink_set(frame)}
+        y = rl.y_advance('M')
+        self.assertGreaterEqual(min(rows), rl.TOP + 2 * y)
+        self.assertLess(max(rows), rl.TOP + 3 * y)
+
+    def test_a_malformed_frame_draws_nothing(self):
+        for frame in ('RTEXT|Q|0|S|text', 'RTEXT|MM|0|S|text', 'RTEXT|M|-1|S|text', 'RTEXT|M|64|S|text',
+                      'RTEXT|M|x|S|text', 'RTEXT|M|0|S', 'RTEXT|M|0', 'RTEXT|M', 'RTEXT|', 'RTEXT|||'):
+            self.assertEqual(self.ink_set(self.play([frame])[0]), set(), frame)
+
+    def test_rows_below_the_panel_are_dropped_not_drawn_wrapped(self):
+        frame, _ = self.play(['RTEXT|X|60|S|a\xb7b\xb7c\xb7d'])
+        self.assertEqual(self.ink_set(frame), set())
+
+
+@unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c, gfxfont.h)')
+class ReaderMatchesEmulator(unittest.TestCase):
+    """The firmware and simulator.py draw a page identically: same glyphs, same rows, same footer rule."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
+        os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
+        try:
+            import pygame
+            from unittest.mock import MagicMock
+            if isinstance(pygame, MagicMock):
+                raise ImportError
+            import simulator
+        except ImportError:
+            raise unittest.SkipTest('needs real pygame')
+        import reader_layout
+        cls.rl, cls.pygame = reader_layout, pygame
+        cls.tmp = tempfile.mkdtemp(prefix='kyphone-fw-reader-')
+        cls.exe = os.path.join(cls.tmp, 'render_reader')
+        build_reader(cls.exe)
+        cls.sim = simulator.Simulator(lambda k: None)
+        cls.sim.init()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_every_text_pixel_and_the_footer_rule_agree_at_all_four_sizes(self):
+        rl = self.rl
+        out = os.path.join(self.tmp, 'out')
+        os.makedirs(out, exist_ok=True)
+        pages = reader_pages()
+        lines = ''.join('%s\t%s\n' % (size, '\t'.join(frames)) for size, (_l, frames) in pages.items())
+        done = subprocess.run([self.exe, out], input=lines.encode('latin-1'), capture_output=True, check=True)
+        for size, (_lines, frames) in pages.items():
+            fw = open(os.path.join(out, size + '.raw'), 'rb').read()
+            self.sim._surface.fill((255, 255, 255))
+            self.sim._draw(frames)
+            data = self.pygame.image.tostring(self.sim._surface, 'RGB')
+            for y in range(0, rl.FOOT_RULE_Y + 1):                                   # the text column and the rule
+                for x in range(W):
+                    self.assertEqual(fw[y * W + x] == 0, data[(y * W + x) * 3] == 0, (size, x, y))
+
+
+@unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c, gfxfont.h)')
+class ReaderMemorySafety(unittest.TestCase):
+    def test_malformed_and_maximum_length_reader_frames_do_not_overflow_or_misbehave(self):
+        tmp = tempfile.mkdtemp(prefix='kyphone-fw-reader-asan-')
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        exe = os.path.join(tmp, 'render_reader_asan')
+        build_reader(exe, sanitize=True)
+
+        rng = random.Random(20260919)
+        alphabet = [chr(c) for c in list(range(0x20, 0x7f)) + list(range(0x80, 0x100)) if chr(c) != '|'] + ['\xb7'] * 8
+        alphabet = [c for c in alphabet if c not in '\t\n']
+
+        def field(n):
+            return ''.join(rng.choice(alphabet) for _ in range(rng.randint(0, n)))
+
+        def frame():
+            kind = rng.choice(['RTEXT|', 'RTEXT|', 'RTEXT|', 'RFOOT|', 'RTEXT|', 'XTEXT|'])
+            if kind == 'RFOOT|':
+                return (kind + rng.choice(['P', 'F', '', 'X']) + '|' + field(60) + '|' + field(60))[:253]
+            size = rng.choice(['S', 'M', 'L', 'X', 'Q', '', 'MM'])
+            row = rng.choice(['0', '1', '5', '23', '63', '64', '-1', '99999999999', 'x', ''])
+            flag = rng.choice(['S', '-', '', 'SS'])
+            return (kind + size + '|' + row + '|' + flag + '|' + field(rng.choice([0, 10, 60, 240])))[:253]
+
+        lines = []
+        for i in range(2500):
+            frames = [frame() for _ in range(rng.randint(1, 5))]
+            lines.append('p%d\t%s\n' % (i, '\t'.join(frames)))
+        lines.append('max1\tRTEXT|S|0|S|' + '\xb7'.join('i' * 4 for _ in range(48)) + '\n')
+        lines.append('max2\tRTEXT|X|0|S|' + 'W' * 236 + '\n')
+        lines.append('max3\tRTEXT|M|0|S|' + '\xb7' * 236 + '\n')
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
         done = subprocess.run([exe, '-'], input=''.join(lines).encode('latin-1'), capture_output=True, env=env)
         err = done.stderr.decode('latin-1')

@@ -18,6 +18,7 @@
 //   THREAD2|name|draft|hdr|code·time·text|...    COMPOSE|to|msg|to_active|hdr|plus|send
 //   CONTACT|title|sub|kind|sel         CONTACTEDIT|first|last|number|idx|kind
 //   STUB|title|body                    CONFIRM|title|body|go|keep|sel
+//   LIBRARY|sel|title·author·pct|...   (book pages: RTEXT / RFOOT frames, see ui_reader.h)
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -308,6 +309,46 @@ static void ui_texts(char* data) {
         ui_text(">", chev_x, y + 40, 2, fg, false);                   // time + chevron share the name's baseline
         if (tm[0]) ui_text(tm, chev_x - 10 - ui_tw(tm, 2), y + 40, 2, fg, false);
         ui_text(prev, margin, y + 77, 2, fg, false);
+        ui_hline(y + row_h - 1, 1);
+        r++;
+    }
+}
+
+// ─── LIBRARY|sel|title·author·pct|... ─────────────────────────────────────────
+// The books on the phone, laid out like the texts list. sel: -1 back, else the row within the 5-row window.
+
+static void ui_library(char* data) {
+    char* f[8];
+    int n = ui_split(data, '|', f, 8);
+    int sel = ui_fld_int(f, n, 0, 0);
+    ui_header("READ", sel == -1, false, false);
+
+    int rows = 0;
+    for (int i = 1; i < n && rows < 5; i++) if (f[i][0] != '\0') rows++;
+    if (rows == 0) {
+        ui_empty_state("NO BOOKS", "COPY .EPUB FILES INTO THE BOOKS FOLDER ON THE PHONE.", 44, 600);
+        return;
+    }
+    const int row_h = 111, margin = 28;
+    int r = 0;
+    for (int i = 1; i < n && r < 5; i++) {
+        if (f[i][0] == '\0') continue;
+        char* sf[3];
+        int sn = ui_split(f[i], UI_SUB, sf, 3);
+        const char* title  = ui_fld(sf, sn, 0);
+        const char* author = ui_fld(sf, sn, 1);
+        const char* pct    = ui_fld(sf, sn, 2);
+
+        int y = 44 + r * row_h;
+        bool is_sel = (r == sel);
+        uint16_t fg = is_sel ? WHITE : BLACK;
+        if (is_sel) display.fillRect(0, y, 600, row_h, BLACK);
+
+        ui_text(title, margin, y + 40, 3, fg, true);
+        int chev_x = 600 - margin - 12;
+        ui_text(">", chev_x, y + 40, 2, fg, false);
+        if (pct[0]) ui_text(pct, chev_x - 10 - ui_tw(pct, 2), y + 40, 2, fg, false);
+        ui_text(author, margin, y + 77, 2, fg, false);
         ui_hline(y + row_h - 1, 1);
         r++;
     }
@@ -672,7 +713,7 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"HOME2|", ui_home},         {"TEXTS|", ui_texts},         {"CONTACTSPICK|", ui_contacts},
         {"CALLS|", ui_calls},        {"THREAD2|", ui_thread},      {"COMPOSE|", ui_compose},
         {"STUB|", ui_stub},          {"CONFIRM|", ui_confirm},     {"CONTACTEDIT|", ui_contact_edit},
-        {"CONTACT|", ui_contact},
+        {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

@@ -893,11 +893,11 @@ class Simulator:
             # RTEXT|size|row|S/-|line·line·...   S = first frame of a page: start from a blank screen
             try:
                 size, row, flag, body = rest.split('|', 3)
-                row = int(row)
             except ValueError:
                 return
-            if size not in READER_FONTS:
-                return
+            if size not in READER_FONTS or not row.isdigit() or int(row) > rl.READER_MAX_ROW:
+                return                          # a garbled frame: ignored, like the firmware does
+            row = int(row)
             if flag == 'S':
                 self._surface.fill(WHITE)
             for k, line in enumerate(body.split('\xb7')):

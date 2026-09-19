@@ -1,5 +1,6 @@
 #pragma once
-#include <Adafruit_GFX.h>
+// (GFXfont and GFXglyph come from Inkplate.h on the panel and from gfxfont.h on a computer; the include of
+//  <Adafruit_GFX.h> that Adafruit ships here was removed: it made the build link a second copy of the library.)
 
 const uint8_t FreeSerif18pt7bBitmaps[] PROGMEM = {
     0x6F, 0xFF, 0xFF, 0xFE, 0x66, 0x66, 0x66, 0x64, 0x40, 0x00, 0x6F, 0xF6,
