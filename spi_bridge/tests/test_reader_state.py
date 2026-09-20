@@ -480,10 +480,13 @@ class BrokenChapters(ReaderCase):
 class Sending(unittest.TestCase):
     """A page is a list of frames sent back to back; a newer command abandons the rest."""
 
+    real_wait_for_taken = staticmethod(kyphone_os.wait_for_taken)        # the real one, before setUp replaces it
+
     def setUp(self):
         self.spi = MagicMock()
         self.event = threading.Event()
-        for name, value in (('spi', self.spi), ('_pending_event', self.event)):
+        self.taken = MagicMock(return_value=True)
+        for name, value in (('spi', self.spi), ('_pending_event', self.event), ('wait_for_taken', self.taken)):
             p = patch.object(kyphone_os, name, value, create=True)
             p.start()
             self.addCleanup(p.stop)
@@ -495,6 +498,26 @@ class Sending(unittest.TestCase):
         with patch.object(kyphone_os, 'wait_for_ready', return_value=True):
             kyphone_os._send_command(['one', 'two', 'three'])
         self.assertEqual([self.payload_text(c) for c in self.spi.xfer2.call_args_list], ['one', 'two', 'three'])
+
+    def test_each_frame_waits_for_the_inkplate_to_take_it_before_the_next_goes(self):
+        # the firmware ends a frame after 600 ms of clock silence, and the ready line is still high until then:
+        # a frame sent straight after another merges into it and is lost (found on the real phone)
+        order = []
+        self.spi.xfer2.side_effect = lambda payload: order.append('send ' + self.payload_text(MagicMock(args=(payload,))))
+        self.taken.side_effect = lambda *a: order.append('taken') or True
+        with patch.object(kyphone_os, 'wait_for_ready', side_effect=lambda *a: order.append('ready') or True):
+            kyphone_os._send_command(['one', 'two'])
+        self.assertEqual(order, ['ready', 'send one', 'taken', 'ready', 'send two', 'taken'])
+
+    def test_wait_for_taken_returns_when_the_ready_line_drops_and_gives_up_if_it_never_does(self):
+        line = MagicMock()
+        line.get_value.side_effect = [1, 1, 1, 0]
+        with patch.object(kyphone_os, 'SIM_MODE', False), patch.object(kyphone_os, 'handshake', line, create=True):
+            self.assertTrue(self.real_wait_for_taken(timeout_s=2))
+        stuck = MagicMock()
+        stuck.get_value.return_value = 1
+        with patch.object(kyphone_os, 'SIM_MODE', False), patch.object(kyphone_os, 'handshake', stuck, create=True):
+            self.assertFalse(self.real_wait_for_taken(timeout_s=0.05))
 
     def test_a_plain_command_still_works(self):
         with patch.object(kyphone_os, 'wait_for_ready', return_value=True):

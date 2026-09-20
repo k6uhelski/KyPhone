@@ -594,6 +594,20 @@ def wait_for_ready(timeout_s=10):
     return True
 
 
+def wait_for_taken(timeout_s=3):
+    """After a frame has gone out, wait for the Inkplate to say it has taken it: the ready line drops. The firmware
+    ends a frame after 600 ms of clock silence and only then pulls the line low, so until it drops a second frame
+    sent straight away runs into the first one (the extra bits are lost). Returns False if it never dropped."""
+    if SIM_MODE:
+        return True
+    t0 = time.monotonic()
+    while int(handshake.get_value()) == 1:
+        if time.monotonic() - t0 > timeout_s:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def build_payload(text):
     payload = [0x00, 0x00, 0x02] + [ord(c) for c in text[:PAYLOAD_BYTES - 3]]
     payload += [0x00] * (PAYLOAD_BYTES - len(payload))
@@ -658,6 +672,8 @@ def _send_command(command):
             print(f"Warning: Inkplate not ready, skipping: {frame[:40]}")
             return
         spi.xfer2(build_payload(frame))
+        if not wait_for_taken():
+            print(f"Warning: Inkplate never signalled busy after: {frame[:40]}")
 
 
 # ─── Screen Builders ──────────────────────────────────────────────────────────
