@@ -253,9 +253,16 @@ class Opening(ReaderCase):
         self.assertTrue(left.endswith('...'))
 
 
+import kyphone_os as _os_for_default                                        # noqa: E402  (the shipped setting, before any test pins it)
+SHIPPED_FULL_EVERY = _os_for_default.READER_FULL_EVERY
+
+
 class PageTurns(ReaderCase):
     def setUp(self):
         super().setUp()
+        p = patch.object(kyphone_os, 'READER_FULL_EVERY', 8)                       # these tests are about the partial path
+        p.start()
+        self.addCleanup(p.stop)
         self.add_book()
         self.open_book()
 
@@ -285,11 +292,22 @@ class PageTurns(ReaderCase):
         self.assertGreaterEqual(second, first)
         self.assertIn('2/', frames[-1].split('|')[3])
 
-    def test_a_full_refresh_comes_after_eight_partial_ones(self):
-        seen = [self.refresh_of(self.pages[-1])]
-        for _ in range(10):
-            self.key('KEY_RIGHT')
-            seen.append(self.refresh_of(self.pages[-1]))
+    def test_every_page_turn_is_a_full_refresh(self):
+        # Kyle's call on the phone: a book page always flashes, so no ghost of the last page is ever left
+        self.assertEqual(SHIPPED_FULL_EVERY, 0)
+        with patch.object(kyphone_os, 'READER_FULL_EVERY', SHIPPED_FULL_EVERY):
+            seen = [self.refresh_of(self.pages[-1])]
+            for _ in range(4):
+                self.key('KEY_RIGHT')
+                seen.append(self.refresh_of(self.pages[-1]))
+        self.assertEqual(seen, ['F'] * 5)
+
+    def test_a_partial_refresh_cadence_still_works_when_the_setting_allows_it(self):
+        with patch.object(kyphone_os, 'READER_FULL_EVERY', 8):
+            seen = [self.refresh_of(self.pages[-1])]
+            for _ in range(10):
+                self.key('KEY_RIGHT')
+                seen.append(self.refresh_of(self.pages[-1]))
         self.assertEqual(seen, ['F'] + ['P'] * 8 + ['F', 'P'])
 
     def test_the_position_is_saved_after_every_page(self):

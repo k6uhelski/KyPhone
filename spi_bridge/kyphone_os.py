@@ -215,7 +215,7 @@ READING_FILE      = os.path.join(DATA_DIR, 'reading.json')   # {'font': 'M', 'bo
 LIBRARY_MAX_BOOKS = 200
 LIBRARY_TITLE_MAX  = 24
 LIBRARY_AUTHOR_MAX = 14
-READER_FULL_EVERY  = 8        # a full (flashing) refresh at least this often while turning pages, to clear ghosting
+READER_FULL_EVERY  = 0        # partial refreshes allowed between full (flashing) ones: 0 = every page turn is a full refresh (Kyle's call, no ghosting)
 DEFAULT_READER_SIZE = 'M'
 
 # --- Music (LISTEN) ---
@@ -2301,7 +2301,7 @@ def _reader_view():
 
 def push_reader(force_full=False):
     """Draw the page at the current position, and save the position. A full refresh (which flashes) clears ghosting;
-    it happens when a book opens, on a new chapter, a new font size, after an alert, and every READER_FULL_EVERY turns."""
+    it happens when a book opens, on a new chapter, a new font size, after an alert, and after every READER_FULL_EVERY partial turns (0: every turn)."""
     with _reader_lock:
         chapter, pages, idx = _reader_view()
         with state['lock']:
