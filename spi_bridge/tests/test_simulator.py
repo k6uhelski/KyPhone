@@ -219,14 +219,16 @@ class SimulatorPixels(unittest.TestCase):
         self.draw('COMPOSE|555|hi|1||0|0')
         self.assertEqual(self.px(23, 57), WHITE)                            # the TO: label is not filled
         self.assertEqual(self.px(23, 83), WHITE)                            # and neither is the line: no bar behind the digits
-        self.assertEqual(self.px(24 + 3 * 18 + 4, 96), BLACK)               # the block cursor sits right after the digits
-        self.assertEqual(self.px(24 + 4 * 18 + 4, 96), WHITE)               # ... one cell wide
+        end = 24 + self.sim._font(3).size('555')[0]                         # where the digits end in the emulator's font
+        self.assertEqual(self.px(end + 4, 96), BLACK)                       # the block cursor sits right after them
+        self.assertEqual(self.px(end - 1, 96), WHITE)                       # ... not overlapping the last digit's gap
+        self.assertEqual(self.px(end + 18 + 4, 96), WHITE)                  # ... one cell wide
         self.draw('COMPOSE||hi|1||0|0')                                     # empty: the cursor is at the start
         self.assertEqual(self.px(30, 96), BLACK)
         self.draw('COMPOSE||hi|1||1|0')                                     # the + selected: no cursor
         self.assertEqual(self.px(30, 96), WHITE)
         self.draw('COMPOSE|555|hi|0||0|0')                                  # typing in the message instead
-        self.assertEqual(self.px(24 + 3 * 18 + 4, 96), WHITE)
+        self.assertEqual(self.px(end + 4, 96), WHITE)
         self.assertEqual(self.px(23, 137), BLACK)                           # the MESSAGE: label inverts as before
 
     # ── delete button and the confirm screen ─────────────────────────────────

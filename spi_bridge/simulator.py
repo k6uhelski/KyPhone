@@ -659,7 +659,7 @@ class Simulator:
             self._text('+', plus_box[0] + (box_w - self._char_w(3)) // 2, plus_box[1] + (box_h - 24) // 2,
                         3, WHITE if plus_sel else BLACK, bold=True)
         if to_active and not plus_sel:
-            cursor_x = 24 + len(to_str) * self._char_w(3)
+            cursor_x = 24 + self._font(3).size(to_str)[0]          # the emulator's text is narrower than the panel's cells
             pygame.draw.rect(self._surface, BLACK, (cursor_x, 84, self._char_w(3), 24))
         self._line(122)
 
