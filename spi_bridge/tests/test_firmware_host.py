@@ -231,17 +231,19 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.ink(self.frames['compose'], x + 8, W - 14 - 36 + 8))
         self.assertFalse(self.ink(self.frames['compose_empty'], x + 8, W - 14 - 36 + 8))
 
-    def test_the_new_message_plus_is_centred_under_the_x_and_the_to_line_is_inverted(self):
+    def test_the_new_message_plus_is_centred_under_the_x_and_the_to_line_has_the_cursor(self):
         f = self.frames['compose_empty']                                      # empty To, To active, nothing selected
         cols = lambda y0, y1: [x for x in range(530, 600) if any(self.ink(f, x, y) for y in range(y0, y1))]
         x, plus = cols(4, 42), cols(70, 118)
         self.assertEqual((x[0] + x[-1]) // 2, (plus[0] + plus[-1]) // 2)
         self.assertEqual(x[-1] - x[0], plus[-1] - plus[0])
         self.assertFalse(self.ink(f, 23, 57))                                 # the TO: label is not filled
-        self.assertTrue(self.ink(f, 23, 83))                                  # the line the number goes on is
+        self.assertTrue(self.ink(f, 30, 96))                                  # the cursor is at the start of the empty line
         typed = self.frame('COMPOSE|555|hi|1||0|0')
-        self.assertTrue(self.ink(typed, 22 + 4 * 18, 96))                     # a cell past the digits, for the cursor
-        self.assertFalse(self.ink(typed, 22 + 4 * 18 + 8, 96))
+        self.assertFalse(self.ink(typed, 23, 83))                             # no bar behind the digits
+        self.assertTrue(self.ink(typed, 24 + 3 * 18 + 4, 96))                 # the block cursor right after them
+        self.assertFalse(self.ink(typed, 24 + 4 * 18 + 4, 96))
+        self.assertFalse(self.ink(self.frame('COMPOSE||hi|1||1|0'), 30, 96))   # the + selected: no cursor
 
     # ── contact pages and the edit form ────────────────────────────────────────
     def has_ink(self, f, x0, y0, x1, y1):

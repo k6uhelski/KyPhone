@@ -647,19 +647,20 @@ class Simulator:
                     WHITE if x_sel else BLACK, bold=True)
         self._line(44, weight=2)
 
-        # TO: field — the label stays plain; while the field is active the line the number is typed on is
-        # inverted (ink behind the digits plus one cell for the cursor). Empty+active shows a '+' on the
-        # right, the same 38 x 34 control as the X and centred under it, that opens the contact picker
+        # TO: field — the label stays plain and the line the number is typed on works like the message: plain
+        # digits with the block cursor after them (also when empty). Empty+active shows a '+' on the right, the
+        # same 38 x 34 control as the X and centred under it, that opens the contact picker
         self._text('TO:', 24, 58, 2)
-        if to_active:
-            pygame.draw.rect(self._surface, BLACK, (22, 82, (len(to_str) + 1) * self._char_w(3) + 4, 28))
-        self._text(to_str, 24, 84, 3, WHITE if to_active else BLACK)
+        self._text(to_str, 24, 84, 3)
         if to_active and not to_str:
             plus_box = (x_box[0], 79)
             if plus_sel:
                 pygame.draw.rect(self._surface, BLACK, (*plus_box, box_w, box_h))
             self._text('+', plus_box[0] + (box_w - self._char_w(3)) // 2, plus_box[1] + (box_h - 24) // 2,
                         3, WHITE if plus_sel else BLACK, bold=True)
+        if to_active and not plus_sel:
+            cursor_x = 24 + len(to_str) * self._char_w(3)
+            pygame.draw.rect(self._surface, BLACK, (cursor_x, 84, self._char_w(3), 24))
         self._line(122)
 
         # MESSAGE: field — label inverts while active

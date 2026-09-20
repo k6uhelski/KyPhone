@@ -659,16 +659,16 @@ static void ui_compose(char* data) {
     ui_text("X", 600 - 16 - 38 + 10, 8 + 5 + 21, 3, x_sel ? WHITE : BLACK, true);
     ui_hline(44, 2);
 
-    // The label stays plain; the line the number is typed on is inverted while active (ink behind the
-    // digits plus one cell for the cursor). The '+' is the X's 38 x 34 control, centred under it.
+    // The label stays plain; the line the number is typed on works like the message: plain digits with the block
+    // cursor after them (also when empty). The '+' is the X's 38 x 34 control, centred under it.
     ui_put("TO:", 24, 58, 2, BLACK);
-    if (to_active) display.fillRect(22, 82, ui_tw(to, 3) + 18 + 4, 28, BLACK);
-    ui_put(to, 24, 84, 3, to_active ? WHITE : BLACK);
+    ui_put(to, 24, 84, 3, BLACK);
     if (to_active && to[0] == '\0') {
         int px = 600 - 16 - 38;
         if (plus_sel) display.fillRect(px, 79, 38, 34, BLACK);
         ui_text("+", px + 10, 79 + 5 + 21, 3, plus_sel ? WHITE : BLACK, true);
     }
+    if (to_active && !plus_sel) display.fillRect(24 + ui_tw(to, 3), 84, 18, 24, BLACK);
     ui_hline(122, 1);
 
     ui_field_label("MESSAGE:", 24, 134, !to_active);

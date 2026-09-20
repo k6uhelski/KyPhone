@@ -215,14 +215,18 @@ class SimulatorPixels(unittest.TestCase):
         self.draw('COMPOSE||hi|1|X|0|0')                                    # the X selected: the same left edge
         self.assertEqual(self.px(546 + 1, 8 + 1), BLACK)
 
-    def test_the_new_message_to_line_is_inverted_while_active_not_its_label(self):
+    def test_the_new_message_to_line_shows_the_cursor_after_the_number_and_its_label_stays_plain(self):
         self.draw('COMPOSE|555|hi|1||0|0')
-        self.assertEqual(self.px(23, 57), WHITE)                            # the TO: label's old fill is gone
-        self.assertEqual(self.px(23, 83), BLACK)                            # ink behind the number
-        self.assertEqual(self.px(22 + 4 * 18, 96), BLACK)                   # ... and one cell past it, for the cursor
-        self.assertEqual(self.px(22 + 4 * 18 + 8, 96), WHITE)               # ... and no further
+        self.assertEqual(self.px(23, 57), WHITE)                            # the TO: label is not filled
+        self.assertEqual(self.px(23, 83), WHITE)                            # and neither is the line: no bar behind the digits
+        self.assertEqual(self.px(24 + 3 * 18 + 4, 96), BLACK)               # the block cursor sits right after the digits
+        self.assertEqual(self.px(24 + 4 * 18 + 4, 96), WHITE)               # ... one cell wide
+        self.draw('COMPOSE||hi|1||0|0')                                     # empty: the cursor is at the start
+        self.assertEqual(self.px(30, 96), BLACK)
+        self.draw('COMPOSE||hi|1||1|0')                                     # the + selected: no cursor
+        self.assertEqual(self.px(30, 96), WHITE)
         self.draw('COMPOSE|555|hi|0||0|0')                                  # typing in the message instead
-        self.assertEqual(self.px(23, 83), WHITE)
+        self.assertEqual(self.px(24 + 3 * 18 + 4, 96), WHITE)
         self.assertEqual(self.px(23, 137), BLACK)                           # the MESSAGE: label inverts as before
 
     # ── delete button and the confirm screen ─────────────────────────────────
