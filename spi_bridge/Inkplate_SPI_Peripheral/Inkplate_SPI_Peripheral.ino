@@ -1216,7 +1216,7 @@ void render_call_state(char* data) {
         display.print(timer_buf);
     }
 
-    const char* hint = incoming ? "ENTER ACCEPT / ESC DECLINE" : "ESC HANG UP";
+    const char* hint = incoming ? "ENTER ACCEPT / Q DECLINE" : "Q HANG UP";
     display.setTextSize(2);
     int hint_w = (int)strlen(hint) * 12;
     display.setCursor((600 - hint_w) / 2, 600 - 34 - 16);

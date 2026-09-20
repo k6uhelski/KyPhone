@@ -16,7 +16,7 @@ cellular modem exists):
     dial         a number buffer with four quick-dial contacts underneath
     outgoing     CALLSTATE|OUT    ringing; Enter answers it (a demo), Esc goes back
     incoming     CALLSTATE|IN     the `i` key on the home menu raises one (a demo)
-    in_call      CALLSTATE|ACTIVE a running timer; Esc hangs up
+    in_call      CALLSTATE|ACTIVE a running timer; Esc (or Q) hangs up
 
 Run:
     python3 spi_bridge/kyphone_os.py          # hardware mode (Radxa)
@@ -261,7 +261,7 @@ ALERTS = {
     'BAD_NUMBER':   ('CONTACT', 'THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
     'DUP_NUMBER':   ('CONTACT', 'THAT NUMBER IS ALREADY SAVED AS {name}. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.'),
     'BAD_BOOK':     ('READ', 'THIS BOOK CANNOT BE OPENED. {reason}. PRESS ENTER TO GO BACK TO YOUR BOOKS.'),
-    'END_OF_BOOK':  ('READ', 'THAT WAS THE LAST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE, THEN ESC FOR YOUR BOOKS.'),
+    'END_OF_BOOK':  ('READ', 'THAT WAS THE LAST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE, THEN Q FOR YOUR BOOKS.'),
     'START_OF_BOOK': ('READ', 'THIS IS THE FIRST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE.'),
     'BAD_TRACK':    ('LISTEN', '{title} CANNOT BE PLAYED: {reason}. IT WAS SKIPPED. PRESS ENTER TO GO ON.'),
     'NO_AUDIO':     ('LISTEN', 'THIS PHONE HAS NO SOUND OUTPUT RIGHT NOW: {reason}. PRESS ENTER TO GO BACK.'),

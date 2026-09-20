@@ -1088,11 +1088,11 @@ class Simulator:
 
         if call_state == 'IN':
             self._surface.fill(BLACK)
-            fg, label, hint = WHITE, 'INCOMING CALL', 'ENTER ACCEPT \xb7 ESC DECLINE'
+            fg, label, hint = WHITE, 'INCOMING CALL', 'ENTER ACCEPT \xb7 Q DECLINE'
         elif call_state == 'ACTIVE':
-            fg, label, hint = BLACK, 'IN CALL', 'ESC HANG UP'
+            fg, label, hint = BLACK, 'IN CALL', 'Q HANG UP'
         else:
-            fg, label, hint = BLACK, 'CALLING…', 'ESC HANG UP'
+            fg, label, hint = BLACK, 'CALLING…', 'Q HANG UP'
 
         self._text_centered(label, 220, 2, color=fg)
         self._text_centered(name, 280, 6, color=fg, bold=True)

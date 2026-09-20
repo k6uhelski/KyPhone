@@ -2289,6 +2289,19 @@ class TestCallLog(unittest.TestCase):
         self.assertEqual((newest['name'], newest['tag'], newest['duration']), ('Ann Lee', 'MISS', ''))
         self.assertEqual((older['tag'], older['duration']), ('IN', '3:20'))
 
+    def test_q_hangs_up_and_declines_like_esc_since_the_phone_keyboard_has_no_esc_key(self):
+        self.dial('5551234567')
+        self.press('KEY_ENTER', 'CHAR:q')                              # answered, then Q hangs up
+        self.assertEqual(kyphone_os.state['screen'], 'calls_list')
+        self.assertEqual(self.log()[0]['tag'], 'OUT')
+        self.dial('5550100002')
+        self.press('CHAR:q')                                           # Q while it is still ringing cancels
+        self.assertEqual(kyphone_os.state['screen'], 'calls_list')
+        reset_state(screen='home', calls=self.log())
+        self.press('CHAR:i', 'CHAR:q')                                 # Q declines an incoming call
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+        self.assertEqual(self.log()[0]['tag'], 'MISS')
+
     def test_the_log_is_newest_first_and_shows_in_the_call_list_under_dial_a_number(self):
         for number in ('5550100001', '5550100002'):
             self.dial(number)
