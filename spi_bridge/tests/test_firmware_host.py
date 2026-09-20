@@ -231,6 +231,18 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.ink(self.frames['compose'], x + 8, W - 14 - 36 + 8))
         self.assertFalse(self.ink(self.frames['compose_empty'], x + 8, W - 14 - 36 + 8))
 
+    def test_the_new_message_plus_is_centred_under_the_x_and_the_to_line_is_inverted(self):
+        f = self.frames['compose_empty']                                      # empty To, To active, nothing selected
+        cols = lambda y0, y1: [x for x in range(530, 600) if any(self.ink(f, x, y) for y in range(y0, y1))]
+        x, plus = cols(4, 42), cols(70, 118)
+        self.assertEqual((x[0] + x[-1]) // 2, (plus[0] + plus[-1]) // 2)
+        self.assertEqual(x[-1] - x[0], plus[-1] - plus[0])
+        self.assertFalse(self.ink(f, 23, 57))                                 # the TO: label is not filled
+        self.assertTrue(self.ink(f, 23, 83))                                  # the line the number goes on is
+        typed = self.frame('COMPOSE|555|hi|1||0|0')
+        self.assertTrue(self.ink(typed, 22 + 4 * 18, 96))                     # a cell past the digits, for the cursor
+        self.assertFalse(self.ink(typed, 22 + 4 * 18 + 8, 96))
+
     # ── contact pages and the edit form ────────────────────────────────────────
     def has_ink(self, f, x0, y0, x1, y1):
         return any(self.ink(f, x, y) for x in range(x0, x1) for y in range(y0, y1))
@@ -240,10 +252,12 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.has_ink(self.frames['contact_nonum'], 500, 6, 585, 40))
         self.assertFalse(self.has_ink(self.frames['contact_unsaved'], 500, 6, 585, 40))
 
-    def test_an_unsaved_number_offers_call_text_and_save(self):
-        f = self.frames['contact_unsaved']                                    # SAVE selected
-        call_x, text_x, save_x = 28, 28 + 122 + 16, 28 + 122 + 16 + 122 + 16
-        self.assertEqual([self.ink(f, x + 6, 366) for x in (call_x, text_x, save_x)], [False, False, True])
+    def test_an_unsaved_number_offers_call_and_text_with_create_contact_on_a_second_row(self):
+        f = self.frames['contact_unsaved']                                    # CREATE CONTACT selected
+        spots = [(28, 360), (28 + 122 + 16, 360), (28, 360 + 46 + 16)]       # CALL, TEXT; CREATE CONTACT wraps below
+        self.assertEqual([self.ink(f, x + 6, y + 6) for x, y in spots], [False, False, True])
+        self.assertTrue(self.has_ink(f, 28 + 302 - 6, 422 + 20, 28 + 302, 422 + 26))
+        self.assertFalse(self.has_ink(f, 28 + 302 + 4, 422, 600, 470))
 
     def test_a_saved_contact_without_a_number_has_only_add_number(self):
         f = self.frames['contact_nonum']

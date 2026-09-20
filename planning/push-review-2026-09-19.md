@@ -92,7 +92,7 @@ patterns, checked separately):
 > a 30-second ticker keeps the elapsed time honest without hammering the e-ink; nothing else is redrawn by the player. Volume
 > (default 40%) and the place you stopped are saved. No new firmware protocol: three screens on the normal path.
 >
-> **Testing.** 632 tests in all (209 new): every tag format from synthetic files, damaged and random files, the cache, a
+> **Testing.** 635 tests in all (212 new): every tag format from synthetic files, damaged and random files, the cache, a
 > 5,000-track scan, every Session rule, the OS screens against a temp music folder with a hand-advanced clock, emulator pixel
 > tests, firmware pixel parity (bars filled by integer maths in both), sanitizer fuzz of the new commands, firmware
 > compile-checked (12% of program space). The real GStreamer player was also run on the Radxa against a silent output:

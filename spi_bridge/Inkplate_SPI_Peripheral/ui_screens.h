@@ -659,14 +659,15 @@ static void ui_compose(char* data) {
     ui_text("X", 600 - 16 - 38 + 10, 8 + 5 + 21, 3, x_sel ? WHITE : BLACK, true);
     ui_hline(44, 2);
 
-    ui_field_label("TO:", 24, 58, to_active);
-    ui_put(to, 24, 84, 3, BLACK);
+    // The label stays plain; the line the number is typed on is inverted while active (ink behind the
+    // digits plus one cell for the cursor). The '+' is the X's 38 x 34 control, centred under it.
+    ui_put("TO:", 24, 58, 2, BLACK);
+    if (to_active) display.fillRect(22, 82, ui_tw(to, 3) + 18 + 4, 28, BLACK);
+    ui_put(to, 24, 84, 3, to_active ? WHITE : BLACK);
     if (to_active && to[0] == '\0') {
-        int px = 600 - 24 - 38;
+        int px = 600 - 16 - 38;
         if (plus_sel) display.fillRect(px, 79, 38, 34, BLACK);
         ui_text("+", px + 10, 79 + 5 + 21, 3, plus_sel ? WHITE : BLACK, true);
-    } else if (to_active && !plus_sel) {
-        display.fillRect(24 + ui_tw(to, 3), 84, 18, 24, BLACK);
     }
     ui_hline(122, 1);
 
@@ -755,14 +756,15 @@ static void ui_contact(char* data) {
     const char* labels[3]; char codes[3]; int na = 0;
     if (kind == 'S')      { labels[0] = "CALL"; codes[0] = 'C'; labels[1] = "TEXT"; codes[1] = 'T'; na = 2; }
     else if (kind == 'N') { labels[0] = "ADD NUMBER"; codes[0] = 'A'; na = 1; }
-    else                  { labels[0] = "CALL"; codes[0] = 'C'; labels[1] = "TEXT"; codes[1] = 'T'; labels[2] = "SAVE"; codes[2] = 'V'; na = 3; }
-    int x = 28;
+    else                  { labels[0] = "CALL"; codes[0] = 'C'; labels[1] = "TEXT"; codes[1] = 'T'; labels[2] = "CREATE CONTACT"; codes[2] = 'V'; na = 3; }
+    int x = 28, y = 360;
     for (int i = 0; i < na; i++) {
         int w = (int)strlen(labels[i]) * 18 + 44 + 6;       // 22px padding a side + 3px border a side
+        if (x > 28 && x + w > 600 - 28) { x = 28; y += 46 + 16; }   // a button that does not fit wraps to a second row
         bool picked = (sel == codes[i]);
-        if (picked) display.fillRect(x, 360, w, 46, BLACK);
-        ui_rect(x, 360, w, 46, 3, BLACK);
-        ui_text(labels[i], x + 25, 391, 3, picked ? WHITE : BLACK, true);
+        if (picked) display.fillRect(x, y, w, 46, BLACK);
+        ui_rect(x, y, w, 46, 3, BLACK);
+        ui_text(labels[i], x + 25, y + 31, 3, picked ? WHITE : BLACK, true);
         x += w + 16;
     }
 }

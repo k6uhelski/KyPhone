@@ -154,14 +154,18 @@ class SimulatorPixels(unittest.TestCase):
         self.draw('CONTACT|(555) 019-9002|NOT IN CONTACTS|U|C')
         self.assertFalse(self.region_has_ink(500, 6, 585, 40))                # nothing to edit yet
 
-    def test_the_action_row_holds_call_text_save_for_an_unsaved_number(self):
-        # buttons are 46px tall at y=360, 16px apart; widths are 18px per letter + 50
-        call_x, text_x, save_x = 28, 28 + 122 + 16, 28 + 122 + 16 + 122 + 16
-        for sel, filled_x in (('C', call_x), ('T', text_x), ('V', save_x)):
+    def test_an_unsaved_number_offers_call_and_text_with_create_contact_on_a_second_row(self):
+        # buttons are 46px tall, 16px apart; widths are 18px per letter + 50. CREATE CONTACT (302 wide) does not fit
+        # beside CALL and TEXT inside the 28px margins, so it wraps to a second row at y=422
+        spots = {'C': (28, 360), 'T': (28 + 122 + 16, 360), 'V': (28, 360 + 46 + 16)}
+        for sel in spots:
             self.draw(f'CONTACT|(555) 019-9002|NOT IN CONTACTS|U|{sel}')
-            for x in (call_x, text_x, save_x):
-                inner = self.px(x + 6, 366)                                   # just inside the 3px border
-                self.assertEqual(inner, BLACK if x == filled_x else WHITE, (sel, x))
+            for code, (x, y) in spots.items():
+                inner = self.px(x + 6, y + 6)                                 # just inside the 3px border
+                self.assertEqual(inner, BLACK if code == sel else WHITE, (sel, code))
+        self.draw('CONTACT|(555) 019-9002|NOT IN CONTACTS|U|V')
+        self.assertTrue(self.region_has_ink(28 + 302 - 6, 422 + 20, 28 + 302, 422 + 26))     # the wide button's right edge
+        self.assertFalse(self.region_has_ink(28 + 302 + 4, 422, 600, 470))                   # and nothing beyond it
 
     def test_a_saved_contact_without_a_number_has_one_add_number_button(self):
         self.draw('CONTACT|Sam Whitfield|NO NUMBER SAVED|N|A')
@@ -190,6 +194,36 @@ class SimulatorPixels(unittest.TestCase):
         self.assertFalse(self.region_has_ink(24, 236, 300, 262))
         self.draw('COMPOSE|Alice|' + 'ab ' * 25 + '|0||0|0')                    # 74 characters
         self.assertTrue(self.region_has_ink(24, 236, 300, 262))
+
+    def ink_box(self, x0, y0, x1, y1):
+        """(left, right, top, bottom) of the black pixels in a region, or None."""
+        pts = [(x, y) for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) == BLACK]
+        if not pts:
+            return None
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        return min(xs), max(xs), min(ys), max(ys)
+
+    def test_the_new_message_plus_is_the_x_size_and_centred_under_it(self):
+        self.draw('COMPOSE||hi|1||0|0')                                     # empty To, nothing selected
+        x, plus = self.ink_box(540, 4, 600, 42), self.ink_box(530, 70, 600, 118)
+        self.assertEqual((x[0] + x[1]) // 2, (plus[0] + plus[1]) // 2)      # same centre line
+        self.assertLessEqual(abs((x[1] - x[0]) - (plus[1] - plus[0])), 1)   # same width
+        self.draw('COMPOSE||hi|1||1|0')                                     # selected: the same 38 x 34 box as the X
+        self.assertEqual(self.px(546 + 1, 79 + 1), BLACK)
+        self.assertEqual(self.px(546 + 37, 79 + 33), BLACK)
+        self.assertEqual(self.px(546 - 2, 79 + 1), WHITE)
+        self.draw('COMPOSE||hi|1|X|0|0')                                    # the X selected: the same left edge
+        self.assertEqual(self.px(546 + 1, 8 + 1), BLACK)
+
+    def test_the_new_message_to_line_is_inverted_while_active_not_its_label(self):
+        self.draw('COMPOSE|555|hi|1||0|0')
+        self.assertEqual(self.px(23, 57), WHITE)                            # the TO: label's old fill is gone
+        self.assertEqual(self.px(23, 83), BLACK)                            # ink behind the number
+        self.assertEqual(self.px(22 + 4 * 18, 96), BLACK)                   # ... and one cell past it, for the cursor
+        self.assertEqual(self.px(22 + 4 * 18 + 8, 96), WHITE)               # ... and no further
+        self.draw('COMPOSE|555|hi|0||0|0')                                  # typing in the message instead
+        self.assertEqual(self.px(23, 83), WHITE)
+        self.assertEqual(self.px(23, 137), BLACK)                           # the MESSAGE: label inverts as before
 
     # ── delete button and the confirm screen ─────────────────────────────────
     def test_delete_is_only_on_an_edit_form_not_a_new_contact(self):

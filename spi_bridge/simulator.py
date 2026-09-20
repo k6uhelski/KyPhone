@@ -647,19 +647,19 @@ class Simulator:
                     WHITE if x_sel else BLACK, bold=True)
         self._line(44, weight=2)
 
-        # TO: field — label inverts while active; empty+active shows a '+'
-        # hint on the right that opens the contact picker
-        self._draw_field_label('TO:', 24, 58, to_active)
-        self._text(to_str, 24, 84, 3)
+        # TO: field — the label stays plain; while the field is active the line the number is typed on is
+        # inverted (ink behind the digits plus one cell for the cursor). Empty+active shows a '+' on the
+        # right, the same 38 x 34 control as the X and centred under it, that opens the contact picker
+        self._text('TO:', 24, 58, 2)
+        if to_active:
+            pygame.draw.rect(self._surface, BLACK, (22, 82, (len(to_str) + 1) * self._char_w(3) + 4, 28))
+        self._text(to_str, 24, 84, 3, WHITE if to_active else BLACK)
         if to_active and not to_str:
-            plus_box = (self.WIDTH - 24 - box_w, 79)
+            plus_box = (x_box[0], 79)
             if plus_sel:
                 pygame.draw.rect(self._surface, BLACK, (*plus_box, box_w, box_h))
             self._text('+', plus_box[0] + (box_w - self._char_w(3)) // 2, plus_box[1] + (box_h - 24) // 2,
                         3, WHITE if plus_sel else BLACK, bold=True)
-        elif to_active and not plus_sel:
-            cursor_x = 24 + len(to_str) * self._char_w(3)
-            pygame.draw.rect(self._surface, BLACK, (cursor_x, 84, self._char_w(3), 24))
         self._line(122)
 
         # MESSAGE: field — label inverts while active
@@ -796,15 +796,17 @@ class Simulator:
 
         actions = {'S': [('CALL', 'C'), ('TEXT', 'T')],
                    'N': [('ADD NUMBER', 'A')],
-                   'U': [('CALL', 'C'), ('TEXT', 'T'), ('SAVE', 'V')]}.get(kind, [])
-        x = 28
+                   'U': [('CALL', 'C'), ('TEXT', 'T'), ('CREATE CONTACT', 'V')]}.get(kind, [])
+        x, y = 28, 360
         for label, code in actions:
             w = len(label) * self._char_w(3) + 44 + 6          # 22px padding a side + 3px border a side
+            if x > 28 and x + w > self.WIDTH - 28:             # a button that does not fit wraps to a second row
+                x, y = 28, y + 46 + 16
             picked = sel == code
             if picked:
-                pygame.draw.rect(self._surface, BLACK, (x, 360, w, 46))
-            pygame.draw.rect(self._surface, BLACK, (x, 360, w, 46), 3)
-            self._text_bl(label, x + 25, 391, 3, WHITE if picked else BLACK, bold=True)
+                pygame.draw.rect(self._surface, BLACK, (x, y, w, 46))
+            pygame.draw.rect(self._surface, BLACK, (x, y, w, 46), 3)
+            self._text_bl(label, x + 25, y + 31, 3, WHITE if picked else BLACK, bold=True)
             x += w + 16
 
     def _draw_contact_edit(self, data):
