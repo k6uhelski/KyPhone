@@ -1,5 +1,5 @@
 """
-kyphone_os.py — KyPhone OS 0.2.1
+kyphone_os.py — KyPhone OS (the version number is defined once, in version.py)
 
 Screens: lock | home | texts_list | thread | compose | confirm |
          contacts_pick | contact | contact_edit | stub |
@@ -45,6 +45,9 @@ import reader_epub
 import reader_layout as rl
 import music_library
 import music_player
+import version
+
+VERSION = version.VERSION
 
 # --- Config ---
 CHIP            = 'gpiochip3'
@@ -665,8 +668,8 @@ def push_lock():
     date_str = now.strftime("%A, %B %-d").upper()
     quote = QUOTES[state['quote_index'] % len(QUOTES)]
     # Truncate quote to fit within PAYLOAD_BYTES (prefix + separators ≈ 30 chars overhead)
-    max_quote = PAYLOAD_BYTES - 3 - len("LOCK|") - len(time_str) - len(date_str) - len("- THICH NHAT HANH") - 4
-    push_screen(f"LOCK|{time_str}|{date_str}|{quote[:max_quote]}|- THICH NHAT HANH")
+    max_quote = PAYLOAD_BYTES - 3 - len("LOCK|") - len(time_str) - len(date_str) - len("- THICH NHAT HANH") - len(VERSION) - 5
+    push_screen(f"LOCK|{time_str}|{date_str}|{quote[:max_quote]}|- THICH NHAT HANH|{VERSION}")
 
 
 def push_home2():
@@ -2903,7 +2906,7 @@ def main():
         KeyboardHandler(handle_key).start()
         TrackpadHandler(handle_key).start()
 
-    print("\n--- KyPhone OS 0.2.1 ---")
+    print(f"\n--- KyPhone OS {VERSION} ---")
     if TWILIO_NUMBER and not SIM_MODE:
         print(f"Number: {TWILIO_NUMBER}")
 

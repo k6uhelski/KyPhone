@@ -239,15 +239,17 @@ class Simulator:
     # ── OS 0.1 Screen Renderers ───────────────────────────────────────
 
     def _draw_lock(self, data):
-        # data = "time_str|date_str|quote|attribution"
+        # data = "time_str|date_str|quote|attribution|version"
         parts = data.split('|')
         time_str = parts[0] if len(parts) > 0 else ''
         date_str = parts[1] if len(parts) > 1 else ''
         quote    = parts[2] if len(parts) > 2 else ''
         attr     = parts[3] if len(parts) > 3 else ''
+        version  = parts[4] if len(parts) > 4 else ''
 
-        # OS version — bottom left, textSize 2 (18px design token)
-        self._text('OS 0.2', 10, self.HEIGHT - 8 - 2 * 8, 2)
+        # OS version, as the Radxa reports it (see version.py) — bottom left, textSize 2 (18px design token)
+        if version:
+            self._text('OS ' + version, 10, self.HEIGHT - 8 - 2 * 8, 2)
 
         # ASCII cat — bottom right (fixed bitmap on device; unchanged since 0.1)
         cat = [

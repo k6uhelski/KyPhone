@@ -8,6 +8,7 @@ Inkplate display(INKPLATE_1BIT);
 // OS 0.2.1 screen renderers (also compiled on a computer by tests/firmware_host).
 #include "ui_screens.h"
 #include "ui_reader.h"
+#include "version.h"      // KYPHONE_VERSION, generated from spi_bridge/version.py
 
 // Shared pins
 #define PIN_MOSI 13
@@ -831,8 +832,8 @@ const uint8_t cat_bitmap[] PROGMEM = {
 };
 
 void render_lock(char* data) {
-    // data = "time_str|date_str|quote|attribution"
-    char time_str[16] = "", date_str[32] = "", quote_buf[200] = "", attr_buf[40] = "";
+    // data = "time_str|date_str|quote|attribution|version"
+    char time_str[16] = "", date_str[32] = "", quote_buf[200] = "", attr_buf[40] = "", version_buf[16] = "";
     char* p1 = strchr(data, '|');
     if (p1) {
         snprintf(time_str, sizeof(time_str), "%.*s", (int)(p1 - data), data);
@@ -853,12 +854,27 @@ void render_lock(char* data) {
         strncpy(time_str, data, sizeof(time_str) - 1);
     }
 
+    // The attribution field carries the Radxa's version after its own '|' (older Radxa software sends none).
+    char* pv = strchr(attr_buf, '|');
+    if (pv) {
+        snprintf(version_buf, sizeof(version_buf), "%s", pv + 1);
+        *pv = '\0';
+    }
+    if (version_buf[0] && strcmp(version_buf, KYPHONE_VERSION) != 0) {
+        Serial.printf(">> WARNING: the Radxa runs OS %s but this firmware is %s - flash and deploy them together\n",
+                      version_buf, KYPHONE_VERSION);
+    }
+
     display.setTextColor(BLACK);
 
-    // "OS 0.2" — bottom left, textSize 2 (18px design token)
-    display.setTextSize(2);
-    display.setCursor(10, 600 - 8 - 16);
-    display.print("OS 0.2");
+    // "OS <version>" — bottom left, textSize 2 (18px design token): the version the Radxa reports
+    if (version_buf[0]) {
+        char label[24];
+        snprintf(label, sizeof(label), "OS %s", version_buf);
+        display.setTextSize(2);
+        display.setCursor(10, 600 - 8 - 16);
+        display.print(label);
+    }
 
     // ASCII cat — bottom right, drawn as a fixed bitmap (see cat_bitmap above); unchanged since 0.1
     display.drawBitmap(600 - CAT_BITMAP_W - 6, 600 - CAT_BITMAP_H - 6, cat_bitmap, CAT_BITMAP_W, CAT_BITMAP_H, BLACK);
@@ -1212,6 +1228,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000); 
     Serial.println("\n--- KYPHONE SPI: V4 (NOISE CANCELLER) ---");
+    Serial.printf(">> KyPhone firmware %s\n", KYPHONE_VERSION);
 
     display.begin();
     display.einkOff();

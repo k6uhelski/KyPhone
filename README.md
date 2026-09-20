@@ -8,7 +8,9 @@ KyPhone is a minimal phone designed to revolt against the attention economy. It 
 
 ## **Current Status — September 2026**
 
-KyPhone runs **OS 0.2.1**: a Python state machine on the Radxa draws every screen on the Inkplate over SPI, and a pygame emulator runs the same screens on a Mac so the UI can be built and tested without hardware. The build is on the `os-0.2.1-build` branch until it is merged.
+**Current version: 0.3.0** (defined once, in `spi_bridge/version.py`; the lock screen shows it as "OS 0.3.0"). **Design library: 0.2.1** — the reader and music screens are newer than it and are not in it yet.
+
+A Python state machine on the Radxa draws every screen on the Inkplate over SPI, and a pygame emulator runs the same screens on a Mac so the UI can be built and tested without hardware. The work is on the `music-build` branch (which includes `os-0.2.1-build` and `reader-build`) until it is merged.
 
 ### **What works today**
 - **SPI transport:** Radxa → Inkplate over 3-wire software SPI plus a handshake pin, 256-byte frames. Every screen is one command of at most 253 characters.
@@ -50,13 +52,13 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_mach
   spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
   spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 621 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py   # expect 632 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
 ### **What's next**
 - Flash the firmware (icons and reader) and click through every screen on the real phone; time real page turns
-- Merge the OS 0.2.1 branch
+- Merge the branches and tag the release `v0.3.0`
 - SIM7600G-H cellular modem (direct AT commands), so a send can leave the phone
 - BlackBerry Q10 keyboard integration
 - Enclosure + battery design
@@ -83,7 +85,7 @@ An EPUB reader, built and tested on a computer (branch `reader-build`); not flas
 - `reader_layout.py` wraps text with the exact glyph widths the panel uses and paginates each chapter; a saved place survives a change of font size.
 - The Inkplate draws pages with the FreeSerif fonts from a new `ui_reader.h`; a page is several SPI frames and the panel refreshes only on the last.
 - The emulator draws the same glyph bitmaps, and the tests show the firmware, the layout module and the emulator agree pixel for pixel at all four sizes.
-- 368 new tests (621 in all, counting the reader and the music player); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
+- 379 new tests (632 in all, counting the reader and the music player); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
 
 ### **September 2026: OS 0.2.1**
 
@@ -95,7 +97,7 @@ Tested texting, creating a contact and deleting a contact in the emulator, took 
 - Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
 - The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
 - Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
-- There are now 621 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- There are now 632 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
 - Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**

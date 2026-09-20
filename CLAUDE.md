@@ -75,17 +75,29 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 *   Why does `SCLK` succeed at the IO_MUX level when Pin 15 fails, even though both are used by the E-ink controller? (Theory: SCLK is an output from the ESP32 to the display, leaving its input-sense matrix path open.)
 *   Does `display.einkOff()` fully release the SPI bus or just cut power to the panel?
 
-## 6. OS 0.2.1 — Application Layer
+## 6. Application Layer
 
 **The spec is `docs/02-design/design_handoff_os_0_2/`** — the design doc, `GEOMETRY.md`, the prototype (`KyPhone UI v4.dc.html`) and 600×600 captures. When the prose and the prototype disagree, the prototype wins (it has behaviours the README does not list). **The build log — status, decisions, deviations, rollbacks — is `planning/os-0.2.1-build-plan.md`.**
 
-### **Version history**
-*   `5a32d00` — labelled OS 0.0 (no git tag exists): the 3-screen app (`kyphone_app.py`, HOME / MSG_LIST / MSG_THREAD), no longer tracked.
-*   `039042d` — OS 0.1: 6-screen state machine (`kyphone_os.py`) and TDD suite.
-*   `b2a33cc` — OS 0.2: contacts, calls, trackpad navigation.
-*   OS 0.2.1 (branch `os-0.2.1-build`, until merged): windowed lists, message states and retry, formatted numbers, contact create/delete, stop alerts, icon home menu. Firmware and Radxa updated 2026-09-18 except the icons (built, not yet flashed — see the plan).
-*   **Reader** (branch `reader-build`, on top of `os-0.2.1-build`; built, tested and compile-checked, **not yet flashed or deployed**): READ opens a library of EPUBs from `data/books/`; a book is read a page at a time with four font sizes. See *Reader (books)* below and `planning/reader-build-plan.md`.
-*   **Music** (branch `music-build`, on top of `reader-build`; built, tested and compile-checked, **not yet flashed, deployed or heard on the headphone jack**): LISTEN plays music files from `data/music/` through GStreamer, in the background. See *Music (LISTEN)* below and `planning/music-build-plan.md`.
+### **Versioning**
+**Current version: 0.3.0**
+**Design library: 0.2.1** (`docs/02-design/design_handoff_os_0_2/`; recorded as `DESIGN` in `version.py` and checked against the handoff's own title)
+
+One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and shown everywhere from there:
+*   **MINOR** — a new feature you can see or use (a screen, an app) or a new design generation; **PATCH** — fixes and refinements; **MAJOR** — stays 0 until KyPhone is a daily-driver phone (cellular, battery, enclosure), which is 1.0.
+*   **Where it shows:** the lock screen (bottom left, "OS 0.3.0" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.0`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
+*   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
+*   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
+*   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
+*   **Releases** are tagged in git as `v0.3.0` when merged (not done yet). The names `os-0.2.1-build`, `reader-build` and `music-build` are historical branch names, and "OS 0.2" / "OS 0.2.1" in the design handoff name design generations, not software releases.
+
+| Version | What it is | Where |
+| :--- | :--- | :--- |
+| 0.0 | 3-screen app (HOME / MSG_LIST / MSG_THREAD, `kyphone_app.py`), no longer tracked | `5a32d00` |
+| 0.1 | 6-screen state machine (`kyphone_os.py`) and the TDD suite | `039042d` |
+| 0.2 | contacts, calls, trackpad navigation (the OS 0.2 design) | `b2a33cc` |
+| 0.2.1 | windowed lists, message states and retry, formatted numbers, contact create/delete, stop alerts, icon home menu (the OS 0.2.1 design) | branch `os-0.2.1-build`; flashed and deployed 2026-09-18 except the icons |
+| **0.3.0** | **the reader** (EPUBs), **the music player** (LISTEN), the home menu order text/call/book/music/address book, New Message number check, a contact saved from a conversation keeps its number, the Contacts `+` key, a call log, one version number | branch `music-build`; built and tested on a computer, **not yet flashed, deployed or heard** — see `planning/reader-build-plan.md` and `planning/music-build-plan.md` |
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
@@ -154,7 +166,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 
 | Screen | Command |
 | :--- | :--- |
-| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution` |
+| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.3.0`) is drawn as "OS 0.3.0" bottom left; a firmware that receives none draws no label |
 | Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
 | Texts | `TEXTS\|sel\|name·preview·unread·time\|…` — sel −1 back, −2 plus, else the row in the window; ≤5 rows; preview starts `You: ` or `! ` (unsent); no rows = empty state |
 | Contacts | `CONTACTSPICK\|sel\|query\|3 / 14\|name·number\|…` — ≤7 rows; no rows = NO MATCH (query set) or NO CONTACTS |
@@ -174,24 +186,25 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 | Call screens | `DIAL\|…`, `CALLSTATE\|OUT/IN/ACTIVE\|name\|mm:ss` (unchanged) |
 
 ### **Inkplate firmware**
-*   **`ui_screens.h`** draws every OS 0.2.1 screen with the Adafruit GFX built-in font, ported from `simulator.py`. It depends only on `display.setCursor / setTextSize / setTextColor / print / fillRect / drawRect / drawBitmap`, so the same code also builds on a computer (below). **`ui_icons.h`** holds the home-menu bitmaps and is **generated** — edit `tools/make_icons.py`, never the header.
+*   **`ui_screens.h`** draws every screen from the OS 0.2.1 design onward with the Adafruit GFX built-in font, ported from `simulator.py`. It depends only on `display.setCursor / setTextSize / setTextColor / print / fillRect / drawRect / drawBitmap`, so the same code also builds on a computer (below). **`ui_icons.h`** holds the home-menu bitmaps and is **generated** — edit `tools/make_icons.py`, never the header.
 *   `Inkplate_SPI_Peripheral.ino` keeps the V4 transport, the lock screen (with its fixed cat bitmap), dial, call state and the OS 0.0 screens. Command handling is `handle_command()`, shared by the SPI link and a **USB preview**: a line `@<command>` on the USB serial port draws that screen as if the Radxa had sent it (`tools/preview_screens.py`), so screens can be checked on the panel without the Radxa.
 *   **GFX geometry:** a size-N glyph is a 5×7 shape in a 6×8 cell scaled by N, so its baseline sits `7*N` below the cursor. `ui_text()` draws at a baseline, which is how the designer's measured baselines are used directly. Bold is printing twice, one pixel apart. The design's 18 px text is textSize 2 (16 px) on the device.
 *   **`ui_reader.h`** draws book pages with the four FreeSerif fonts (vendored into `Inkplate_SPI_Peripheral/fonts/`, one include line removed — see `assets/freeserif-NOTICE.txt`). `handle_command()` routes `RTEXT`/`RFOOT` **before** its clear-and-refresh path. A GFX custom font's cursor y is the baseline; row *r* sits on `24 + r*yAdvance + (3*yAdvance)/4`, the same integer rule as `reader_layout.baseline()`. It turns text wrap off while drawing and restores the built-in font afterwards.
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Ten suites, 621 tests (`test_state_machine.py` 238, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 66, `test_firmware_host.py` 47):
+Eleven suites, 632 tests (`test_state_machine.py` 240, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 67, `test_firmware_host.py` 47, `test_version.py` 8):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
 *   **`test_music_library.py`** (every tag format from synthetic files built by `audio_fixtures.py`, damaged and random files never raise, naming fallbacks, albums, the cache, a 5,000-track scan), **`test_music_player.py`** (every Session rule against a fake player, `SimPlayer` in simulated time, threads, the phone player's configuration), **`test_music_state.py`** (the real `handle_key` against a temp music folder with tiny WAVs and a hand-advanced clock: browsing, playing, every key, background playback, the ticker, saved volume and resume, bad files, no sound system).
+*   **`test_version.py`** — the one version number: the generated firmware header is current, the docs and the design handoff agree with `version.py`, the OS banner and `LOCK` command use the constant, no drawing code has a version typed in, and the firmware logs its version and warns on a mismatch.
 *   **`test_firmware_host.py`** — builds `ui_screens.h` for the computer with `tests/firmware_host/` (a fake display using the real GFX font) and checks exact geometry, that firmware and emulator agree on every rule and inverted row, and memory safety (thousands of malformed and maximum-length commands under the address and undefined-behaviour sanitizers). Needs `clang++` and Adafruit_GFX's `glcdfont.c`; skips otherwise.
 
 ```
-KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
+KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py
 ```
-Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `621 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `632 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 
@@ -224,7 +237,7 @@ Renders every screen in a 600×600 pygame window with full keyboard navigation. 
 *   `spi_bridge/music_library.py`, `music_player.py` — the music library scan / tag readers and the playback session and players.
 
 *   `spi_bridge/tools/` — `make_icons.py`, `make_reader_fonts.py`, `preview_screens.py`. `spi_bridge/assets/` — the icon and font licence notices.
-*   `spi_bridge/tests/` — the ten test files above, `epub_fixtures.py`, `audio_fixtures.py`, `firmware_host/` (fake display with GFX custom-font printing, `render_host.cpp`, `render_reader.cpp`, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
+*   `spi_bridge/tests/` — the eleven test files above, `epub_fixtures.py`, `audio_fixtures.py`, `firmware_host/` (fake display with GFX custom-font printing, `render_host.cpp`, `render_reader.cpp`, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
 *   `docs/02-design/design_handoff_os_0_2/` — the design spec, geometry table, prototypes and captures.
 *   `planning/os-0.2.1-build-plan.md` — build status, wire changes, decisions, rollbacks. `planning/kyphone_backlog.md`, `kyphone_milestones.md` — longer-range plans.
 *   `flash_macmini.sh` (untracked, machine-specific), `serial_log_macmini.py`.

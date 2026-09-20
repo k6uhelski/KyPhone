@@ -79,6 +79,22 @@ def reset_state(**overrides):
 # Lock Screen
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class TestLockScreenVersion(unittest.TestCase):
+    def test_the_lock_command_carries_the_version_and_fits_with_every_quote(self):
+        import version
+        for i in range(len(kyphone_os.QUOTES)):
+            reset_state(screen='lock', quote_index=i)
+            with patch.object(kyphone_os, 'push_screen') as ps:
+                kyphone_os.push_lock()
+            wire = _wire(ps)
+            self.assertTrue(wire.endswith('|- THICH NHAT HANH|' + version.VERSION), wire[-40:])
+            self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS, i)
+
+    def test_the_os_uses_the_one_version(self):
+        import version
+        self.assertEqual(kyphone_os.VERSION, version.VERSION)
+
+
 class TestLockScreen(unittest.TestCase):
     def setUp(self):
         reset_state(screen='lock')
@@ -1948,8 +1964,8 @@ class TestDataDirOverride(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
-            for src in ([os.path.join(here, 'kyphone_os.py')] + glob.glob(os.path.join(here, 'reader_*.py'))
-                        + glob.glob(os.path.join(here, 'music_*.py'))):
+            for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py')]
+                        + glob.glob(os.path.join(here, 'reader_*.py')) + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
                 data_dir, contacts, messages = self.run_import(unset, module_dir=os.path.join(tmp, 'spi_bridge'))

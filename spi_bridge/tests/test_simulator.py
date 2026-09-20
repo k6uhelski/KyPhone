@@ -607,6 +607,20 @@ class MusicPixels(unittest.TestCase):
     def test_times_are_shown_as_minutes_and_seconds(self):
         self.assertEqual([self.sim._clock(x) for x in (0, -5, 5, 65, 621, 3599, 3723)], ['--:--', '--:--', '0:05', '1:05', '10:21', '59:59', '1:02:03'])
 
+    # ── the lock screen version label ────────────────────────────────────────
+    def test_the_lock_screen_shows_the_version_it_is_sent_bottom_left_and_none_when_not_sent(self):
+        def marks(x0, y0, x1, y1):                        # anti-aliased text: count every non-white pixel
+            return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) != WHITE)
+        self.draw('LOCK|12:00 PM|SATURDAY, SEPTEMBER 19|Smile.|- THICH NHAT HANH|0.3.0')
+        with_version = marks(8, 574, 130, 596)
+        self.draw('LOCK|12:00 PM|SATURDAY, SEPTEMBER 19|Smile.|- THICH NHAT HANH|9.9.9')
+        other = marks(8, 574, 130, 596)
+        self.draw('LOCK|12:00 PM|SATURDAY, SEPTEMBER 19|Smile.|- THICH NHAT HANH')
+        without = marks(8, 574, 130, 596)
+        self.assertGreater(with_version, 40)
+        self.assertEqual(without, 0)                                                        # an old Radxa sends none: no label
+        self.assertNotEqual(with_version, other)                                            # it draws what it is told
+
     # ── the home menu mark ───────────────────────────────────────────────────
     def test_the_playing_mark_stands_beside_the_music_icon_and_only_when_playing(self):
         self.draw('HOME2|12:44 PM|3|0|I|1')                                                 # LISTEN selected: white on black

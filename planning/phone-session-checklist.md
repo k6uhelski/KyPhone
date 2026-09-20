@@ -29,7 +29,7 @@ KYPHONE_DATA_DIR=$(mktemp -d) ~/.venvs/kyphone/bin/python -m pytest -q -p no:cac
   spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
   spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py      # expect: 621 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py      # expect: 632 passed
 ```
 
 ## 1. Back up both devices (about 8 minutes)
@@ -63,7 +63,7 @@ at 115200 baud, waits 10 seconds and restarts the logger. It ends with `==> Done
 **You should see:** the panel reboots and shows what it showed before. If you press a key, the home menu now has
 **pixel-art icons** in the new order (text, call, book, music, address book), though Enter still follows the old order
 until step 4 (see above).
-`tail -20 /tmp/inkplate_serial.log` shows the boot lines and the commands it receives.
+`tail -20 /tmp/inkplate_serial.log` shows the boot lines (including `>> KyPhone firmware 0.3.0`) and the commands it receives.
 
 *Stop here if anything looks wrong* — see "If something goes wrong" below. Nothing on the Radxa has changed yet.
 
@@ -98,7 +98,7 @@ scp /tmp/tone.wav radxa:kyphone/data/music/Test/Tones/01_A440.wav
 # scp -r ~/Music/SomeAlbum radxa:~/kyphone/data/music/
 ssh radxa 'sudo systemctl restart kyphone; sleep 3; systemctl is-active kyphone; journalctl -u kyphone -n 15 --no-pager | tail -15'
 ```
-**You should see:** `active`, and no `Traceback` in the log. (Also start the Mac's logger again if you stopped it in step 3.)
+**You should see:** `active`, and no `Traceback` in the log. **Wake the phone: the lock screen's bottom-left label now reads `OS 0.3.0`** (before this step there was no label: the new firmware draws none until the Radxa sends its version). If the Mac's serial log prints `WARNING: the Radxa runs OS ... but this firmware is ...`, one side is old: flash or deploy again. (Also start the Mac's logger again if you stopped it in step 3.)
 
 ## 5. Click through it at the phone (20 minutes)
 With the Bluetooth keyboard connected. Tick these off; note anything odd.
