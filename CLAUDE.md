@@ -108,7 +108,7 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | thread | typing edits the draft; Enter sends (empty → alert). ↑ from the composer selects the newest **NOT SENT** bubble (else the header); Enter on it **retries**; ↑ again → header; ↓ → composer. Header ←→ back/info; info → contact page. Esc → texts_list |
 | compose | Tab toggles TO/MESSAGE. ↑ walks SEND → MESSAGE → TO → the X in the header; ↓ MESSAGE → SEND. Enter: TO empty → contact picker, TO set → MESSAGE, MESSAGE or SEND → send (alerts, in this order: no recipient; a number that cannot be texted — needs ten digits, or eleven starting with 1 — which puts the cursor back on TO with everything kept; empty message). `+` beside an empty TO opens the picker. Esc with a draft → discard confirm. TO holds 20 chars; the message is uncapped |
 | confirm | ← destructive button, → safe button; **opens on the safe one**; Esc is the safe choice; Enter acts on the selection |
-| contacts_pick | typing filters by name prefix (LOOK UP); ↑↓; header back/plus; `+` → new contact; Enter → contact page (from home) or picks into compose |
+| contacts_pick | typing filters by name prefix (LOOK UP); ↑↓; header back/plus; **the `+` key opens a new contact when the search box is empty** (with letters typed, `+` is just a character); an empty list (no contacts, nothing typed) opens with `+` selected, so ←→ and Enter work at once; Enter → contact page (from home) or picks into compose |
 | contact | top row `[back, edit]`, action row `[call, text]` (saved) · `[add number]` (saved, no number) · `[call, text, save]` (not in contacts, no EDIT). SAVE opens the form with the number filled in |
 | contact_edit | ↑↓ through first / last / number / SAVE; ← from SAVE reaches **DELETE** (existing contacts only). Four validation alerts (first name, number, dialable, duplicate) return to the offending field. First is required, last optional. **A form opened from a conversation's `i` page (a valid number) has its phone number locked**: it is pre-filled, the arrows step over it, and typing cannot change it, so the name always attaches to that conversation; a number that cannot be dialed (an old bad conversation) stays editable. X/Esc return to where the form was opened; a save from the compose picker returns to compose with the contact in TO |
 | library | ↑↓ through the books (↑ past the first → header; Enter there → home); Enter opens a book (a file that cannot be read says why on a stop alert); Esc → home |
@@ -117,7 +117,7 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 | tracks | one album's tracks. ↑↓; header back (Enter/Esc → the album list); Enter plays the album **from that track** and shows now-playing (choosing the track already playing just shows it) |
 | nowplaying | Space/Enter play-pause · → next · ← previous (restarts the track if more than 3 s in) · ↑/↓ and `+`/`-` volume ±5 · `.` / `,` seek ±15 s · Esc/`q` back (music keeps playing). A key that changes nothing (next at the last track, volume at the limit) redraws, so it is visibly answered |
 | stub | Enter/Esc → the screen it came from, state intact |
-| calls_list / dial / outgoing / incoming / in_call | unchanged in 0.2.1 and **simulated** — there is no telephony until the cellular modem exists |
+| calls_list / dial / outgoing / incoming / in_call | **simulated** — there is no telephony until the cellular modem exists. **Calls are logged when they end** (`data/calls.json`, newest 50, newest first): an answered outgoing call is OUT with its length (m:ss), one cancelled before it connects is OUT with none, an answered incoming call is IN, an incoming call nobody answers is MISS. Enter on a log row redials it. The time column reads like messages (clock time, Yesterday, a weekday, a date) |
 
 `Q`/`W`/`A`/`S`/`D` act as Esc and the arrows on screens where letters are not being typed.
 
@@ -181,7 +181,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Ten suites, 601 tests (`test_state_machine.py` 218, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 66, `test_firmware_host.py` 47):
+Ten suites, 621 tests (`test_state_machine.py` 238, `test_reader_state.py` 44, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 66, `test_firmware_host.py` 47):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
@@ -191,7 +191,7 @@ Ten suites, 601 tests (`test_state_machine.py` 218, `test_reader_state.py` 44, `
 ```
 KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py
 ```
-Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `601 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `621 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 
@@ -211,7 +211,7 @@ Renders every screen in a 600×600 pygame window with full keyboard navigation. 
 *   **Always back up both first.** Inkplate: `esptool read_flash 0 0x400000 <file>` gives an exact 4 MB rollback (about 6 minutes at 115200). Radxa: copy `spi_bridge/`, `data/` and the unit file. Python and firmware must ship **together** when a wire format changes.
 
 ### **Security / privacy constraints**
-*   Phone numbers live only on the Radxa in gitignored `data/contacts.json` and `data/messages.json` — never committed. Tests and screenshots use fictional `(555) 01x-xxxx` numbers.
+*   Phone numbers live only on the Radxa in gitignored `data/contacts.json`, `data/messages.json` and `data/calls.json` (the call log) — never committed. Tests and screenshots use fictional `(555) 01x-xxxx` numbers.
 *   **Twilio is switched off** on the Radxa: `TWILIO_SID` and `TWILIO_TOKEN` are commented out in `kyphone.service` and `start_kyphone.sh` (backups `*.bak-2026-09-18`). `TWILIO_NUMBER` must stay set — the module exits without it. Credentials never belong in git or in this file; rotate any that have appeared in a transcript.
 *   `kyphone_app.py` (OS 0.0, demo mode) is untracked and gitignored, and the OS 0.2 code has no demo mode.
 

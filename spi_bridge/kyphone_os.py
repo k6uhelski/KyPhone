@@ -67,6 +67,7 @@ TEXTS_ROWS    = 5
 CONTACTS_ROWS = 7
 CALLS_ROWS    = 6
 LIBRARY_ROWS  = 5
+CALL_LOG_MAX  = 50                                            # how many finished calls the log keeps
 LIST_NAME_MAX    = 14   # texts + calls name column
 CONTACT_NAME_MAX = 18   # contacts list name column
 PREVIEW_MAX      = 24   # texts list preview line
@@ -203,6 +204,7 @@ def contact_index_for(number):
 
 # --- Persistence Paths ---
 MESSAGES_FILE = os.path.join(DATA_DIR, 'messages.json')     # DATA_DIR is defined with the contacts path above
+CALLS_FILE    = os.path.join(DATA_DIR, 'calls.json')        # the call log
 
 # --- Reader (books) ---
 BOOKS_DIR         = os.path.join(DATA_DIR, 'books')          # drop .epub files here
@@ -319,7 +321,8 @@ state = {
     'edit_number_locked': False,    # the phone field is fixed (a contact made for an existing conversation's number)
     'edit_index':  0,               # -1=cancel | 0=first | 1=last | 2=number | 3=save
 
-    'calls':            [],         # [{name, tag, time, duration}] session call log
+    'calls':            [],         # [{name, tag OUT/IN/MISS, ts, duration}] the call log, newest first (calls.json)
+    'call_dir':         'OUT',      # 'OUT' | 'IN': which way the call in progress is going
     'calls_index':      0,          # -1=header | 0=DIAL A NUMBER | 1..=calls[i-1]
     'calls_start':      0,          # first entry in the 6-row window
     'dial_buffer':      '',
@@ -854,11 +857,18 @@ def _filtered_contacts():
     return [c for c in CONTACTS if dispname(c).lower().startswith(query)]
 
 
-def push_contacts():
+def _settle_contacts_selection():
+    """With no contacts at all (and nothing typed) there is no row to select, so the selection lives in the header on
+    `+`: PRESS + TO SAVE THE FIRST ONE. Returns (index, header_sel, query)."""
     with state['lock']:
-        idx   = state['contacts_index']
-        hdr   = state['contacts_header_sel']
-        query = state['contacts_query']
+        if not CONTACTS and not state['contacts_query'] and state['contacts_index'] >= 0:
+            state['contacts_index']      = -1
+            state['contacts_header_sel'] = 'plus'
+        return state['contacts_index'], state['contacts_header_sel'], state['contacts_query']
+
+
+def push_contacts():
+    idx, hdr, query = _settle_contacts_selection()
     filtered = _filtered_contacts()
     with state['lock']:
         start = window_start(state['contacts_start'], max(0, idx), CONTACTS_ROWS, len(filtered))
@@ -946,7 +956,7 @@ def push_calls():
         calls = list(state['calls'])
     # DIAL A NUMBER is the first entry of the list, so it scrolls like any row.
     entries = [('DIAL A NUMBER', 'NEW', '', '')] + [
-        (c['name'][:LIST_NAME_MAX], c['tag'], c['time'], c['duration']) for c in calls]
+        (c['name'][:LIST_NAME_MAX], c['tag'], _call_time(c), c['duration']) for c in calls]
     with state['lock']:
         start = window_start(state['calls_start'], max(0, idx), CALLS_ROWS, len(entries))
         state['calls_start'] = start
@@ -1590,9 +1600,8 @@ def _leave_contacts():
 
 
 def _from_contacts_pick(keycode):
+    idx, hdr, query = _settle_contacts_selection()
     with state['lock']:
-        idx   = state['contacts_index']
-        hdr   = state['contacts_header_sel']
         ret   = state['contacts_return']
     filtered  = _filtered_contacts()
     on_header = idx == -1
@@ -1637,6 +1646,8 @@ def _from_contacts_pick(keycode):
             state['contacts_query'] = state['contacts_query'][:-1]
             state['contacts_index'] = 0
         push_contacts()
+    elif keycode == 'CHAR:+' and not query:                # the + key, with nothing typed in the search: a new contact
+        _open_new_contact('', 'compose' if ret == 'compose' else 'contacts_pick')
     elif keycode.startswith('CHAR:'):
         with state['lock']:
             state['contacts_query'] += keycode[5:]
@@ -1961,35 +1972,99 @@ def _from_dial(keycode):
 
 
 def _from_outgoing(keycode):
-    if keycode == 'KEY_ESC':
+    if keycode == 'KEY_ESC':                               # cancelled before anyone answered
+        _log_call('OUT')
         with state['lock']:
             state['screen'] = 'calls_list'
         push_calls()
     elif keycode == 'KEY_ENTER':
         with state['lock']:
             state['screen']          = 'in_call'
+            state['call_dir']        = 'OUT'
             state['call_started_at'] = time.time()
         push_call_screen()
 
 
 def _from_incoming(keycode):
-    if keycode == 'KEY_ESC':
+    if keycode == 'KEY_ESC':                               # not answered: a missed call
+        _log_call('MISS')
         with state['lock']:
             state['screen'] = 'home'
         push_home2()
     elif keycode == 'KEY_ENTER':
         with state['lock']:
             state['screen']          = 'in_call'
+            state['call_dir']        = 'IN'
             state['call_started_at'] = time.time()
         push_call_screen()
 
 
 def _from_in_call(keycode):
-    if keycode == 'KEY_ESC':
+    if keycode == 'KEY_ESC':                               # hung up: log it with how long it lasted
+        with state['lock']:
+            tag, started = state['call_dir'], state['call_started_at']
+        _log_call(tag, (time.time() - started) if started else 0)
         with state['lock']:
             state['screen']          = 'calls_list'
             state['call_started_at'] = None
         push_calls()
+
+
+def _duration_text(seconds):
+    """m:ss, or h:mm:ss for an hour or more."""
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _call_time(entry):
+    """When a logged call happened, as the list shows it (clock time today, then Yesterday, a weekday, a date)."""
+    return format_msg_time(entry.get('ts')) or entry.get('time', '')
+
+
+def _log_call(tag, seconds=None):
+    """Add a call to the log, newest first. tag: OUT (dialed), IN (answered), MISS (an incoming call nobody answered).
+    `seconds` is how long it lasted; None = it never connected."""
+    with state['lock']:
+        raw = str(state['call_name'])
+    if re.fullmatch(r'[0-9()+\-. #*]{7,}', raw) and digits(raw):    # dialed digits: show the contact, or the number formatted
+        raw = format_name(raw)
+    entry = {'name': sanitize(raw)[:30], 'tag': tag, 'ts': datetime.now().isoformat(),
+             'duration': _duration_text(seconds) if seconds is not None else ''}
+    with state['lock']:
+        state['calls'].insert(0, entry)
+        del state['calls'][CALL_LOG_MAX:]
+    _save_calls()
+
+
+def _save_calls():
+    with state['lock']:
+        data = list(state['calls'])
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = CALLS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp, CALLS_FILE)
+    except OSError as e:
+        print(f"Warning: could not save the call log: {e}")
+
+
+def load_calls():
+    """Read the call log back; anything that is not a well-formed entry is dropped."""
+    try:
+        with open(CALLS_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = []
+    good = []
+    for c in data if isinstance(data, list) else []:
+        if (isinstance(c, dict) and isinstance(c.get('name'), str) and c.get('tag') in ('OUT', 'IN', 'MISS')
+                and isinstance(c.get('duration', ''), str) and isinstance(c.get('ts', ''), str)):
+            good.append({'name': c['name'], 'tag': c['tag'], 'ts': c.get('ts', ''), 'duration': c.get('duration', '')})
+    with state['lock']:
+        state['calls'] = good[:CALL_LOG_MAX]
 
 
 # ─── Persistence ──────────────────────────────────────────────────────────────
@@ -2794,6 +2869,7 @@ def sms_loop():
 
 def main():
     load_messages()
+    load_calls()
 
     # Backfill recent messages from Twilio on first run
     if not SIM_MODE and state['last_sid'] is None and client is not None:

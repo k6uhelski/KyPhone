@@ -8,6 +8,8 @@ Runs without hardware (SPI/GPIO) or a display. All SPI sends are mocked.
 
 import os
 import sys
+import json
+import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
@@ -771,9 +773,9 @@ class TestContactsWindow(ListWindowBase):
             self._key(f'CHAR:{ch}')
         self.assertEqual(self._push(), 'CONTACTSPICK|0|zzz|')
 
-    def test_no_contacts_sends_no_rows(self):
+    def test_no_contacts_sends_no_rows_and_selects_plus(self):
         kyphone_os.CONTACTS[:] = []
-        self.assertEqual(self._push(), 'CONTACTSPICK|0||')
+        self.assertEqual(self._push(), 'CONTACTSPICK|-2||')
 
     def test_worst_case_rows_still_fit_the_frame_whole(self):
         kyphone_os.CONTACTS[:] = [{'first': 'B' * 18, 'last': '', 'number': '(555) 019-9002'} for _ in range(14)]
@@ -1833,7 +1835,12 @@ class TestHomeMenuOrder(unittest.TestCase):
                 self.enter_row(self.ROW('LISTEN'));  self.assertEqual(kyphone_os.state['screen'], 'music')
 
     def test_contacts_opens_a_fresh_list_returning_to_home(self):
-        self.enter_row(self.ROW('CONTACTS'), contacts_query='old', contacts_index=5, contacts_start=3)
+        saved = list(kyphone_os.CONTACTS)
+        kyphone_os.CONTACTS[:] = _contacts(3)                                # with contacts, the list opens on the first row
+        try:
+            self.enter_row(self.ROW('CONTACTS'), contacts_query='old', contacts_index=5, contacts_start=3)
+        finally:
+            kyphone_os.CONTACTS[:] = saved
         self.assertEqual((kyphone_os.state['contacts_query'], kyphone_os.state['contacts_index'],
                           kyphone_os.state['contacts_start'], kyphone_os.state['contacts_return']), ('', 0, 0, 'home'))
 
@@ -2123,6 +2130,248 @@ class TestContactNumberLockedToTheConversation(unittest.TestCase):
         reset_state(screen='contact', contact_idx=0, contact_number='', contact_sel='edit', contact_return='contacts_pick')
         kyphone_os.handle_key('KEY_ENTER')
         self.assertFalse(kyphone_os.state['edit_number_locked'])
+
+
+class TestContactsPlusKey(unittest.TestCase):
+    """The + key opens a new contact when nothing is typed in the search; an empty list opens with + selected."""
+
+    def setUp(self):
+        self._saved = list(kyphone_os.CONTACTS)
+        self.addCleanup(lambda: kyphone_os.CONTACTS.__setitem__(slice(None), self._saved))
+        kyphone_os.CONTACTS[:] = []
+        self._save = patch.object(kyphone_os, '_save_contacts')
+        self._save.start()
+        self.addCleanup(self._save.stop)
+        self._ps = patch.object(kyphone_os, 'push_screen')
+        self.ps = self._ps.start()
+        self.addCleanup(self._ps.stop)
+
+    def open_list(self, **kw):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('CONTACTS'), **kw)
+        kyphone_os.handle_key('KEY_ENTER')
+
+    def press(self, *keys):
+        for k in keys:
+            kyphone_os.handle_key(k)
+
+    def test_the_plus_key_with_an_empty_search_opens_a_blank_form(self):
+        kyphone_os.CONTACTS[:] = _contacts(3)
+        self.open_list()
+        self.press('CHAR:+')
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertEqual((kyphone_os.state['edit_first'], kyphone_os.state['edit_number'], kyphone_os.state['edit_number_locked']), ('', '', False))
+        self.assertEqual(kyphone_os.state['edit_return'], 'contacts_pick')
+
+    def test_from_the_compose_picker_the_form_returns_to_compose(self):
+        kyphone_os.CONTACTS[:] = _contacts(3)
+        reset_state(screen='contacts_pick', contacts_return='compose', contacts_query='', contacts_index=0)
+        self.press('CHAR:+')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['edit_return']), ('contact_edit', 'compose'))
+
+    def test_a_plus_typed_after_other_letters_is_part_of_the_search(self):
+        kyphone_os.CONTACTS[:] = _contacts(3)
+        self.open_list()
+        self.press('CHAR:N', 'CHAR:+')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['contacts_query']), ('contacts_pick', 'N+'))
+
+    def test_an_empty_list_opens_with_plus_selected_and_the_arrows_work_at_once(self):
+        self.open_list()
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|-2||')
+        self.press('KEY_LEFT')
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|-1||')
+        self.press('KEY_RIGHT')
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|-2||')
+        self.press('KEY_DOWN', 'KEY_UP')
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|-2||')                 # nowhere to go
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+
+    def test_typing_in_an_empty_list_searches_and_clearing_it_brings_plus_back(self):
+        self.open_list()
+        self.press('CHAR:a')
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|0|a|')
+        self.press('KEY_BACKSPACE')
+        self.assertEqual(_wire(self.ps), 'CONTACTSPICK|-2||')
+
+    def test_a_list_with_contacts_still_opens_on_the_first_row(self):
+        kyphone_os.CONTACTS[:] = _contacts(3)
+        self.open_list()
+        self.assertTrue(_wire(self.ps).startswith('CONTACTSPICK|0||'))
+
+    def test_the_whole_add_flow_from_the_plus_key_saves_the_contact(self):
+        self.open_list()
+        self.press('CHAR:+')
+        self.press(*['CHAR:' + c for c in 'Sam'])
+        self.press('KEY_DOWN', 'KEY_DOWN')
+        self.press(*['CHAR:' + c for c in '5550100123'])
+        self.press('KEY_DOWN', 'KEY_ENTER')
+        self.assertEqual([(c['first'], c['number']) for c in kyphone_os.CONTACTS], [('Sam', '(555) 010-0123')])
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+
+
+class TestCallLog(unittest.TestCase):
+    """Calls are recorded when they end, newest first, and kept across restarts."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.file = os.path.join(self._tmp.name, 'calls.json')
+        self.clock = [5000.0]
+        self._saved = list(kyphone_os.CONTACTS)
+        self.addCleanup(lambda: kyphone_os.CONTACTS.__setitem__(slice(None), self._saved))
+        kyphone_os.CONTACTS[:] = []
+        for name, value in (('CALLS_FILE', self.file), ('DATA_DIR', self._tmp.name)):
+            p = patch.object(kyphone_os, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.object(kyphone_os.time, 'time', lambda: self.clock[0])
+        p.start()
+        self.addCleanup(p.stop)
+        self._ps = patch.object(kyphone_os, 'push_screen')
+        self.ps = self._ps.start()
+        self.addCleanup(self._ps.stop)
+        reset_state(screen='calls_list', calls=[], calls_index=0, calls_start=0, call_name='', call_started_at=None)
+
+    def press(self, *keys):
+        for k in keys:
+            kyphone_os.handle_key(k)
+
+    def dial(self, digits):
+        reset_state(screen='dial', dial_buffer='', dial_quick_index=-1, calls=kyphone_os.state['calls'])
+        self.press(*['CHAR:' + c for c in digits])
+        self.press('KEY_ENTER')                                       # ring
+        self.assertEqual(kyphone_os.state['screen'], 'outgoing')
+
+    def log(self):
+        return kyphone_os.state['calls']
+
+    def test_an_answered_outgoing_call_is_logged_with_its_length(self):
+        self.dial('5551234567')
+        self.press('KEY_ENTER')                                       # answered
+        self.clock[0] += 75
+        self.press('KEY_ESC')                                         # hung up
+        self.assertEqual(kyphone_os.state['screen'], 'calls_list')
+        e = self.log()[0]
+        self.assertEqual((e['name'], e['tag'], e['duration']), ('(555) 123-4567', 'OUT', '1:15'))
+
+    def test_a_call_cancelled_before_it_connects_is_logged_with_no_length(self):
+        self.dial('5551234567')
+        self.press('KEY_ESC')
+        e = self.log()[0]
+        self.assertEqual((e['tag'], e['duration']), ('OUT', ''))
+
+    def test_an_answered_incoming_call_is_IN_and_an_unanswered_one_is_MISS(self):
+        kyphone_os.CONTACTS[:] = [{'first': 'Ann', 'last': 'Lee', 'number': '(555) 010-0001'}]
+        reset_state(screen='home', calls=[])
+        self.press('CHAR:i', 'KEY_ENTER')
+        self.clock[0] += 200
+        self.press('KEY_ESC')
+        reset_state(screen='home', calls=self.log())
+        self.press('CHAR:i', 'KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+        newest, older = self.log()[0], self.log()[1]
+        self.assertEqual((newest['name'], newest['tag'], newest['duration']), ('Ann Lee', 'MISS', ''))
+        self.assertEqual((older['tag'], older['duration']), ('IN', '3:20'))
+
+    def test_the_log_is_newest_first_and_shows_in_the_call_list_under_dial_a_number(self):
+        for number in ('5550100001', '5550100002'):
+            self.dial(number)
+            self.press('KEY_ENTER')
+            self.clock[0] += 5
+            self.press('KEY_ESC')
+        self.assertEqual([e['name'] for e in self.log()], ['(555) 010-0002', '(555) 010-0001'])
+        kyphone_os.push_calls()
+        rows = _wire(self.ps).split('|')[2:]
+        self.assertEqual(rows[0].split(CELL)[0], 'DIAL A NUMBER')
+        first = rows[1].split(CELL)
+        self.assertEqual((first[0], first[1], first[3]), ('(555) 010-0002', 'OUT', '0:05'))
+        self.assertRegex(first[2], r'^\d{1,2}:\d{2} [AP]M$')                # today: a clock time
+
+    def test_a_dialed_number_that_is_a_contact_is_logged_by_name_and_a_quick_dial_too(self):
+        kyphone_os.CONTACTS[:] = [{'first': 'Ann', 'last': '', 'number': '(555) 010-0001'}]
+        self.dial('5550100001')
+        self.press('KEY_ESC')
+        self.assertEqual(self.log()[0]['name'], 'Ann')
+        reset_state(screen='dial', dial_buffer='', dial_quick_index=-1, calls=self.log())
+        self.press('KEY_DOWN', 'KEY_ENTER', 'KEY_ESC')                # the first quick-dial contact
+        self.assertEqual(self.log()[0]['name'], 'Ann')
+
+    def test_redialing_from_the_log_calls_again_and_logs_again(self):
+        self.dial('5551234567')
+        self.press('KEY_ESC')
+        reset_state(screen='calls_list', calls=self.log(), calls_index=1)   # the first log row
+        self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['call_name']), ('outgoing', '(555) 123-4567'))
+        self.press('KEY_ENTER')
+        self.clock[0] += 9
+        self.press('KEY_ESC')
+        self.assertEqual([(e['name'], e['duration']) for e in self.log()], [('(555) 123-4567', '0:09'), ('(555) 123-4567', '')])
+
+    def test_the_log_keeps_the_newest_fifty(self):
+        for i in range(kyphone_os.CALL_LOG_MAX + 5):
+            kyphone_os.state['call_name'] = 'Caller %d' % i
+            kyphone_os._log_call('IN', 3)
+        self.assertEqual(len(self.log()), kyphone_os.CALL_LOG_MAX)
+        self.assertEqual((self.log()[0]['name'], self.log()[-1]['name']), ('Caller 54', 'Caller 5'))
+
+    def test_a_long_log_is_windowed_and_the_frame_fits(self):
+        for i in range(10):
+            kyphone_os.state['call_name'] = 'A very long caller name %d' % i
+            kyphone_os._log_call('OUT', 3599 + i)
+        reset_state(screen='calls_list', calls=self.log(), calls_index=0, calls_start=0)
+        kyphone_os.push_calls()
+        wire = _wire(self.ps)
+        self.assertEqual(len(wire.split('|')[2:]), kyphone_os.CALLS_ROWS)
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(kyphone_os._duration_text(3600), '1:00:00')
+        self.assertEqual([kyphone_os._duration_text(x) for x in (0, 9, 75, 3599, 3723)], ['0:00', '0:09', '1:15', '59:59', '1:02:03'])
+
+    def test_the_log_is_saved_and_comes_back_after_a_restart(self):
+        self.dial('5551234567')
+        self.press('KEY_ENTER')
+        self.clock[0] += 30
+        self.press('KEY_ESC')
+        with open(self.file) as f:
+            saved = json.load(f)
+        self.assertEqual((saved[0]['name'], saved[0]['tag'], saved[0]['duration']), ('(555) 123-4567', 'OUT', '0:30'))
+        kyphone_os.state['calls'] = []                                 # as after a restart
+        kyphone_os.load_calls()
+        self.assertEqual([(e['name'], e['tag'], e['duration']) for e in self.log()], [('(555) 123-4567', 'OUT', '0:30')])
+
+    def test_a_damaged_log_file_or_odd_entries_are_ignored(self):
+        for content in ('{{{ not json', '"a string"', '{"a": 1}', '[1, "x", null, {"name": 5}, {"name": "x", "tag": "WHAT"}]'):
+            with open(self.file, 'w') as f:
+                f.write(content)
+            kyphone_os.state['calls'] = [{'name': 'stale', 'tag': 'IN', 'ts': '', 'duration': ''}]
+            kyphone_os.load_calls()
+            self.assertEqual(self.log(), [], content)
+        with open(self.file, 'w') as f:
+            json.dump([{'name': 'ok', 'tag': 'MISS', 'ts': '', 'duration': ''}, {'name': 'bad', 'tag': 'X'}], f)
+        kyphone_os.load_calls()
+        self.assertEqual([e['name'] for e in self.log()], ['ok'])
+
+    def test_a_missing_log_file_is_an_empty_log(self):
+        kyphone_os.state['calls'] = [{'name': 'x', 'tag': 'IN', 'ts': '', 'duration': ''}]
+        kyphone_os.load_calls()
+        self.assertEqual(self.log(), [])
+
+    def test_when_a_call_happened_reads_as_a_time_a_day_or_a_date(self):
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        for delta, expect in ((timedelta(0), None), (timedelta(days=1), 'Yesterday')):
+            entry = {'name': 'x', 'tag': 'IN', 'ts': (now - delta).isoformat(), 'duration': ''}
+            shown = kyphone_os._call_time(entry)
+            if expect:
+                self.assertEqual(shown, expect)
+            else:
+                self.assertRegex(shown, r'^\d{1,2}:\d{2} [AP]M$')
+        self.assertEqual(kyphone_os._call_time({'name': 'old', 'tag': 'IN', 'time': '4:03 PM', 'duration': ''}), '4:03 PM')   # an old-format entry
+
+    def test_hanging_up_a_call_with_no_start_time_still_logs_it(self):
+        reset_state(screen='in_call', call_name='Ann', call_started_at=None, calls=[])
+        kyphone_os.state['call_dir'] = 'OUT'
+        self.press('KEY_ESC')
+        self.assertEqual((self.log()[0]['tag'], self.log()[0]['duration']), ('OUT', '0:00'))
 
 
 if __name__ == '__main__':
