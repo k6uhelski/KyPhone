@@ -252,6 +252,7 @@ ALERTS = {
     'NO_RECIPIENT': ('NEW MESSAGE', 'THERE IS NO ONE TO SEND THIS TO. TYPE A NUMBER IN THE TO FIELD, OR PRESS + TO PICK A CONTACT.'),
     'NEED_FIRST':   ('CONTACT', 'A CONTACT NEEDS A FIRST NAME. TYPE ONE IN THE FIRST NAME FIELD, THEN PRESS SAVE.'),
     'NEED_NUMBER':  ('CONTACT', 'A CONTACT NEEDS A PHONE NUMBER. TYPE ONE IN THE PHONE NUMBER FIELD, THEN PRESS SAVE.'),
+    'BAD_RECIPIENT': ('NEW MESSAGE', 'THAT NUMBER CANNOT BE TEXTED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
     'BAD_NUMBER':   ('CONTACT', 'THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
     'DUP_NUMBER':   ('CONTACT', 'THAT NUMBER IS ALREADY SAVED AS {name}. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.'),
     'BAD_BOOK':     ('READ', 'THIS BOOK CANNOT BE OPENED. {reason}. PRESS ENTER TO GO BACK TO YOUR BOOKS.'),
@@ -315,6 +316,7 @@ state = {
     'edit_first':  '',
     'edit_last':   '',
     'edit_number': '',
+    'edit_number_locked': False,    # the phone field is fixed (a contact made for an existing conversation's number)
     'edit_index':  0,               # -1=cancel | 0=first | 1=last | 2=number | 3=save
 
     'calls':            [],         # [{name, tag, time, duration}] session call log
@@ -1382,6 +1384,14 @@ def _send_compose():
     if not to_val:
         _show_alert('NO_RECIPIENT', 'compose')
         return
+    if not number_valid(to_val):                           # a number that can never be texted (or saved as a contact)
+        with state['lock']:
+            state['compose_to_active']  = True             # put the cursor back on the number, ready to fix
+            state['compose_header_sel'] = None
+            state['compose_plus_sel']   = False
+            state['compose_send_sel']   = False
+        _show_alert('BAD_RECIPIENT', 'compose')
+        return
     if not msg_val:
         _show_alert('EMPTY_SEND', 'compose')
         return
@@ -1714,6 +1724,9 @@ def _open_new_contact(number, ret):
         state['edit_first']  = ''
         state['edit_last']   = ''
         state['edit_number'] = format_number(number) if number else ''
+        # A contact made for a conversation's own number keeps that number: change it and the name would not
+        # attach to the conversation. (A number that cannot be dialed stays editable, so it can be fixed.)
+        state['edit_number_locked'] = bool(number) and number_valid(number)
         state['edit_index']  = 0
     push_contact_edit()
 
@@ -1735,6 +1748,7 @@ def _open_contact_edit(new):
         state['edit_first']  = rec.get('first', '')
         state['edit_last']   = rec.get('last', '')
         state['edit_number'] = rec.get('number', '')
+        state['edit_number_locked'] = False
         state['edit_index']  = 0
     push_contact_edit()
 
@@ -1808,20 +1822,29 @@ def _save_contact_edit():
     push_contact()
 
 
+def _edit_step(idx, step, locked):
+    """The form field one step from `idx`, stepping over the phone number when it is locked."""
+    new = idx + step
+    if locked and new == EDIT_FIELDS.index('number'):
+        new += step
+    return new
+
+
 def _from_contact_edit(keycode):
     with state['lock']:
         idx        = state['edit_index']
         can_delete = state['edit_idx'] is not None      # a new contact has nothing to delete
+        locked     = state['edit_number_locked']
 
     if keycode == 'KEY_ESC':
         _leave_contact_edit()
     elif keycode == 'KEY_UP':
         with state['lock']:
-            state['edit_index'] = EDIT_SAVE - 1 if idx == EDIT_DELETE else max(-1, idx - 1)
+            state['edit_index'] = max(-1, _edit_step(EDIT_SAVE if idx == EDIT_DELETE else idx, -1, locked))
         push_contact_edit()
     elif keycode == 'KEY_DOWN':
         with state['lock']:
-            state['edit_index'] = min(EDIT_SAVE, idx + 1)
+            state['edit_index'] = min(EDIT_SAVE, _edit_step(idx, +1, locked))
         push_contact_edit()
     elif keycode == 'KEY_LEFT' and idx == EDIT_SAVE and can_delete:
         with state['lock']:
@@ -1844,9 +1867,9 @@ def _from_contact_edit(keycode):
             push_confirm()
         else:
             with state['lock']:
-                state['edit_index'] = idx + 1
+                state['edit_index'] = _edit_step(idx, +1, locked)
             push_contact_edit()
-    elif keycode == 'KEY_BACKSPACE' and 0 <= idx < len(EDIT_FIELDS):
+    elif keycode == 'KEY_BACKSPACE' and 0 <= idx < len(EDIT_FIELDS) and not (locked and EDIT_FIELDS[idx] == 'number'):
         field = EDIT_FIELDS[idx]
         with state['lock']:
             state[f'edit_{field}'] = state[f'edit_{field}'][:-1]
@@ -1854,7 +1877,7 @@ def _from_contact_edit(keycode):
     elif keycode.startswith('CHAR:') and 0 <= idx < len(EDIT_FIELDS):
         char  = keycode[5:]
         field = EDIT_FIELDS[idx]
-        if field == 'number' and not re.match(r'^[0-9()+\-. ]$', char):
+        if field == 'number' and (locked or not re.match(r'^[0-9()+\-. ]$', char)):
             return                                     # a rejected keystroke is the one silent no-op
         limit = NUMBER_FIELD_MAX if field == 'number' else CONTACT_FIELD_MAX
         with state['lock']:

@@ -50,7 +50,7 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_mach
   spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
   spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 586 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py   # expect 601 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 
@@ -83,7 +83,7 @@ An EPUB reader, built and tested on a computer (branch `reader-build`); not flas
 - `reader_layout.py` wraps text with the exact glyph widths the panel uses and paginates each chapter; a saved place survives a change of font size.
 - The Inkplate draws pages with the FreeSerif fonts from a new `ui_reader.h`; a page is several SPI frames and the panel refreshes only on the last.
 - The emulator draws the same glyph bitmaps, and the tests show the firmware, the layout module and the emulator agree pixel for pixel at all four sizes.
-- 333 new tests (586 in all, counting the reader and the music player); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
+- 348 new tests (601 in all, counting the reader and the music player); checked against real Project Gutenberg books (Alice in Wonderland, The Count of Monte Cristo).
 
 ### **September 2026: OS 0.2.1**
 
@@ -95,7 +95,7 @@ Tested texting, creating a contact and deleting a contact in the emulator, took 
 - Lists are windowed and text is kept inside the 253-character frame, so a long thread or contact list can no longer be cut off.
 - The Inkplate firmware draws the new screens and has a USB preview (`@<command>` on the serial port) for checking a screen on the panel without the Radxa.
 - Home menu icons (pixelarticons, MIT) generated from the design's SVG paths.
-- There are now 586 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
+- There are now 601 tests, including pixel checks on the emulator and a host-side build of the firmware renderers under sanitizers.
 - Twilio switched off (nothing costs money); sends end as NOT SENT until there is a modem.
 
 ### **April 2026: UI Polish + Dev Workflow**

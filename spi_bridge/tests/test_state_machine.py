@@ -495,7 +495,7 @@ class TestComposeScreen(unittest.TestCase):
 
     @patch.object(kyphone_os, 'push_screen')
     def test_enter_on_to_with_content_moves_to_message(self, _ps):
-        reset_state(screen='compose', compose_to='+1999', compose_msg='', compose_to_active=True)
+        reset_state(screen='compose', compose_to='+15550101999', compose_msg='', compose_to_active=True)
         kyphone_os.handle_key('KEY_ENTER')
         self.assertFalse(kyphone_os.state['compose_to_active'])
         self.assertEqual(kyphone_os.state['screen'], 'compose')
@@ -503,12 +503,12 @@ class TestComposeScreen(unittest.TestCase):
     @patch.object(kyphone_os, 'push_screen')
     @patch.object(kyphone_os, 'send_reply')
     def test_enter_on_message_with_both_creates_thread(self, mock_send, _ps):
-        reset_state(screen='compose', compose_to='+1999', compose_msg='Hello!',
+        reset_state(screen='compose', compose_to='+15550101999', compose_msg='Hello!',
                     compose_to_active=False)
         kyphone_os.handle_key('KEY_ENTER')
-        mock_send.assert_called_once_with('+1999', 'Hello!')
+        mock_send.assert_called_once_with('+15550101999', 'Hello!')
         self.assertEqual(kyphone_os.state['screen'], 'thread')
-        self.assertEqual(kyphone_os.state['thread_id'], '+1999')
+        self.assertEqual(kyphone_os.state['thread_id'], '+15550101999')
 
     @patch.object(kyphone_os, 'push_screen')
     def test_tab_toggles_active_field(self, _ps):
@@ -1949,6 +1949,180 @@ class TestDataDirOverride(unittest.TestCase):
                 self.assertEqual(data_dir, os.path.join(tmp, 'data'))
                 self.assertEqual(contacts, os.path.join(tmp, 'data', 'contacts.json'))
                 self.assertEqual(messages, os.path.join(tmp, 'data', 'messages.json'))
+
+
+class TestNewMessageNumberCheck(unittest.TestCase):
+    """New Message refuses a number that can never be texted (or saved as a contact), and keeps what you typed."""
+
+    def setUp(self):
+        self._save = patch.object(kyphone_os, 'save_messages')
+        self._save.start()
+        self._ps = patch.object(kyphone_os, 'push_screen')
+        self.ps = self._ps.start()
+        self._send = patch.object(kyphone_os, 'send_reply')
+        self.send = self._send.start()
+
+    def tearDown(self):
+        self._send.stop()
+        self._ps.stop()
+        self._save.stop()
+
+    def press_send(self, to, msg='hello', **state):
+        reset_state(screen='compose', compose_to=to, compose_msg=msg, compose_to_active=False, **state)
+        kyphone_os.handle_key('KEY_ENTER')
+
+    def test_numbers_that_cannot_be_texted_raise_an_alert_and_send_nothing(self):
+        for bad in ('123123', '555', '12345678', '123456789012', '25551234567', 'abc', '5551234567890'):
+            self.send.reset_mock()
+            self.press_send(bad)
+            self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['stub_key']), ('stub', 'BAD_RECIPIENT'), bad)
+            self.send.assert_not_called()
+
+    def test_every_form_of_a_ten_or_eleven_digit_number_goes_through(self):
+        for good in ('5551234567', '(555) 123-4567', '555-123-4567', '555.123.4567', '+15551234567', '15551234567', '+1 (555) 123-4567'):
+            self.send.reset_mock()
+            self.press_send(good)
+            self.send.assert_called_once_with(good, 'hello')
+            self.assertEqual(kyphone_os.state['screen'], 'thread', good)
+
+    def test_the_alert_returns_to_the_number_field_with_everything_kept(self):
+        self.press_send('123123', msg='a long message I typed')
+        kyphone_os.handle_key('KEY_ENTER')                                  # dismiss the alert
+        self.assertEqual(kyphone_os.state['screen'], 'compose')
+        self.assertTrue(kyphone_os.state['compose_to_active'])              # the cursor is on TO, ready to fix it
+        self.assertEqual((kyphone_os.state['compose_to'], kyphone_os.state['compose_msg']), ('123123', 'a long message I typed'))
+
+    def test_the_send_button_is_checked_too(self):
+        self.press_send('123123', compose_send_sel=True)
+        self.assertEqual(kyphone_os.state['stub_key'], 'BAD_RECIPIENT')
+        self.send.assert_not_called()
+
+    def test_the_number_is_checked_before_an_empty_message(self):
+        self.press_send('123', msg='')
+        self.assertEqual(kyphone_os.state['stub_key'], 'BAD_RECIPIENT')
+
+    def test_an_empty_number_still_asks_for_one_and_an_empty_message_still_asks_for_text(self):
+        self.press_send('', msg='hi')
+        self.assertEqual(kyphone_os.state['stub_key'], 'NO_RECIPIENT')
+        self.press_send('5551234567', msg='   ')
+        self.assertEqual(kyphone_os.state['stub_key'], 'EMPTY_SEND')
+
+    def test_the_alert_text_fits_a_frame_and_is_drawable(self):
+        title, body = kyphone_os.ALERTS['BAD_RECIPIENT']
+        self.assertLessEqual(len('STUB|%s|%s' % (title, body)), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(body, kyphone_os.sanitize(body))
+
+
+class TestContactNumberLockedToTheConversation(unittest.TestCase):
+    """Saving a contact from a conversation's info page keeps the conversation's number, so the name attaches."""
+
+    def setUp(self):
+        self._contacts = list(kyphone_os.CONTACTS)
+        self.addCleanup(lambda: kyphone_os.CONTACTS.__setitem__(slice(None), self._contacts))
+        kyphone_os.CONTACTS[:] = []
+        for name in ('save_messages', '_save_contacts'):
+            p = patch.object(kyphone_os, name)
+            p.start()
+            self.addCleanup(p.stop)
+        self._ps = patch.object(kyphone_os, 'push_screen')
+        self.ps = self._ps.start()
+        self.addCleanup(self._ps.stop)
+
+    def press(self, *keys):
+        for k in keys:
+            kyphone_os.handle_key(k)
+
+    def typ(self, text):
+        self.press(*['CHAR:' + c for c in text])
+
+    def text_a_number_then_open_the_save_form(self, number='5551234567'):
+        reset_state(screen='texts_list', texts_index=-1, texts_header_sel='plus', messages=[])
+        self.press('KEY_ENTER')                                             # + : new message
+        self.typ(number)
+        self.press('KEY_ENTER')
+        self.typ('hello')
+        self.press('KEY_ENTER')                                             # send
+        self.press('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')            # the NOT SENT bubble, the header, i, open it
+        self.press('KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')                   # CALL, TEXT, SAVE
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+
+    def test_the_form_opens_with_the_number_locked(self):
+        self.text_a_number_then_open_the_save_form()
+        self.assertTrue(kyphone_os.state['edit_number_locked'])
+        self.assertEqual(kyphone_os.state['edit_number'], '(555) 123-4567')
+
+    def test_the_arrows_step_over_the_number_field(self):
+        self.text_a_number_then_open_the_save_form()
+        self.press('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['edit_index'], 1)                  # first -> last
+        self.press('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)   # last -> SAVE, skipping the number
+        self.press('KEY_UP')
+        self.assertEqual(kyphone_os.state['edit_index'], 1)
+        self.press('KEY_ENTER')                                             # Enter on the last name moves on to SAVE
+        self.assertEqual(kyphone_os.state['edit_index'], kyphone_os.EDIT_SAVE)
+
+    def test_the_number_cannot_be_changed_even_if_a_key_reaches_it(self):
+        self.text_a_number_then_open_the_save_form()
+        kyphone_os.state['edit_index'] = 2
+        self.typ('999')
+        self.press('KEY_BACKSPACE')
+        self.assertEqual(kyphone_os.state['edit_number'], '(555) 123-4567')
+
+    def test_saving_the_name_makes_the_conversation_show_it(self):
+        self.text_a_number_then_open_the_save_form()
+        self.typ('Sam')
+        self.press('KEY_DOWN')
+        self.typ('Lee')
+        self.press('KEY_DOWN', 'KEY_ENTER')                                 # SAVE
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertEqual([(c['first'], c['last'], c['number']) for c in kyphone_os.CONTACTS], [('Sam', 'Lee', '(555) 123-4567')])
+        self.press('KEY_ESC', 'KEY_ESC')                                    # back to the text list
+        self.assertEqual(kyphone_os.state['screen'], 'texts_list')
+        kyphone_os.push_texts()
+        self.assertEqual(self.ps.call_args[0][0].split('|')[2].split(CELL)[0], 'Sam Lee')
+
+    def test_it_works_for_every_way_of_writing_the_number(self):
+        for typed in ('555-123-4567', '(555) 123-4567', '+15551234567', '15551234567'):
+            kyphone_os.CONTACTS[:] = []
+            self.text_a_number_then_open_the_save_form(typed)
+            self.typ('Sam')
+            self.press('KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')
+            self.assertEqual(kyphone_os.state['screen'], 'contact', typed)
+            self.press('KEY_ESC', 'KEY_ESC')
+            kyphone_os.push_texts()
+            self.assertEqual(self.ps.call_args[0][0].split('|')[2].split(CELL)[0], 'Sam', typed)
+
+    def test_a_number_that_cannot_be_dialed_stays_editable_so_it_can_be_fixed(self):
+        # an old conversation with a short number (made before New Message checked): nothing to lock to
+        reset_state(screen='contact', messages=[{'sender': '123123', 'name': '123123', 'body': 'hi', 'read': True}],
+                    contact_idx=None, contact_number='123123', contact_sel='save', contact_return='thread')
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+        self.assertFalse(kyphone_os.state['edit_number_locked'])
+        self.press('KEY_DOWN', 'KEY_DOWN')
+        self.assertEqual(kyphone_os.state['edit_index'], 2)                  # the number field can be reached
+
+    def test_other_forms_are_not_locked(self):
+        reset_state(screen='contacts_pick', contacts_index=-1, contacts_header_sel='plus', contacts_return='home')
+        kyphone_os.handle_key('KEY_ENTER')                                  # the + on the contacts list: a blank form
+        self.assertFalse(kyphone_os.state['edit_number_locked'])
+        kyphone_os.CONTACTS[:] = [{'first': 'Ann', 'last': '', 'number': '(555) 010-0001'}, {'first': 'Bo', 'last': '', 'number': ''}]
+        for idx in (0, 1):                                                  # EDIT on a saved contact; ADD NUMBER on one without
+            reset_state(screen='contact', contact_idx=idx, contact_number='', contact_sel='edit', contact_return='contacts_pick')
+            kyphone_os.handle_key('KEY_ENTER')
+            self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+            self.assertFalse(kyphone_os.state['edit_number_locked'], idx)
+            self.press('KEY_DOWN', 'KEY_DOWN')
+            self.assertEqual(kyphone_os.state['edit_index'], 2, idx)
+
+    def test_the_lock_is_forgotten_when_another_form_opens(self):
+        self.text_a_number_then_open_the_save_form()
+        self.assertTrue(kyphone_os.state['edit_number_locked'])
+        kyphone_os.CONTACTS[:] = [{'first': 'Ann', 'last': '', 'number': '(555) 010-0001'}]
+        reset_state(screen='contact', contact_idx=0, contact_number='', contact_sel='edit', contact_return='contacts_pick')
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertFalse(kyphone_os.state['edit_number_locked'])
 
 
 if __name__ == '__main__':
