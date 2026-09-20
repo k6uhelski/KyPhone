@@ -85,11 +85,11 @@ real link). **Write these numbers down.** Try `--size S`, `L` and `X` too.
 Note that closing the USB port resets the board, so it reboots after the last page; the panel keeps its image.
 
 ## 4. Deploy the Python to the Radxa (5 minutes)
-**Copy all eight files before restarting** — `kyphone_os.py` now imports the three reader modules and the two music
+**Copy all nine files before restarting** — `kyphone_os.py` now imports `version.py`, the three reader modules and the two music
 modules, and a missing one makes the service crash on start.
 ```
 cd ~/kyphone/spi_bridge
-scp kyphone_os.py simulator.py home_icons.py reader_epub.py reader_layout.py reader_fonts.py music_library.py music_player.py radxa:~/kyphone/spi_bridge/
+scp kyphone_os.py simulator.py home_icons.py version.py reader_epub.py reader_layout.py reader_fonts.py music_library.py music_player.py radxa:~/kyphone/spi_bridge/
 ssh radxa 'mkdir -p ~/kyphone/data/books ~/kyphone/data/music/Test/Tones'
 scp ~/alice.epub ~/monte-cristo.epub radxa:~/kyphone/data/books/
 # a real 30-second 440 Hz test tone (quiet, so it is safe to try first), and your own music if you like:
@@ -141,7 +141,7 @@ full refresh feels right (it is `READER_FULL_EVERY` in `kyphone_os.py`); anythin
 | You see | Likely cause | Do |
 | :--- | :--- | :--- |
 | Stray text like `RTEXT\|M\|0\|S\|…` on the panel | the old firmware is still running (flash failed) | re-run step 2 |
-| The service will not start / `ModuleNotFoundError: reader_…` in the journal | a file was missed in step 4 | copy all six again, restart |
+| The service will not start / `ModuleNotFoundError: reader_…` in the journal | a file was missed in step 4 | copy all nine again, restart |
 | Library says NO BOOKS | books are not in `~/kyphone/data/books/` (or not `.epub`) | check with `ssh radxa ls ~/kyphone/data/books` |
 | A book says it cannot be opened | it is copy-protected, corrupt, or only pictures | the alert says which; try another book |
 | Panel does not update after a key | the Inkplate did not raise its ready line | wait 15 s; check `/tmp/inkplate_serial.log`; power-cycle the Inkplate |
