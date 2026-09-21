@@ -45,7 +45,7 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 
 *   Master waits for Handshake HIGH, then sends 256-byte SPI transfer.
 *   Slave counts SCLK rising edges via IRAM-pinned ISR into a 256-byte `rx_buf`.
-*   If SCLK is silent for > 50 ms and exactly 2048 bits were received, `transfer_complete` is set.
+*   If SCLK is silent for > 150 ms (`FRAME_SILENCE_US` in the firmware; it was 600 ms until 0.3.1, which made every frame of a book page cost 0.8 s) and exactly 2048 bits were received, `transfer_complete` is set; the Inkplate then pulls Handshake LOW while it processes the frame and raises it again when done.
 *   After each display refresh, `reclaim_pin15_for_gpio()` re-asserts IO_MUX ownership of Pin 15 (the Inkplate library silently reclaims it during `display.display()`).
 
 **Risk:** A single noise pulse on SCLK shifts the bitstream. Mitigated by exact-bit-count check; no CRC yet.
@@ -80,16 +80,16 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 **The spec is `docs/02-design/design_handoff_os_0_2/`** — the design doc, `GEOMETRY.md`, the prototype (`KyPhone UI v4.dc.html`) and 600×600 captures. When the prose and the prototype disagree, the prototype wins (it has behaviours the README does not list). **The build log — status, decisions, deviations, rollbacks — is `planning/os-0.2.1-build-plan.md`.**
 
 ### **Versioning**
-**Current version: 0.3.0**
+**Current version: 0.3.1**
 **Design library: 0.2.1** (`docs/02-design/design_handoff_os_0_2/`; recorded as `DESIGN` in `version.py` and checked against the handoff's own title)
 
 One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and shown everywhere from there:
 *   **MINOR** — a new feature you can see or use (a screen, an app) or a new design generation; **PATCH** — fixes and refinements; **MAJOR** — stays 0 until KyPhone is a daily-driver phone (cellular, battery, enclosure), which is 1.0.
-*   **Where it shows:** the lock screen (bottom left, "OS 0.3.0" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.0`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
+*   **Where it shows:** the lock screen (bottom left, "OS 0.3.1" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
 *   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
 *   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
 *   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
-*   **Releases** are tagged in git as `v0.3.0` when merged (not done yet). The names `os-0.2.1-build`, `reader-build` and `music-build` are historical branch names, and "OS 0.2" / "OS 0.2.1" in the design handoff name design generations, not software releases.
+*   **Releases** are tagged in git as `v0.3.0`, `v0.3.1`, … (`v0.3.0` was tagged and pushed 2026-09-20). The names `os-0.2.1-build`, `reader-build` and `music-build` are historical branch names, and "OS 0.2" / "OS 0.2.1" in the design handoff name design generations, not software releases.
 
 | Version | What it is | Where |
 | :--- | :--- | :--- |
@@ -97,7 +97,8 @@ One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and
 | 0.1 | 6-screen state machine (`kyphone_os.py`) and the TDD suite | `039042d` |
 | 0.2 | contacts, calls, trackpad navigation (the OS 0.2 design) | `b2a33cc` |
 | 0.2.1 | windowed lists, message states and retry, formatted numbers, contact create/delete, stop alerts, icon home menu (the OS 0.2.1 design) | branch `os-0.2.1-build`; flashed and deployed 2026-09-18 except the icons |
-| **0.3.0** | **the reader** (EPUBs), **the music player** (LISTEN), the home menu order text/call/book/music/address book, New Message number check, a contact saved from a conversation keeps its number, the Contacts `+` key, a call log, one version number | branch `music-build`; built and tested on a computer, **not yet flashed, deployed or heard** — see `planning/reader-build-plan.md` and `planning/music-build-plan.md` |
+| **0.3.0** | **the reader** (EPUBs), **the music player** (LISTEN), the home menu order text/call/book/music/address book, New Message number check, a contact saved from a conversation keeps its number, the Contacts `+` key, a call log, one version number | tagged `v0.3.0`; flashed and deployed 2026-09-20 (see `planning/reader-build-plan.md` and `planning/music-build-plan.md`) |
+| **0.3.1** | fixes found on the real phone: book pages now arrive complete (the sender waits for the Inkplate to take each frame), the Inkplate ends a frame after 150 ms of clock silence instead of 600 ms (about four times faster page turns), every book page turn is a full refresh, and the call screens say Q (not ESC) | flashed and deployed 2026-09-20 |
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
@@ -166,7 +167,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 
 | Screen | Command |
 | :--- | :--- |
-| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.3.0`) is drawn as "OS 0.3.0" bottom left; a firmware that receives none draws no label |
+| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.3.1`) is drawn as "OS 0.3.1" bottom left; a firmware that receives none draws no label |
 | Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
 | Texts | `TEXTS\|sel\|name·preview·unread·time\|…` — sel −1 back, −2 plus, else the row in the window; ≤5 rows; preview starts `You: ` or `! ` (unsent); no rows = empty state |
 | Contacts | `CONTACTSPICK\|sel\|query\|3 / 14\|name·number\|…` — ≤7 rows; no rows = NO MATCH (query set) or NO CONTACTS |
@@ -278,6 +279,7 @@ Non-obvious facts that will bite future maintainers if undocumented.
 *   **`~/Documents/Arduino/libraries` on the Mac mini can be iCloud-evicted** ("dataless" files that fail with `Operation timed out`; seen with `Adafruit_MonoOLED.cpp/.h`). The reader firmware does not pull that library in, so `flash_macmini.sh` still compiles; if a build ever complains about a library file timing out, open the file in Finder to make macOS download it.
 *   **Music: never call a `Session` method while holding `state['lock']`.** The session calls back into the OS (which takes that lock) from whatever thread caused the change, including GStreamer's GLib thread; the session itself holds no lock during a callback.
 *   **ALSA's `null` device is not paced**: it "plays" everything instantly, so it makes every track end at once. For a silent test that keeps real time use `KYPHONE_AUDIO_DEVICE=fake`.
+*   **After every frame the sender waits for Handshake to drop, then rise** (`wait_for_taken`, then `wait_for_ready`). Handshake is still HIGH while the Inkplate waits out the clock silence, so a frame sent straight after another merges into it and is lost; the extra bits are dropped and only the first frame survives. Found on the real phone: no book page ever completed until this was fixed, and no host test can show it.
 *   **Music wire changes ship with the firmware.** An old firmware draws `MUSIC` / `TRACKS` / `NOWPLAYING` as stray text (as with the reader's frames); flash and deploy together.
 *   **`state['lock']` is not re-entrant.** Never call a helper that takes it (`_contact_view`, `_thread_messages`, `resolve_peer`, `get_threads`, …) from inside a `with state['lock']:` block — that deadlocks. It happened twice during development; compute the value first, then take the lock.
 *   **Importing `kyphone_os` touches `data/`** (it loads contacts and may migrate/rewrite the file), and the simulator reads and writes it too. Set `KYPHONE_DATA_DIR` to a scratch folder for tests and experiments; it is read once at import, so it must be set before the process starts.

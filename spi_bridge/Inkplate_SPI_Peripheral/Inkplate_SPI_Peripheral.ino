@@ -17,6 +17,7 @@ Inkplate display(INKPLATE_1BIT);
 
 // Handshake
 #define PIN_HANDSHAKE IO_PIN_B0 // P1-0 expander pin
+#define FRAME_SILENCE_US 150000UL // clock silence that ends a frame (was 600000; see the framing note in loop())
 
 // --- ISR Variables ---
 #define PAYLOAD_BYTES 256
@@ -1391,9 +1392,11 @@ void loop() {
             millis(), debug_sclk_total, snap_bits, cs_val, current_screen);
     }
 
-    // Framing: 1500ms silence = end of message (410ms transfer at 5kHz for 256 bytes + margin)
+    // Framing: a message ends when the clock has been silent for FRAME_SILENCE_US. The Radxa clocks a whole
+    // 256-byte frame continuously (about 205 ms at 10 kHz, gaps well under a millisecond), so the wait only has
+    // to be longer than that; it used to be 600 ms, which made every frame of a book page cost 0.8 s.
     if (!transfer_complete && snap_bits > 0) {
-        if (now_us - snap_sclk > 600000) {
+        if (now_us - snap_sclk > FRAME_SILENCE_US) {
             uint32_t elapsed_us = now_us - snap_first;
             if (snap_bits == TOTAL_BITS) {
                 transfer_complete = true;
