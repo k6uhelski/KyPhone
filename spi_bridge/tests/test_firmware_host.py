@@ -179,23 +179,25 @@ class FirmwareFrames(unittest.TestCase):
 
     # ── settings ───────────────────────────────────────────────────────────────
     def test_settings_and_network_lists_are_111px_rows_with_the_selection_inverted(self):
-        for name, sel, rows in (('settings', 0, 2), ('netlist_wifi', 2, 4), ('netlist_bt', 1, 3)):
+        for name, sel, rows in (('settings', 0, 2), ('netlist_wifi', 2, 5), ('netlist_bt', 1, 4), ('netlist_pair', 0, 2),
+                                ('netlist_off', 0, 1)):
             f = self.frames[name]
             self.assertEqual([self.ink(f, 4, 44 + r * 111 + 4) for r in range(rows)], [r == sel for r in range(rows)], name)
-            self.assertFalse(self.ink(f, 4, 44 + rows * 111 + 4), name)             # nothing below the last row
+            if rows < 5:
+                self.assertFalse(self.ink(f, 4, 44 + rows * 111 + 4), name)         # nothing below the last row
             self.assertFalse(self.has_ink(f, 500, 6, 585, 40), name)                # back only: no + control
 
     def test_the_network_list_title_follows_the_kind(self):
         def header(f):
             return bytes(f[y * W + x] for y in range(8, 38) for x in range(150, 450))
-        self.assertNotEqual(header(self.frames['netlist_wifi']), header(self.frames['netlist_bt']))
+        titles = {header(self.frames[n]) for n in ('netlist_wifi', 'netlist_bt', 'netlist_pair')}
+        self.assertEqual(len(titles), 3)                                             # WI-FI, BLUETOOTH, OTHER DEVICES
 
-    def test_an_empty_scan_shows_its_message_on_the_rescan_row(self):
+    def test_an_empty_search_shows_its_message_under_search_again(self):
         f = self.frames['netlist_empty']
-        self.assertTrue(self.ink(f, 4, 48))                                          # RESCAN, selected
-        self.assertGreater(self.ink_box(f, 28, 110, 400, 124), 0)                    # its second line
-        # (white text on the inverted row shows as un-inked pixels inside the black fill)
-        self.assertLess(self.ink_box(f, 28, 110, 400, 124), (400 - 28) * 14)
+        self.assertTrue(self.ink(f, 4, 48))                                          # the switch, selected
+        self.assertFalse(self.ink(f, 4, 44 + 111 + 4))                               # SEARCH AGAIN, not selected
+        self.assertGreater(self.ink_box(f, 28, 110 + 111, 400, 124 + 111), 0)        # its second line
 
     def test_the_password_box_has_a_cursor_until_the_back_arrow_is_selected(self):
         field, back = self.frames['netpass'], self.frames['netpass_back']
@@ -357,7 +359,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
     NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
-             'netlist_scanning', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'netlist_scanning', 'netlist_off', 'netlist_pair', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):

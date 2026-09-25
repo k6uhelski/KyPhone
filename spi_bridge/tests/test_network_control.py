@@ -358,5 +358,90 @@ class BtPairConnectTest(unittest.TestCase):
             nc.bt_pair_connect('AA:BB:CC:DD:EE:FF')
 
 
+
+class Switches(unittest.TestCase):
+    def test_wifi_enabled_reads_nmcli_radio(self):
+        for out, want in (('enabled\n', True), ('disabled\n', False)):
+            with patch('network_control.subprocess.run', return_value=_proc(0, out)) as m:
+                self.assertEqual(nc.wifi_enabled(), want)
+            self.assertEqual(m.call_args[0][0], ['nmcli', 'radio', 'wifi'])
+
+    def test_the_wifi_and_bluetooth_switches(self):
+        with patch('network_control.subprocess.run', return_value=_proc(0)) as m:
+            self.assertTrue(nc.wifi_set_enabled(False).ok)
+            self.assertEqual(m.call_args[0][0], ['nmcli', 'radio', 'wifi', 'off'])
+            self.assertTrue(nc.bt_set_powered(True).ok)
+            self.assertEqual(m.call_args[0][0], ['bluetoothctl', 'power', 'on'])
+        with patch('network_control.subprocess.run', return_value=_proc(1)):
+            self.assertEqual(nc.wifi_set_enabled(True).detail, 'could not switch Wi-Fi on')
+
+
+class ForgetNetwork(unittest.TestCase):
+
+    def test_deletes_every_profile_for_that_network_and_nothing_else(self):
+        profiles = 'Maple:802-11-wireless\nMaple 1:802-11-wireless\nWired:802-3-ethernet\nBirch:802-11-wireless\n'
+        calls = []
+        def fake(args, **kw):
+            calls.append(args)
+            if args[:4] == ['nmcli', '-t', '-f', 'NAME,TYPE']:
+                return _proc(0, profiles)
+            if args[:3] == ['nmcli', '-g', '802-11-wireless.ssid']:
+                return _proc(0, {'Maple': 'Maple', 'Maple 1': 'Maple', 'Birch': 'Birch'}[args[-1]] + '\n')
+            return _proc(0)
+        with patch('network_control.subprocess.run', side_effect=fake):
+            self.assertTrue(nc.wifi_forget('Maple').ok)
+        deleted = [a[-1] for a in calls if a[:3] == ['nmcli', 'connection', 'delete']]
+        self.assertEqual(deleted, ['Maple', 'Maple 1'])
+
+    def test_a_colon_in_a_name_is_unescaped(self):
+        calls = []
+        def fake(args, **kw):
+            calls.append(args)
+            if args[:4] == ['nmcli', '-t', '-f', 'NAME,TYPE']:
+                return _proc(0, 'Cafe\\:Guest:802-11-wireless\n')
+            if args[:3] == ['nmcli', '-g', '802-11-wireless.ssid']:
+                return _proc(0, 'Cafe\\:Guest\n')
+            return _proc(0)
+        with patch('network_control.subprocess.run', side_effect=fake):
+            self.assertTrue(nc.wifi_forget('Cafe:Guest').ok)
+        self.assertIn(['nmcli', 'connection', 'delete', 'id', 'Cafe:Guest'], calls)
+
+    def test_an_unknown_network_or_a_failed_delete_says_so(self):
+        with patch('network_control.subprocess.run', return_value=_proc(0, '')):
+            self.assertEqual(nc.wifi_forget('Nowhere').detail, 'not a saved network')
+        def fake(args, **kw):
+            if args[:4] == ['nmcli', '-t', '-f', 'NAME,TYPE']:
+                return _proc(0, 'Maple:802-11-wireless\n')
+            if args[:3] == ['nmcli', '-g', '802-11-wireless.ssid']:
+                return _proc(0, 'Maple\n')
+            return _proc(1)
+        with patch('network_control.subprocess.run', side_effect=fake):
+            self.assertEqual(nc.wifi_forget('Maple').detail, 'could not forget it')
+
+
+class KnownDevices(unittest.TestCase):
+    def test_paired_devices_a_to_z_with_connection_and_input_flags_and_no_scan(self):
+        infos = {'11:22:33:44:55:66': 'Paired: yes\nConnected: yes\nIcon: input-keyboard\n',
+                 'AA:AA:AA:AA:AA:AA': 'Paired: yes\nConnected: no\nIcon: audio-headphones\n'}
+        calls = []
+        def fake(args, **kw):
+            calls.append(args)
+            if args == ['bluetoothctl', 'paired-devices']:
+                return _proc(0, 'Device 11:22:33:44:55:66 ZitaoTech_q10\nDevice AA:AA:AA:AA:AA:AA Headphones\n')
+            if args[:2] == ['bluetoothctl', 'info']:
+                return _proc(0, infos[args[2]])
+            return _proc(1)
+        with patch('network_control.subprocess.run', side_effect=fake):
+            devices = nc.bt_known()
+        self.assertEqual([(d.name, d.connected, d.is_input) for d in devices],
+                         [('Headphones', False, False), ('ZitaoTech_q10', True, True)])
+        self.assertFalse(any('scan' in a for a in calls))
+
+    def test_forget_removes_the_device(self):
+        with patch('network_control.subprocess.run', return_value=_proc(0)) as m:
+            self.assertTrue(nc.bt_forget('AA:AA:AA:AA:AA:AA').ok)
+        self.assertEqual(m.call_args[0][0], ['bluetoothctl', 'remove', 'AA:AA:AA:AA:AA:AA'])
+
+
 if __name__ == '__main__':
     unittest.main()

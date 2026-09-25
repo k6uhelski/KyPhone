@@ -22,7 +22,7 @@
 //   MUSIC|sel|title·sub·right|...      TRACKS|sel|album|title·artist·time|...
 //   NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N     (state P playing, U paused, S finished)
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
-//   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B|sel|name·sub·right|...
+//   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B/P|sel|name·sub·right|...
 //   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail
 
 #ifndef KYPHONE_UI_SCREENS_H
@@ -383,15 +383,15 @@ static void ui_tracks(char* data) {
 
 // ─── Settings: SETTINGS, NETLIST, NETPASS, NETSTATE ───────────────────────────
 //   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·   the two-line list, always two rows
-//   NETLIST|W/B|sel|name·sub·right|...             a scan: RESCAN (or SCANNING...) then networks / devices
-// Both are the two-line list. The RESCAN row keeps a network list from ever being empty.
+//   NETLIST|W/B/P|sel|name·sub·right|...           W the Wi-Fi list, B the Bluetooth list, P Other devices (pairing)
+// Both are the two-line list. Every network list has a row (the switch, or SEARCHING... / SEARCH AGAIN).
 
 static void ui_settings(char* data) {
     ui_rows2(data, "SETTINGS", "", "", false);
 }
 
 static void ui_netlist(char* data) {
-    const char* title = data[0] == 'B' ? "BLUETOOTH" : "WI-FI";
+    const char* title = data[0] == 'B' ? "BLUETOOTH" : data[0] == 'P' ? "OTHER DEVICES" : "WI-FI";
     char* rest = strchr(data, '|');
     ui_rows2(rest ? rest + 1 : data + strlen(data), title, "", "", false);
 }

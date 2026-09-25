@@ -903,11 +903,11 @@ class Simulator:
         self._draw_rows2(data, 'SETTINGS', '', '')
 
     def _draw_netlist(self, data):
-        # data = "kind|sel|title·subtitle·right|..."  kind W=Wi-Fi B=Bluetooth. The RESCAN row (or, while a scan
-        # is running, a single SCANNING row) always makes this list non-empty, so the two empty-state strings
+        # data = "kind|sel|title·subtitle·right|..."  kind W = the Wi-Fi list, B = the Bluetooth list, P = Other devices
+        # (pairing). Every list has a row (the switch, or SEARCHING... / SEARCH AGAIN), so the empty-state strings
         # are never shown — they exist only because _draw_rows2 requires them.
         kind, rest = (data.split('|', 1) + [''])[:2]
-        self._draw_rows2(rest, 'WI-FI' if kind == 'W' else 'BLUETOOTH', '', '')
+        self._draw_rows2(rest, {'W': 'WI-FI', 'B': 'BLUETOOTH', 'P': 'OTHER DEVICES'}.get(kind, 'WI-FI'), '', '')
 
     def _draw_netpass(self, data):
         # data = "ssid|masked|hdr"  — `masked` is '*' characters only; the real password never reaches this

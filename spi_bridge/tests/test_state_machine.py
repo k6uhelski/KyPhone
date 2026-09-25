@@ -2417,252 +2417,391 @@ nc = kyphone_os.netctl
 md = kyphone_os.modem
 
 
+class FakeNet:
+    """A pretend Wi-Fi and Bluetooth stack in place of network_control's commands; records what the phone asked."""
+    def __init__(self, wifi_on=True, current='Maple', nearby=None, bt_on=True, known=None, new=None):
+        self.wifi_on, self.current, self.bt_on = wifi_on, current, bt_on
+        self.nearby = nearby if nearby is not None else [
+            nc.WifiNetwork('Maple', 90, True, True), nc.WifiNetwork('willow', 60, True, False),
+            nc.WifiNetwork('Birch_5G', 40, True, False), nc.WifiNetwork('OpenCafe', 30, False, False)]
+        self.known = known if known is not None else [
+            nc.BtDevice('11:22:33:44:55:66', 'ZitaoTech_q10', True, True, is_input=True),
+            nc.BtDevice('AA:AA:AA:AA:AA:AA', 'Headphones', True, False)]
+        self.new = new if new is not None else [nc.BtDevice('BB:BB:BB:BB:BB:BB', 'Speaker', False, False)]
+        self.calls = []
+        self.connect_result = nc.Result(True)
+
+    def patches(self):
+        f = self
+        def log(name, result):
+            def fn(*a, **k):
+                f.calls.append((name,) + a)
+                return result() if callable(result) else result
+            return fn
+        return patch.multiple(
+            nc,
+            wifi_enabled=lambda: f.wifi_on,
+            wifi_status=lambda: nc.WifiStatus(bool(f.current and f.wifi_on), f.current if f.wifi_on else None),
+            wifi_scan=log('wifi_scan', lambda: list(f.nearby)),
+            wifi_set_enabled=log('wifi_set_enabled', lambda: f._switch('wifi_on')),
+            wifi_forget=log('wifi_forget', nc.Result(True)),
+            wifi_connect=log('wifi_connect', lambda: f.connect_result),
+            bt_status=lambda: nc.BtStatus(f.bt_on, [d.name for d in f.known if d.connected]),
+            bt_known=log('bt_known', lambda: list(f.known)),
+            bt_scan=log('bt_scan', lambda: list(f.known) + list(f.new)),
+            bt_set_powered=log('bt_set_powered', lambda: f._switch('bt_on')),
+            bt_forget=log('bt_forget', nc.Result(True)),
+            bt_pair_connect=log('bt_pair_connect', lambda: f.connect_result),
+        )
+
+    def _switch(self, attr):
+        setattr(self, attr, self.calls[-1][1])
+        return nc.Result(True)
+
+    def called(self, name):
+        return [c[1:] for c in self.calls if c[0] == name]
+
+
 class SettingsBase(unittest.TestCase):
     def setUp(self):
         self._run_async = patch.object(kyphone_os, '_run_async', new=lambda fn: fn())   # synchronous for tests
         self._run_async.start()
-
-    def tearDown(self):
-        self._run_async.stop()
+        self.addCleanup(self._run_async.stop)
+        self._settle = patch.object(kyphone_os, 'WIFI_ON_SETTLE', 0)
+        self._settle.start()
+        self.addCleanup(self._settle.stop)
+        self.net = FakeNet()
+        self._net = self.net.patches()
+        self._net.start()
+        self.addCleanup(self._net.stop)
 
     def press(self, keycode):
         with patch.object(kyphone_os, 'push_screen') as ps:
             kyphone_os.handle_key(keycode)
         return _wire(ps)
 
+    def titles(self, wire):
+        return [r.split(CELL)[0] for r in _rows(wire, 3)]
+
+    def open_settings(self, row):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        self.press('KEY_ENTER')
+        if row:
+            self.press('KEY_DOWN')
+        return self.press('KEY_ENTER')
+
+    def select(self, title, wire):
+        """Move down from the current row to the one titled `title`; returns the last wire."""
+        for _ in range(15):
+            if self.selected(wire) == title:
+                return wire
+            wire = self.press('KEY_DOWN')
+        self.fail(f'{title} not found in {wire}')
+
+    def selected(self, wire):
+        f = wire.split('|')
+        sel = int(f[2])
+        return f[3 + sel].split(CELL)[0] if sel >= 0 else None
+
 
 class TestSettingsScreen(SettingsBase):
-    def test_opening_reads_status_once_and_shows_it(self):
+    def test_opening_shows_each_status(self):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
-        with patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(True, 'Maple')) as ws, \
-                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, ['ZitaoTech_q10'])) as bs:
-            wire = self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'settings')
-        ws.assert_called_once()
-        bs.assert_called_once()
         rows = _rows(wire, 2)
         self.assertIn('Connected: Maple', rows[0])
         self.assertIn('Connected: ZitaoTech_q10', rows[1])
 
-    def test_not_connected_reads_plainly(self):
+    def test_a_switched_off_radio_reads_off(self):
+        self.net.wifi_on, self.net.bt_on = False, False
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
-        with patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(False)), \
-                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
-            wire = self.press('KEY_ENTER')
-        rows = _rows(wire, 2)
-        self.assertIn('Not connected', rows[0])
-        self.assertIn('Not connected', rows[1])
+        rows = _rows(self.press('KEY_ENTER'), 2)
+        self.assertIn(CELL + 'Off' + CELL, rows[0])
+        self.assertIn(CELL + 'Off' + CELL, rows[1])
 
     def test_up_down_and_header(self):
-        reset_state(screen='settings', settings_index=0,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        self.press('KEY_ENTER')
         self.press('KEY_DOWN')
-        self.assertEqual(kyphone_os.state['settings_index'], 1)
         self.press('KEY_DOWN')                                 # clamped: only two rows
         self.assertEqual(kyphone_os.state['settings_index'], 1)
         self.press('KEY_UP')
         self.press('KEY_UP')
         self.assertEqual(kyphone_os.state['settings_index'], -1)
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
 
-    def test_enter_on_wifi_row_opens_the_wifi_picker(self):
-        reset_state(screen='settings', settings_index=0,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        with patch.object(nc, 'wifi_scan', return_value=[]):
-            self.press('KEY_ENTER')
-        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_kind']), ('netlist', 'W'))
-
-    def test_enter_on_bluetooth_row_opens_the_bluetooth_picker(self):
-        reset_state(screen='settings', settings_index=1,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        with patch.object(nc, 'bt_scan', return_value=[]):
-            self.press('KEY_ENTER')
-        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_kind']), ('netlist', 'B'))
-
-    def test_esc_and_header_enter_return_home(self):
-        reset_state(screen='settings', settings_index=0,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+    def test_esc_returns_home_on_settings(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        self.press('KEY_ENTER')
         self.press('KEY_ESC')
         self.assertEqual(kyphone_os.state['screen'], 'home')
         self.assertEqual(kyphone_os.state['home_index'], kyphone_os.HOME_MENU.index('SETTINGS'))
 
-        reset_state(screen='settings', settings_index=-1,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        self.press('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['screen'], 'home')
 
+class TestWifiList(SettingsBase):
+    def test_the_switch_then_the_joined_network_then_the_rest_a_to_z(self):
+        wire = self.open_settings(0)
+        self.assertEqual(kyphone_os.state['screen'], 'wifi')
+        self.assertTrue(wire.startswith('NETLIST|W|0|'))
+        self.assertEqual(self.titles(wire), ['Wi-Fi', 'Maple', 'Birch_5G', 'OpenCafe', 'willow'])
+        rows = _rows(wire, 3)
+        self.assertEqual(rows[0], 'Wi-Fi' + CELL + 'Wi-Fi is on' + CELL + 'ON')
+        self.assertEqual(rows[1], 'Maple' + CELL + 'Connected' + CELL)
+        self.assertIn(CELL + 'Open' + CELL, rows[3])
 
-class TestWifiPicker(SettingsBase):
-    OPEN   = nc.WifiNetwork('Willow_Street_5G', 60, False, False)
-    LOCKED = nc.WifiNetwork('Maple', 89, True, True)
-
-    def open_picker(self, networks):
-        reset_state(screen='settings', settings_index=0,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        with patch.object(nc, 'wifi_scan', return_value=networks) as scan:
-            self.press('KEY_ENTER')
-        return scan
-
-    def test_scan_result_lands_after_the_rescan_row(self):
-        self.open_picker([self.LOCKED, self.OPEN])
-        self.assertFalse(kyphone_os.state['net_scanning'])
-        self.assertEqual([n.ssid for n in kyphone_os.state['net_rows']], ['Maple', 'Willow_Street_5G'])
-
-    def test_the_scanning_screen_is_plain_ascii(self):
-        reset_state(screen='settings', settings_index=0,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        with patch.object(kyphone_os, '_run_async', new=lambda fn: None):      # the scan never answers
-            wire = self.press('KEY_ENTER')
-        self.assertIn('SCANNING...', wire)
-        self.assertTrue(all(32 <= ord(c) < 127 or c == '\xb7' for c in wire), wire)
-
-    def test_an_empty_scan_says_so_on_the_rescan_row(self):
-        self.open_picker([])
-        with patch.object(kyphone_os, 'push_screen') as ps:
-            kyphone_os.push_netlist()
-        self.assertEqual(_wire(ps), 'NETLIST|W|0|RESCAN\xb7No networks found\xb7')
-
-    def test_a_scan_with_results_leaves_the_rescan_row_plain(self):
-        self.open_picker([self.OPEN])
-        with patch.object(kyphone_os, 'push_screen') as ps:
-            kyphone_os.push_netlist()
-        self.assertTrue(_wire(ps).startswith('NETLIST|W|0|RESCAN\xb7\xb7|'))
-
-    def test_rescan_row_runs_another_scan(self):
-        scan = self.open_picker([])
-        scan.reset_mock()
-        with patch.object(nc, 'wifi_scan', return_value=[self.OPEN]) as scan2:
-            self.press('KEY_ENTER')                            # net_index is 0 == RESCAN
-        scan2.assert_called_once()
-        self.assertEqual([n.ssid for n in kyphone_os.state['net_rows']], ['Willow_Street_5G'])
-
-    def test_open_network_connects_without_a_password_screen(self):
-        self.open_picker([self.OPEN])
-        kyphone_os.state['net_index'] = 1
-        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)) as connect:
-            self.press('KEY_ENTER')
-        connect.assert_called_once_with('Willow_Street_5G', None)
-        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_status']), ('netstate', 'OK'))
-
-    def test_locked_network_opens_the_password_screen_first(self):
-        self.open_picker([self.LOCKED])
-        kyphone_os.state['net_index'] = 1
-        self.press('KEY_ENTER')
-        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_ssid']), ('netpass', 'Maple'))
-
-    def test_esc_from_the_picker_goes_to_settings(self):
-        self.open_picker([])
-        self.press('KEY_ESC')
-        self.assertEqual(kyphone_os.state['screen'], 'settings')
-
-    def test_only_esc_works_while_a_scan_is_running(self):
-        reset_state(screen='netlist', net_kind='W', net_rows=[], net_index=0, net_scanning=True)
-        with patch.object(kyphone_os, '_run_async'):            # scan never completes in this test
-            self.press('KEY_DOWN')
-        self.assertEqual(kyphone_os.state['net_index'], 0)       # unmoved
-        self.press('KEY_ESC')
-        self.assertEqual(kyphone_os.state['screen'], 'settings')
-
-    def test_a_scan_that_finishes_after_leaving_the_screen_is_dropped(self):
-        """The async-scan pattern shared with the reader's page sender: if the phone has moved on by the time
-        the background call returns, the result must not silently land on some other screen."""
+    def test_the_list_is_drawn_before_the_search_answers(self):
         pending = []
-        with patch.object(kyphone_os, '_run_async', new=pending.append), \
-                patch.object(nc, 'wifi_scan', return_value=[self.OPEN]), \
-                patch.object(kyphone_os, 'push_screen'):
-            kyphone_os._open_netlist('W')
-        self.assertTrue(kyphone_os.state['net_scanning'])
-        kyphone_os.state['screen'] = 'home'                       # navigated away before the scan returned
-        pending[0]()                                              # the scan "finishes" now
-        self.assertEqual(kyphone_os.state['net_rows'], [])         # dropped, not applied
-
-
-class TestBluetoothPicker(SettingsBase):
-    KEYBOARD = nc.BtDevice('11:22:33:44:55:66', 'ZitaoTech_q10', True, True)
-    NEW      = nc.BtDevice('AA:BB:CC:DD:EE:FF', 'Some Headphones', False, False)
-
-    def open_picker(self, devices):
-        reset_state(screen='settings', settings_index=1,
-                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
-        with patch.object(nc, 'bt_scan', return_value=devices):
-            self.press('KEY_ENTER')
-
-    def test_an_empty_scan_says_no_devices_found(self):
-        self.open_picker([])
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        self.press('KEY_ENTER')
+        with patch.object(kyphone_os, '_run_async', new=pending.append):
+            wire = self.press('KEY_ENTER')
+        self.assertEqual(self.titles(wire), ['Wi-Fi', 'Maple', 'SEARCHING...'])
+        self.assertEqual(self.net.called('wifi_scan'), [])     # the search has not even run yet
         with patch.object(kyphone_os, 'push_screen') as ps:
-            kyphone_os.push_netlist()
-        self.assertEqual(_wire(ps), 'NETLIST|B|0|RESCAN\xb7No devices found\xb7')
+            pending[0]()                                       # the search answers: one redraw
+        self.assertEqual(self.titles(_wire(ps))[-1], 'willow')        # (the window shows the first five rows)
+        self.assertEqual(ps.call_count, 1)
+
+    def test_search_again_is_the_last_row_and_runs_another_search(self):
+        self.open_settings(0)
+        for _ in range(8):
+            wire = self.press('KEY_DOWN')
+        self.assertEqual(self.selected(wire), 'SEARCH AGAIN')
+        self.press('KEY_ENTER')
+        self.assertEqual(len(self.net.called('wifi_scan')), 2)
+
+    def test_an_empty_search_says_so(self):
+        self.net.current, self.net.nearby = None, []
+        wire = self.open_settings(0)
+        self.assertEqual(_rows(wire, 3)[1], 'SEARCH AGAIN' + CELL + 'No networks found' + CELL)
+
+    def test_switched_off_the_list_is_only_the_switch_and_nothing_searches(self):
+        self.net.wifi_on = False
+        wire = self.open_settings(0)
+        self.assertEqual(_rows(wire, 3), ['Wi-Fi' + CELL + 'Wi-Fi is off' + CELL + 'OFF'])
+        self.assertEqual(self.net.called('wifi_scan'), [])
+
+    def test_the_switch_turns_wifi_off_and_on(self):
+        self.open_settings(0)
+        wire = self.press('KEY_ENTER')                         # on the switch row
+        self.assertEqual(self.net.called('wifi_set_enabled'), [(False,)])
+        self.assertEqual(_rows(wire, 3), ['Wi-Fi' + CELL + 'Wi-Fi is off' + CELL + 'OFF'])
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('wifi_set_enabled'), [(False,), (True,)])
+        self.assertEqual(self.titles(wire)[:2], ['Wi-Fi', 'Maple'])
+
+    def test_the_joined_network_offers_forget_this_network_on_the_safe_default(self):
+        self.open_settings(0)
+        self.press('KEY_DOWN')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'confirm')
+        self.assertTrue(wire.startswith('CONFIRM|WI-FI|FORGET MAPLE?'))
+        self.assertTrue(wire.endswith('|FORGET|KEEP|K'))
+        self.press('KEY_ENTER')                                # KEEP: nothing forgotten
+        self.assertEqual((kyphone_os.state['screen'], self.net.called('wifi_forget')), ('wifi', []))
+
+    def test_forget_this_network(self):
+        self.open_settings(0)
+        self.press('KEY_DOWN')
+        self.press('KEY_ENTER')
+        self.press('KEY_LEFT')
+        self.net.current = None                               # (what nmcli would report afterwards)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('wifi_forget'), [('Maple',)])
+        self.assertEqual(kyphone_os.state['screen'], 'wifi')
+        self.assertEqual(self.titles(wire)[1], 'Birch_5G')
+
+    def test_a_secured_network_asks_for_its_password(self):
+        wire = self.open_settings(0)
+        self.select('Birch_5G', wire)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'NETPASS|Birch_5G||')
+
+    def test_an_open_network_connects_at_once_and_ok_returns_to_the_list(self):
+        wire = self.open_settings(0)
+        self.select('OpenCafe', wire)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('wifi_connect'), [('OpenCafe', None)])
+        self.assertEqual(wire, 'NETSTATE|W|OK|Connected to OpenCafe.')
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'wifi')
+
+    def test_esc_and_the_header_go_back_to_settings(self):
+        self.open_settings(0)
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+        self.open_settings(0)
+        self.press('KEY_UP')
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+
+    def test_a_long_list_scrolls(self):
+        self.net.nearby = [nc.WifiNetwork(f'Net{i:02d}', 50, True, False) for i in range(12)]
+        self.net.current = None
+        self.open_settings(0)
+        for _ in range(13):                                    # the switch, 12 networks, SEARCH AGAIN
+            wire = self.press('KEY_DOWN')
+        self.assertEqual(self.selected(wire), 'SEARCH AGAIN')
+        self.assertLessEqual(len(_rows(wire, 3)), kyphone_os.NET_ROWS)
+
+    def test_a_search_answering_after_leaving_is_dropped(self):
+        pending = []
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        self.press('KEY_ENTER')
+        with patch.object(kyphone_os, '_run_async', new=pending.append):
+            self.press('KEY_ENTER')
+        self.press('KEY_ESC')
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            pending[0]()
+        ps.assert_not_called()
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+
+
+class TestBluetoothList(SettingsBase):
+    def test_the_switch_then_known_devices_then_pair_new_device_and_no_scan(self):
+        wire = self.open_settings(1)
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+        self.assertTrue(wire.startswith('NETLIST|B|0|'))
+        self.assertEqual(self.titles(wire), ['Bluetooth', 'ZitaoTech_q10', 'Headphones', 'PAIR NEW DEVICE'])
+        self.assertIn(CELL + 'Connected' + CELL, _rows(wire, 3)[1])
+        self.assertIn(CELL + 'Not connected' + CELL, _rows(wire, 3)[2])
+        self.assertEqual(self.net.called('bt_scan'), [])
+
+    def test_switched_off_the_list_is_only_the_switch(self):
+        self.net.bt_on = False
+        self.net.known = []
+        wire = self.open_settings(1)
+        self.assertEqual(_rows(wire, 3), ['Bluetooth' + CELL + 'Bluetooth is off' + CELL + 'OFF'])
+        self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('bt_set_powered'), [(True,)])
+
+    def test_bluetooth_is_not_switched_off_while_the_keyboard_is_connected_by_it(self):
+        self.open_settings(1)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('bt_set_powered'), [])
+        self.assertTrue(wire.startswith('STUB|BLUETOOTH|BLUETOOTH STAYS ON'))
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_with_no_keyboard_connected_bluetooth_switches_off(self):
+        self.net.known[0].connected = False
+        self.open_settings(1)
+        self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('bt_set_powered'), [(False,)])
+
+    def test_a_known_device_offers_forget_or_re_connect_on_the_safe_default(self):
+        wire = self.open_settings(1)
+        self.select('Headphones', wire)
+        wire = self.press('KEY_ENTER')
+        self.assertTrue(wire.startswith('CONFIRM|BLUETOOTH|HEADPHONES IS NOT CONNECTED.'))
+        self.assertTrue(wire.endswith('|FORGET|RE-CONNECT|K'))
+
+    def test_re_connect(self):
+        wire = self.open_settings(1)
+        self.select('Headphones', wire)
+        self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')                         # RE-CONNECT holds the selection
+        self.assertEqual(self.net.called('bt_pair_connect'), [('AA:AA:AA:AA:AA:AA',)])
+        self.assertEqual(wire, 'NETSTATE|B|OK|Connected to Headphones.')
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_esc_on_the_question_does_nothing(self):
+        wire = self.open_settings(1)
+        self.select('Headphones', wire)
+        self.press('KEY_ENTER')
+        self.press('KEY_ESC')
+        self.assertEqual((kyphone_os.state['screen'], self.net.called('bt_pair_connect')), ('bluetooth', []))
+
+    def test_forget_a_device(self):
+        wire = self.open_settings(1)
+        self.select('Headphones', wire)
+        self.press('KEY_ENTER')
+        self.press('KEY_LEFT')
+        self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('bt_forget'), [('AA:AA:AA:AA:AA:AA',)])
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_the_keyboard_cannot_be_forgotten_even_when_switched_off(self):
+        for connected in (True, False):
+            self.net.known[0].connected = connected
+            self.net.calls.clear()
+            self._forget_keyboard()
+
+    def _forget_keyboard(self):
+        wire = self.open_settings(1)
+        self.select('ZitaoTech_q10', wire)
+        self.press('KEY_ENTER')
+        self.press('KEY_LEFT')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('bt_forget'), [])
+        self.assertTrue(wire.startswith('STUB|BLUETOOTH|THE KEYBOARD CANNOT BE FORGOTTEN'))
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_pair_new_device_searches_and_lists_only_new_devices(self):
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'btpair')
+        self.assertTrue(wire.startswith('NETLIST|P|0|'))
+        self.assertEqual(self.titles(wire), ['Speaker', 'SEARCH AGAIN'])
+        self.assertEqual(len(self.net.called('bt_scan')), 1)
+
+    def test_pairing_a_new_device_and_back(self):
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')                         # Speaker
+        self.assertEqual(wire, 'NETSTATE|B|OK|Connected to Speaker.')
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_a_failed_pairing_returns_to_other_devices(self):
+        self.net.connect_result = nc.Result(False, 'pairing was refused')
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'NETSTATE|B|FAIL|pairing was refused')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'btpair')
+        self.assertTrue(wire.startswith('NETLIST|P|'))
+
+    def test_esc_from_other_devices_goes_back_to_bluetooth(self):
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        self.press('KEY_ENTER')
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
+
+    def test_no_new_devices_says_so(self):
+        self.net.new = []
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(_rows(wire, 3), ['SEARCH AGAIN' + CELL + 'No devices found' + CELL])
 
     def test_q_cancels_a_pairing_in_progress(self):
         """The connecting screen's hint says Q: the phone keyboard has no Esc key."""
-        self.open_picker([self.NEW])
-        kyphone_os.state['net_index'] = 1
+        wire = self.open_settings(1)
+        self.select('PAIR NEW DEVICE', wire)
+        self.press('KEY_ENTER')
         with patch.object(kyphone_os, '_run_async', new=lambda fn: None):      # the pairing never answers
             self.press('KEY_ENTER')
         self.assertEqual(kyphone_os.state['net_status'], 'WORKING')
         self.press('CHAR:q')
-        self.assertEqual(kyphone_os.state['screen'], 'netlist')
-
-    def test_enter_on_a_new_device_pairs_and_connects(self):
-        self.open_picker([self.NEW])
-        kyphone_os.state['net_index'] = 1
-        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(True)) as pc:
-            self.press('KEY_ENTER')
-        pc.assert_called_once_with('AA:BB:CC:DD:EE:FF')
-        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_status']), ('netstate', 'OK'))
-
-    def test_never_calls_for_any_device_but_the_one_selected(self):
-        """The keyboard must never be touched by an action meant for a different device."""
-        self.open_picker([self.KEYBOARD, self.NEW])
-        kyphone_os.state['net_index'] = 2                        # the NEW device, not the keyboard
-        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(True)) as pc:
-            self.press('KEY_ENTER')
-        pc.assert_called_once_with('AA:BB:CC:DD:EE:FF')
-
-    def test_a_pairing_failure_goes_back_to_the_picker_not_a_password_screen(self):
-        self.open_picker([self.NEW])
-        kyphone_os.state['net_index'] = 1
-        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(False, 'pairing was refused')):
-            self.press('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['net_status'], 'FAIL')
-        self.press('KEY_ENTER')
-        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+        self.assertEqual(kyphone_os.state['screen'], 'btpair')
 
 
 class TestWifiPassword(SettingsBase):
-    def open(self, ssid='Maple'):
-        reset_state(screen='netpass', net_ssid=ssid, net_pass='', net_pass_hdr=False, net_kind='W', net_rows=[])
-
-    def test_up_selects_the_back_arrow_and_enter_there_goes_back_to_the_picker(self):
-        """The phone keyboard has no Esc key: ↑ then Enter is the way out, as on New Message."""
-        self.open()
-        kyphone_os.state['net_pass'] = 'hunt'
-        with patch.object(nc, 'wifi_connect') as connect:
-            wire = self.press('KEY_UP')
-            self.assertEqual(wire.split('|')[3], 'B')
-            self.press('KEY_ENTER')
-        connect.assert_not_called()                               # backing out never tries to connect
-        self.assertEqual(kyphone_os.state['screen'], 'netlist')
-
-    def test_down_returns_to_the_field(self):
-        self.open()
-        self.press('KEY_UP')
-        wire = self.press('KEY_DOWN')
-        self.assertEqual(wire.split('|')[3], '')
-        self.assertFalse(kyphone_os.state['net_pass_hdr'])
-
-    def test_typing_while_the_back_arrow_is_selected_returns_to_the_field_and_types(self):
-        self.open()
-        self.press('KEY_UP')
-        wire = self.press('CHAR:q')                               # q is a letter here, not back
+    def open(self, ssid='Birch_5G'):
+        wire = self.open_settings(0)
+        self.select(ssid, wire)
+        self.press('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'netpass')
-        self.assertEqual(kyphone_os.state['net_pass'], 'q')
-        self.assertEqual(wire.split('|')[2:], ['*', ''])
-
-    def test_reopening_starts_in_the_field(self):
-        reset_state(screen='netlist', net_kind='W', net_index=1, net_scanning=False, net_pass_hdr=True,
-                     net_rows=[nc.WifiNetwork('Maple', 89, True, False)])
-        wire = self.press('KEY_ENTER')
-        self.assertEqual(wire, 'NETPASS|Maple||')
 
     def test_typing_never_puts_the_real_password_on_the_wire(self):
         self.open()
@@ -2681,60 +2820,92 @@ class TestWifiPassword(SettingsBase):
         self.assertEqual(wire.split('|')[2], '*' * len('wrongp'))
 
     def test_enter_attempts_the_connection(self):
-        self.open('Maple')
+        self.open()
         kyphone_os.state['net_pass'] = 'hunter2'
-        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)) as connect:
-            self.press('KEY_ENTER')
-        connect.assert_called_once_with('Maple', 'hunter2')
+        self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('wifi_connect'), [('Birch_5G', 'hunter2')])
         self.assertEqual(kyphone_os.state['net_status'], 'OK')
 
     def test_a_wrong_password_returns_to_the_password_screen_with_it_kept(self):
-        self.open('Maple')
+        self.net.connect_result = nc.Result(False, 'wrong password')
+        self.open()
         kyphone_os.state['net_pass'] = 'wrongpw'
-        with patch.object(nc, 'wifi_connect', return_value=nc.Result(False, 'wrong password')):
-            self.press('KEY_ENTER')                               # -> netstate, FAIL
-        self.press('KEY_ENTER')                                    # dismiss the result
+        self.press('KEY_ENTER')                                   # -> netstate, FAIL
+        self.press('KEY_ENTER')                                   # dismiss the result
         self.assertEqual(kyphone_os.state['screen'], 'netpass')
         self.assertEqual(kyphone_os.state['net_pass'], 'wrongpw')  # not cleared — one correction away, not a retype
 
-    def test_esc_goes_back_to_the_picker(self):
+    def test_esc_goes_back_to_the_list(self):
         self.open()
         self.press('KEY_ESC')
-        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+        self.assertEqual(kyphone_os.state['screen'], 'wifi')
+
+    def test_up_selects_the_back_arrow_and_enter_there_goes_back_to_the_list(self):
+        """The phone keyboard has no Esc key: ↑ then Enter is the way out, as on New Message."""
+        self.open()
+        kyphone_os.state['net_pass'] = 'hunt'
+        wire = self.press('KEY_UP')
+        self.assertEqual(wire.split('|')[3], 'B')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(self.net.called('wifi_connect'), [])      # backing out never tries to connect
+        self.assertEqual(kyphone_os.state['screen'], 'wifi')
+        self.assertTrue(wire.startswith('NETLIST|W|'))
+
+    def test_down_returns_to_the_field(self):
+        self.open()
+        self.press('KEY_UP')
+        wire = self.press('KEY_DOWN')
+        self.assertEqual(wire.split('|')[3], '')
+        self.assertFalse(kyphone_os.state['net_pass_hdr'])
+
+    def test_typing_while_the_back_arrow_is_selected_returns_to_the_field_and_types(self):
+        self.open()
+        self.press('KEY_UP')
+        wire = self.press('CHAR:q')                               # q is a letter here, not back
+        self.assertEqual(kyphone_os.state['screen'], 'netpass')
+        self.assertEqual(kyphone_os.state['net_pass'], 'q')
+        self.assertEqual(wire.split('|')[2:], ['*', ''])
+
+    def test_reopening_starts_in_the_field(self):
+        self.open()
+        self.press('KEY_UP')
+        self.press('KEY_ENTER')                                   # back to the list, on Birch_5G
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'NETPASS|Birch_5G||')
 
 
 class TestNetstate(SettingsBase):
-    def test_success_refreshes_settings_status_and_returns_there(self):
-        reset_state(screen='netlist', net_kind='W', net_rows=[], net_index=1,
-                     net_scanning=False)
-        network = nc.WifiNetwork('Willow_Street_5G', 60, False, False)
-        kyphone_os.state['net_rows'] = [network]
-        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)), \
-                patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(True, 'Willow_Street_5G')) as ws, \
-                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
-            self.press('KEY_ENTER')                               # netlist -> netstate (OK)
-            ws.assert_called_once()                                # refreshed as soon as it succeeded
-            self.press('KEY_ENTER')                                # dismiss
-        self.assertEqual(kyphone_os.state['screen'], 'settings')
+    def test_success_refreshes_settings_status(self):
+        wire = self.open_settings(0)
+        self.select('OpenCafe', wire)
+        self.press('KEY_ENTER')
+        self.net.current = 'OpenCafe'
+        self.press('KEY_ENTER')                                   # OK -> the refreshed list
+        wire = self.press('KEY_ESC')                              # -> Settings, read again
+        self.assertIn('Connected: OpenCafe', _rows(wire, 2)[0])
 
-    def test_working_never_blocks_a_key_press(self):
-        """Esc/back must work even while a connect/pair is still WORKING (the call itself runs synchronously in
-        this test via the patched _run_async, but the state machine must not assume that)."""
-        reset_state(screen='netstate', net_kind='B', net_status='WORKING', net_detail='Pairing...', net_rows=[])
-        with patch.object(kyphone_os, 'push_screen'):
-            kyphone_os.handle_key('KEY_ESC')
-        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+    def test_leaving_while_working_abandons_it(self):
+        reset_state(screen='netstate', net_kind='B', net_status='WORKING', net_detail='Pairing...',
+                    net_source='bluetooth', net_rows=[])
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'bluetooth')
 
     def test_a_result_that_arrives_after_leaving_is_dropped(self):
-        reset_state(screen='netstate', net_kind='W', net_ssid='Maple', net_status='WORKING', net_source='netlist')
+        reset_state(screen='netstate', net_kind='W', net_ssid='Maple', net_status='WORKING', net_source='wifi')
         pending = []
-        with patch.object(kyphone_os, '_run_async', new=pending.append), \
-                patch.object(nc, 'wifi_connect', return_value=nc.Result(True)):
+        with patch.object(kyphone_os, '_run_async', new=pending.append):
             with patch.object(kyphone_os, 'push_screen'):
-                kyphone_os._open_netstate_wifi('Maple', None, source='netlist')
+                kyphone_os._open_netstate_wifi('Maple', None, source='wifi')
         kyphone_os.state['screen'] = 'home'                        # navigated away before the call returned
         pending[-1]()
         self.assertEqual(kyphone_os.state['net_status'], 'WORKING')   # never overwritten
+
+    def test_every_settings_screen_is_plain_ascii(self):
+        wires = [self.open_settings(0), self.open_settings(1)]
+        with patch.object(kyphone_os, '_run_async', new=lambda fn: None):
+            wires.append(self.open_settings(0))                  # SEARCHING...
+        for wire in wires:
+            self.assertTrue(all(32 <= ord(c) < 127 or c == CELL for c in wire), wire)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

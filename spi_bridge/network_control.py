@@ -1,5 +1,6 @@
 """network_control.py — Wi-Fi and Bluetooth, wrapped so a missing tool, a non-Radxa host (the Mac, tests), or a
-slow/failed call never raises. kyphone_os.py's state machine (SETTINGS / NETLIST / NETPASS / NETSTATE) reads only
+slow/failed call never raises. kyphone_os.py's Settings screens (the Wi-Fi and Bluetooth lists, the password box, the
+connect result) read only
 these functions; nowhere else in the project calls `nmcli` or `bluetoothctl` directly.
 
 Every external command is built as an argument list, never a shell string, so a typed SSID, device name or
@@ -30,8 +31,9 @@ class WifiStatus:
 
 
 class BtDevice:
-    def __init__(self, mac, name, paired, connected):
+    def __init__(self, mac, name, paired, connected, is_input=False):
         self.mac, self.name, self.paired, self.connected = mac, name, paired, connected
+        self.is_input = is_input      # a keyboard, mouse or game pad — the phone's keyboard is one of these
 
 
 class BtStatus:
@@ -72,6 +74,43 @@ def wifi_status():
         if len(parts) >= 4 and parts[1] == 'wifi' and parts[2] == 'connected':
             return WifiStatus(True, parts[3])
     return WifiStatus(False)
+
+
+def wifi_enabled():
+    """Whether the Wi-Fi radio is switched on (`nmcli radio wifi` prints enabled / disabled)."""
+    ok, out, _ = _run(['nmcli', 'radio', 'wifi'], WIFI_TIMEOUT)
+    return ok and out.strip() == 'enabled'
+
+
+def wifi_set_enabled(on):
+    """The Wi-Fi switch. Switching on lets NetworkManager rejoin a saved network by itself."""
+    ok, _, _ = _run(['nmcli', 'radio', 'wifi', 'on' if on else 'off'], WIFI_TIMEOUT)
+    return Result(ok, '' if ok else 'could not switch Wi-Fi ' + ('on' if on else 'off'))
+
+
+def _wifi_connection_names():
+    """Saved Wi-Fi connection profiles by name. Terse output escapes a ':' in a name as '\\:'; the type is last."""
+    ok, out, _ = _run(['nmcli', '-t', '-f', 'NAME,TYPE', 'connection', 'show'], WIFI_TIMEOUT)
+    names = []
+    for line in (out.splitlines() if ok else []):
+        name, _, kind = line.rpartition(':')
+        if kind == '802-11-wireless' and name:
+            names.append(name.replace('\\:', ':'))
+    return names
+
+
+def wifi_forget(ssid):
+    """Forget This Network: delete every saved profile for this SSID (the phone disconnects if it is the joined one,
+    and joining again needs the password)."""
+    found = False
+    for name in _wifi_connection_names():
+        ok, out, _ = _run(['nmcli', '-g', '802-11-wireless.ssid', 'connection', 'show', 'id', name], WIFI_TIMEOUT)
+        if ok and out.strip().replace('\\:', ':') == ssid:
+            found = True
+            ok, _, _ = _run(['nmcli', 'connection', 'delete', 'id', name], WIFI_TIMEOUT)
+            if not ok:
+                return Result(False, 'could not forget it')
+    return Result(True) if found else Result(False, 'not a saved network')
 
 
 def wifi_scan():
@@ -134,9 +173,35 @@ def _parse_device_lines(out):
     return devices
 
 
-def _bt_connected(mac):
+def _bt_info(mac):
     ok, out, _ = _run(['bluetoothctl', 'info', mac], BT_INFO_TIMEOUT)
-    return ok and 'Connected: yes' in out
+    return out if ok else ''
+
+
+def _bt_connected(mac):
+    return 'Connected: yes' in _bt_info(mac)
+
+
+def bt_set_powered(on):
+    """The Bluetooth switch. (The phone refuses to switch it off while the keyboard is connected by it.)"""
+    ok, _, _ = _run(['bluetoothctl', 'power', 'on' if on else 'off'], BT_INFO_TIMEOUT)
+    return Result(ok, '' if ok else 'could not switch Bluetooth ' + ('on' if on else 'off'))
+
+
+def bt_known():
+    """The paired devices, A-Z, with whether each is connected and whether it is an input device. Never scans."""
+    paired = _parse_device_lines(_run(['bluetoothctl', 'paired-devices'], BT_INFO_TIMEOUT)[1])
+    devices = []
+    for mac, name in paired.items():
+        info = _bt_info(mac)
+        devices.append(BtDevice(mac, name, True, 'Connected: yes' in info, 'Icon: input-' in info))
+    return sorted(devices, key=lambda d: d.name.lower())
+
+
+def bt_forget(mac):
+    """Forget the device: unpair it (`bluetoothctl remove`)."""
+    ok, _, _ = _run(['bluetoothctl', 'remove', mac], BT_INFO_TIMEOUT)
+    return Result(ok, '' if ok else 'could not forget it')
 
 
 def bt_status():

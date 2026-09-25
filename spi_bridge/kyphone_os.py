@@ -215,7 +215,7 @@ MUSIC_TITLE_MAX   = 22
 MUSIC_SUB_MAX     = 24
 
 # --- Settings (Wi-Fi / Bluetooth) ---
-NET_ROWS      = 5    # visible rows in the Wi-Fi/Bluetooth picker (RESCAN + up to 4 networks/devices)
+NET_ROWS      = 5    # visible rows in the Wi-Fi / Bluetooth / Other devices lists (they scroll)
 NET_NAME_MAX  = 22   # a network SSID or device name column
 NET_SUB_MAX   = 30   # the settings list's status subtitle ("Connected: ...")
 NET_PASS_MAX  = 63   # the longest a WPA passphrase can be
@@ -247,6 +247,9 @@ STUB_INFO = {}       # (READ and LISTEN were the last two; both are real screens
 # Stop alerts for input the phone will not act on: a no-op is never silent (the
 # only deliberate silence is a rejected keystroke).
 ALERTS = {
+    'BT_KEEP_ON':   ('BLUETOOTH', 'BLUETOOTH STAYS ON WHILE THE KEYBOARD IS CONNECTED BY IT. SWITCHED OFF, THE PHONE WOULD HAVE NO WAY TO TYPE, SO NOTHING COULD SWITCH IT BACK ON.'),
+    'BT_KEEP_KEYBOARD': ('BLUETOOTH', "THE KEYBOARD CANNOT BE FORGOTTEN. IT IS THE PHONE'S WAY TO TYPE, AND PAIRING IT AGAIN WOULD NEED A KEYBOARD."),
+    'NET_FAILED':   ('SETTINGS', '{what}. TRY AGAIN IN A MOMENT.'),
     'EMPTY_SEND':   ('NEW MESSAGE', 'THERE IS NOTHING TO SEND. TYPE A MESSAGE FIRST, THEN PRESS SEND.'),
     'NO_RECIPIENT': ('NEW MESSAGE', 'THERE IS NO ONE TO SEND THIS TO. TYPE A NUMBER IN THE TO FIELD, OR PRESS + TO PICK A CONTACT.'),
     'NEED_FIRST':   ('CONTACT', 'A CONTACT NEEDS A FIRST NAME. TYPE ONE IN THE FIRST NAME FIELD, THEN PRESS SAVE.'),
@@ -290,7 +293,7 @@ state = {
     'compose_header_sel': None,     # None=typing | 'x'
     'compose_plus_sel': False,      # '+' next to an empty TO field selected
     'compose_send_sel': False,      # SEND button selected
-    'confirm_kind':     'discard_message',   # 'discard_message' | 'delete_contact'
+    'confirm_kind':     'discard_message',   # 'discard_message' | 'delete_contact' | 'forget_wifi' | 'bt_device'
     'confirm_sel':      'keep',     # 'keep' (the safe, right-hand default) | 'go' (the destructive one)
     'stub_key':         '',
     'stub_return':      'home',     # screen to return to on Esc/Enter
@@ -349,18 +352,23 @@ state = {
     'music_last':     None,         # {'path', 'position'} from listening.json, offered as RESUME
 
     'settings_index': 0,            # -1=header | 0=Wi-Fi | 1=Bluetooth
+    'settings_wifi_on': True,       # the Wi-Fi switch, read when SETTINGS opens
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
     'settings_bt':    None,         # network_control.BtStatus, same
 
-    'net_kind':       'W',          # 'W' Wi-Fi | 'B' Bluetooth — which picker/flow is open
-    'net_rows':       [],           # the last scan's WifiNetwork/BtDevice list
-    'net_index':      0,            # -1=header | 0=RESCAN | 1..=net_rows[i-1]
+    'net_kind':       'W',          # 'W' the Wi-Fi list | 'B' the Bluetooth list | 'P' Other devices (pairing)
+    'net_on':         True,         # the list's switch (Wi-Fi / Bluetooth on)
+    'net_current':    None,         # the joined Wi-Fi network's name, or None
+    'net_rows':       [],           # W: the last search's WifiNetworks · B: the paired BtDevices · P: new BtDevices
+    'net_index':      0,            # -1=header, else a row of _net_entries()
     'net_start':      0,
-    'net_scanning':   False,        # a scan is running in the background; only Esc works meanwhile
+    'net_scanning':   False,        # a search is running in the background (SEARCHING... ends the list)
+    'net_confirm_connected': False, # the known device on the FORGET / RE-CONNECT screen is connected
+    'net_confirm_input':     False, # ... is an input device (the keyboard): it can never be forgotten
     'net_ssid':       '',           # the Wi-Fi network being typed a password for or connected to
     'net_pass':       '',           # the password typed so far on NETPASS (never sent to the screen)
     'net_pass_hdr':   False,        # NETPASS: True = the header's < is selected (Enter there backs out)
-    'net_source':     'netlist',    # where a Wi-Fi connect attempt was started: 'netlist' (open) | 'netpass' (secured)
+    'net_source':     'wifi',       # where NETSTATE's attempt started: 'wifi' | 'netpass' | 'bluetooth' | 'btpair' | 'forget'
     'net_mac':        '',           # the Bluetooth device being paired/connected
     'net_name':       '',           # that device's name, for the NETSTATE message
     'net_status':     'WORKING',    # NETSTATE: 'WORKING' | 'OK' | 'FAIL'
@@ -865,7 +873,9 @@ def push_confirm():
         kind = state['confirm_kind']
         sel  = state['confirm_sel']
         eidx = state['edit_idx']
-    if kind == 'delete_contact':
+    if kind in ('forget_wifi', 'bt_device'):
+        title, body, go, keep = _net_confirm_text(kind)
+    elif kind == 'delete_contact':
         name = sanitize(dispname(CONTACTS[eidx])).upper() if eidx is not None and 0 <= eidx < len(CONTACTS) else ''
         title = 'DELETE CONTACT'
         body  = (f'DELETE {name}? THE MESSAGES STAY IN THE TEXT LIST, LABELED WITH THE NUMBER. '
@@ -1030,7 +1040,7 @@ def _push_for_screen(screen_name):
         'in_call': push_call_screen,
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
-        'settings': push_settings, 'netlist': push_netlist,
+        'settings': push_settings, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
         'netpass': push_netpass, 'netstate': push_netstate,
     }
     pusher = pushers.get(screen_name)
@@ -1126,8 +1136,8 @@ def handle_key(keycode):
     elif screen == 'settings':
         _from_settings(keycode)
 
-    elif screen == 'netlist':
-        _from_netlist(keycode)
+    elif screen in ('wifi', 'bluetooth', 'btpair'):
+        _from_net(keycode)
 
     elif screen == 'netpass':
         _from_netpass(keycode)
@@ -1570,7 +1580,7 @@ def _cancel_confirm():
     """Esc, or Enter on the safe button: back to where the question came from."""
     with state['lock']:
         kind   = state['confirm_kind']
-        target = 'compose' if kind == 'discard_message' else 'contact_edit'
+        target = {'discard_message': 'compose', 'forget_wifi': 'wifi', 'bt_device': 'bluetooth'}.get(kind, 'contact_edit')
         state['screen']      = target
         state['confirm_sel'] = 'keep'
     _push_for_screen(target)
@@ -1614,8 +1624,14 @@ def _from_confirm(keycode):
         with state['lock']:
             kind = state['confirm_kind']
             sel  = state['confirm_sel']
-        if sel != 'go':
+        if sel != 'go' and kind == 'bt_device':
+            with state['lock']:
+                mac, name = state['net_mac'], state['net_name']
+            _open_netstate_bt(mac, name, source='bluetooth')          # RE-CONNECT
+        elif sel != 'go':
             _cancel_confirm()
+        elif kind in ('forget_wifi', 'bt_device'):
+            _net_confirm_go(kind)
         elif kind == 'delete_contact':
             _delete_contact()
         else:
@@ -2797,34 +2813,49 @@ def _run_async(fn):
 
 
 # ─── Settings (Wi-Fi / Bluetooth) ──────────────────────────────────────────────
-# SETTINGS on the home menu opens a two-row list (Wi-Fi, Bluetooth — network_control.py talks to the small
-# computer's own nmcli/bluetoothctl). Enter on either opens NETLIST: a RESCAN row followed by whatever the last
-# scan found. Wi-Fi: an open network connects at once, a locked one opens NETPASS for a password first.
-# Bluetooth: any row pairs (if needed) and connects. Both funnel into NETSTATE, which shows WORKING while a
-# background thread talks to nmcli/bluetoothctl, then OK or FAIL — the keyboard is never blocked on a scan,
-# a connect, or a pair (see _run_async and _dispatch_send's messages, which follow the same shape).
+# Kyle's layout (2026-09-25). SETTINGS lists Wi-Fi and Bluetooth, each with its
+# status. network_control.py talks to the small computer's own nmcli / bluetoothctl.
 #
-# A scan or a connect/pair attempt that finishes after the phone has navigated away is dropped (checked by
-# screen + the network/device it was for), the same "abandoned work" rule the reader's page sender follows.
+# WI-FI: the switch; the joined network right under it (Enter: FORGET THIS NETWORK, confirmed); then the networks
+#   nearby, A-Z. A search runs once when the list opens — the switch and the joined network are there at once,
+#   SEARCHING... sits at the end until the search answers, then the list redraws once — and SEARCH AGAIN runs
+#   another. An open network connects at once; a secured one asks for its password first (NETPASS).
+# BLUETOOTH: the switch; the known (paired) devices, A-Z (Enter: FORGET or RE-CONNECT, on the confirmation
+#   screen); PAIR NEW DEVICE, which opens OTHER DEVICES: a search for devices not yet paired. Nothing scans for
+#   Bluetooth until PAIR NEW DEVICE is chosen.
+# The keyboard is a Bluetooth device and the phone's only way to type, so Bluetooth is never switched off while it
+#   is connected by it, and a keyboard (any input device) is never forgotten at all: a stop alert says why instead.
+# Connecting and pairing go through NETSTATE (WORKING, then OK or FAIL). Every slow call runs off the keyboard's
+#   thread (_run_async), and a result that arrives after the phone has moved on is dropped.
 
-def _wifi_status_text(status):
+NET_SCREENS = {'W': 'wifi', 'B': 'bluetooth', 'P': 'btpair'}
+WIFI_ON_SETTLE = 4      # seconds to let NetworkManager rejoin a saved network after Wi-Fi is switched on
+
+
+def _wifi_status_text(on, status):
+    if not on:
+        return 'Off'
     if status and status.connected:
         return sanitize('Connected: ' + status.ssid)[:NET_SUB_MAX]
     return 'Not connected'
 
 
 def _bt_status_text(status):
+    if status and not status.powered:
+        return 'Off'
     if status and status.connected_names:
         return sanitize('Connected: ' + ', '.join(status.connected_names))[:NET_SUB_MAX]
     return 'Not connected'
 
 
 def _refresh_settings_status():
-    wifi = netctl.wifi_status()
-    bt   = netctl.bt_status()
+    wifi_on = netctl.wifi_enabled()
+    wifi    = netctl.wifi_status()
+    bt      = netctl.bt_status()
     with state['lock']:
-        state['settings_wifi'] = wifi
-        state['settings_bt']   = bt
+        state['settings_wifi_on'] = wifi_on
+        state['settings_wifi']    = wifi
+        state['settings_bt']      = bt
 
 
 def _open_settings():
@@ -2835,13 +2866,21 @@ def _open_settings():
     push_settings()
 
 
+def _back_to_settings():
+    with state['lock']:
+        state['screen'] = 'settings'
+    _refresh_settings_status()
+    push_settings()
+
+
 def push_settings():
     with state['lock']:
-        idx  = state['settings_index']
-        wifi = state['settings_wifi']
-        bt   = state['settings_bt']
+        idx     = state['settings_index']
+        wifi_on = state['settings_wifi_on']
+        wifi    = state['settings_wifi']
+        bt      = state['settings_bt']
     rows = [
-        ['Wi-Fi', _wifi_status_text(wifi), ''],
+        ['Wi-Fi', _wifi_status_text(wifi_on, wifi), ''],
         ['Bluetooth', _bt_status_text(bt), ''],
     ]
     push_screen(_list_command(["SETTINGS", str(idx)], rows, shrink_order=(1,)))
@@ -2858,125 +2897,257 @@ def _from_settings(keycode):
         with state['lock']:
             state['settings_index'] = min(1, idx + 1)
         push_settings()
-    elif keycode == 'KEY_ENTER':
-        if idx == 0:
-            _open_netlist('W')
-        elif idx == 1:
-            _open_netlist('B')
-        else:                                                 # header selected — same as Esc
-            with state['lock']:
-                state['screen']     = 'home'
-                state['home_index'] = HOME_MENU.index('SETTINGS')
-            push_home2()
-    elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+    elif keycode == 'KEY_ENTER' and idx == 0:
+        _open_wifi()
+    elif keycode == 'KEY_ENTER' and idx == 1:
+        _open_bluetooth()
+    elif keycode in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):   # Enter on the header, or Esc
         with state['lock']:
             state['screen']     = 'home'
             state['home_index'] = HOME_MENU.index('SETTINGS')
         push_home2()
 
 
-def _open_netlist(kind):
+def _open_wifi(keep_index=False):
+    """The Wi-Fi list, drawn at once from the switch and the joined network; the search for networks nearby
+    starts in the background and redraws the list once when it answers."""
+    on     = netctl.wifi_enabled()
+    status = netctl.wifi_status() if on else netctl.WifiStatus(False)
     with state['lock']:
-        state['screen']       = 'netlist'
-        state['net_kind']     = kind
-        state['net_index']    = 0
-        state['net_start']    = 0
+        state['screen']       = 'wifi'
+        state['net_kind']     = 'W'
+        state['net_on']       = on
+        state['net_current']  = status.ssid if status.connected else None
+        state['net_rows']     = []
+        state['net_scanning'] = on
+        if not keep_index:
+            state['net_index'] = 0
+            state['net_start'] = 0
+    push_net()
+    if on:
+        _run_async(lambda: _do_net_scan('W'))
+
+
+def _open_bluetooth(keep_index=False):
+    """The Bluetooth list: the switch and the paired devices. Reads only — nothing scans here."""
+    on    = netctl.bt_status().powered
+    known = netctl.bt_known() if on else []
+    with state['lock']:
+        state['screen']       = 'bluetooth'
+        state['net_kind']     = 'B'
+        state['net_on']       = on
+        state['net_current']  = None
+        state['net_rows']     = known
+        state['net_scanning'] = False
+        if not keep_index:
+            state['net_index'] = 0
+            state['net_start'] = 0
+    push_net()
+
+
+def _open_btpair():
+    """OTHER DEVICES: search once for devices that are not paired yet."""
+    with state['lock']:
+        state['screen']       = 'btpair'
+        state['net_kind']     = 'P'
+        state['net_on']       = True
         state['net_rows']     = []
         state['net_scanning'] = True
-    push_netlist()
-    _run_async(lambda: _do_net_scan(kind))
-
-
-def _rescan_netlist():
-    with state['lock']:
-        kind = state['net_kind']
-        state['net_scanning'] = True
         state['net_index']    = 0
         state['net_start']    = 0
-    push_netlist()
+    push_net()
+    _run_async(lambda: _do_net_scan('P'))
+
+
+def _search_again(kind):
+    with state['lock']:
+        state['net_scanning'] = True      # the list stays as it was, SEARCHING... in place of SEARCH AGAIN
+    push_net()
     _run_async(lambda: _do_net_scan(kind))
 
 
 def _do_net_scan(kind):
-    rows = netctl.wifi_scan() if kind == 'W' else netctl.bt_scan()
+    rows = netctl.wifi_scan() if kind == 'W' else [d for d in netctl.bt_scan() if not d.paired]
     with state['lock']:
-        if state['screen'] != 'netlist' or state['net_kind'] != kind:
-            return                                            # navigated away meanwhile: the result is dropped
+        if state['screen'] != NET_SCREENS[kind] or state['net_kind'] != kind:
+            return                                            # moved on meanwhile: the result is dropped
         state['net_scanning'] = False
         state['net_rows']     = rows
-    push_netlist()
+    push_net()
 
 
-def push_netlist():
-    with state['lock']:
-        kind     = state['net_kind']
-        idx      = state['net_index']
-        rows     = list(state['net_rows'])
-        scanning = state['net_scanning']
-
-    if scanning:
-        push_screen(_list_command(["NETLIST", kind, "-1" if idx == -1 else "0"],
-                                   [['SCANNING...', '', '']], shrink_order=(0,)))
-        return
-
-    if kind == 'W':
-        cols = [[sanitize(n.ssid)[:NET_NAME_MAX], 'Secured' if n.secured else 'Open',
-                 'CONNECTED' if n.in_use else ''] for n in rows]
+def _net_entries(kind, on, current, rows, scanning):
+    """The rows of a Wi-Fi / Bluetooth / Other devices list, top to bottom, as (what, item, [title, sub, right])."""
+    if kind in ('W', 'B'):
+        word = 'Wi-Fi' if kind == 'W' else 'Bluetooth'
+        entries = [('toggle', None, [word, f'{word} is {"on" if on else "off"}', 'ON' if on else 'OFF'])]
+        if not on:
+            return entries
     else:
-        cols = [[sanitize(n.name)[:NET_NAME_MAX], 'Paired' if n.paired else 'New device',
-                 'CONNECTED' if n.connected else ''] for n in rows]
-    # An empty scan says so on the RESCAN row itself, so the list is never silently blank.
-    empty = ('No networks found' if kind == 'W' else 'No devices found') if not rows else ''
-    entries = [['RESCAN', empty, '']] + cols
+        entries = []
+    if kind == 'B':
+        entries += [('known', d, [d.name, 'Connected' if d.connected else 'Not connected', '']) for d in rows]
+        entries.append(('pairnew', None, ['PAIR NEW DEVICE', 'Put the device in pairing mode first', '']))
+        return entries
+    if kind == 'W':
+        if current:
+            entries.append(('current', current, [current, 'Connected', '']))
+        nearby = sorted((n for n in rows if n.ssid != current), key=lambda n: n.ssid.lower())
+        entries += [('net', n, [n.ssid, 'Secured' if n.secured else 'Open', '']) for n in nearby]
+    else:
+        entries += [('device', d, [d.name, 'New device', '']) for d in sorted(rows, key=lambda d: d.name.lower())]
+    if scanning:
+        entries.append(('searching', None, ['SEARCHING...', '', '']))
+    else:
+        none = ('No networks found' if kind == 'W' else 'No devices found') if not rows else ''
+        entries.append(('again', None, ['SEARCH AGAIN', none, '']))
+    return entries
 
+
+def _net_snapshot():
     with state['lock']:
+        return (state['net_kind'], state['net_on'], state['net_current'], list(state['net_rows']),
+                state['net_scanning'], state['net_index'])
+
+
+def push_net():
+    kind, on, current, rows, scanning, idx = _net_snapshot()
+    entries = _net_entries(kind, on, current, rows, scanning)
+    idx = min(idx, len(entries) - 1)
+    with state['lock']:
+        state['net_index'] = idx
         start = window_start(state['net_start'], max(0, idx), NET_ROWS, len(entries))
         state['net_start'] = start
     send_idx = idx if idx < 0 else idx - start
-    shown = entries[start:start + NET_ROWS]
+    shown = [[sanitize(entry[2][0])[:NET_NAME_MAX], sanitize(entry[2][1]), entry[2][2]]
+             for entry in entries[start:start + NET_ROWS]]
     push_screen(_list_command(["NETLIST", kind, str(send_idx)], shown, shrink_order=(0,)))
 
 
-def _from_netlist(keycode):
-    with state['lock']:
-        idx      = state['net_index']
-        rows     = list(state['net_rows'])
-        kind     = state['net_kind']
-        scanning = state['net_scanning']
-    max_idx = len(rows)                                        # 0=RESCAN, 1..len(rows)=rows[i-1]
+def _leave_net(kind):
+    if kind == 'P':
+        _open_bluetooth()
+    else:
+        _back_to_settings()
 
-    if keycode == 'KEY_ESC':
-        with state['lock']:
-            state['screen'] = 'settings'
-        push_settings()
-        return
-    if scanning:
-        return                                                 # only Esc works while a scan is running
 
-    if keycode == 'KEY_UP':
+def _from_net(keycode):
+    kind, on, current, rows, scanning, idx = _net_snapshot()
+    entries = _net_entries(kind, on, current, rows, scanning)
+
+    if keycode in ('KEY_ESC', 'KEY_BACKSPACE') or (keycode == 'KEY_ENTER' and idx == -1):
+        _leave_net(kind)
+    elif keycode in ('KEY_UP', 'KEY_DOWN'):
+        step = -1 if keycode == 'KEY_UP' else 1
         with state['lock']:
-            state['net_index'] = max(-1, idx - 1)
-        push_netlist()
-    elif keycode == 'KEY_DOWN':
-        with state['lock']:
-            state['net_index'] = min(max_idx, idx + 1)
-        push_netlist()
-    elif keycode == 'KEY_ENTER':
-        if idx == -1:
-            with state['lock']:
-                state['screen'] = 'settings'
-            push_settings()
-        elif idx == 0:
-            _rescan_netlist()
-        elif kind == 'W':
-            n = rows[idx - 1]
-            if n.secured:
-                _open_netpass(n.ssid)
+            state['net_index'] = max(-1, min(len(entries) - 1, idx + step))
+        push_net()
+    elif keycode == 'KEY_ENTER' and 0 <= idx < len(entries):
+        what, item, _ = entries[idx]
+        if what == 'toggle':
+            _net_toggle(kind, on, rows)
+        elif what == 'current':
+            _open_net_confirm('forget_wifi', ssid=item)
+        elif what == 'net':
+            if item.secured:
+                _open_netpass(item.ssid)
             else:
-                _open_netstate_wifi(n.ssid, None, source='netlist')
+                _open_netstate_wifi(item.ssid, None, source='wifi')
+        elif what == 'again':
+            _search_again(kind)
+        elif what == 'known':
+            _open_net_confirm('bt_device', device=item)
+        elif what == 'pairnew':
+            _open_btpair()
+        elif what == 'device':
+            _open_netstate_bt(item.mac, item.name, source='btpair')
+        else:                                                 # SEARCHING...: nothing to do yet, but answer the key
+            push_net()
+
+
+def _net_toggle(kind, on, rows):
+    if kind == 'B' and on and any(d.connected and d.is_input for d in rows):
+        _show_alert('BT_KEEP_ON', 'bluetooth')
+        return
+
+    def work():
+        if kind == 'W':
+            result = netctl.wifi_set_enabled(not on)
+            if result.ok and not on:
+                time.sleep(WIFI_ON_SETTLE)
         else:
-            d = rows[idx - 1]
-            _open_netstate_bt(d.mac, d.name)
+            result = netctl.bt_set_powered(not on)
+        with state['lock']:
+            if state['screen'] != NET_SCREENS[kind]:
+                return
+        if not result.ok:
+            _show_alert('NET_FAILED', NET_SCREENS[kind], what=result.detail.upper())
+        elif kind == 'W':
+            _open_wifi(keep_index=True)
+        else:
+            _open_bluetooth(keep_index=True)
+    _run_async(work)
+
+
+def _open_net_confirm(kind, ssid='', device=None):
+    """FORGET THIS NETWORK, or a known device's FORGET / RE-CONNECT, on the one confirmation layout."""
+    with state['lock']:
+        state['screen']       = 'confirm'
+        state['confirm_kind'] = kind
+        state['confirm_sel']  = 'keep'
+        if kind == 'forget_wifi':
+            state['net_ssid'] = ssid
+        else:
+            state['net_mac']       = device.mac
+            state['net_name']      = device.name
+            state['net_confirm_connected'] = device.connected
+            state['net_confirm_input']     = device.is_input      # a keyboard is never forgotten, connected or not
+    push_confirm()
+
+
+def _net_confirm_text(kind):
+    with state['lock']:
+        ssid, name = state['net_ssid'], state['net_name']
+        connected  = state['net_confirm_connected']
+    if kind == 'forget_wifi':
+        return ('WI-FI', f'FORGET {sanitize(ssid).upper()}? THE PHONE WILL DISCONNECT FROM IT, AND JOINING AGAIN '
+                         'WILL NEED THE PASSWORD.', 'FORGET', 'KEEP')
+    state_word = 'IS CONNECTED' if connected else 'IS NOT CONNECTED'
+    return ('BLUETOOTH', f'{sanitize(name).upper()} {state_word}. CONNECT TO IT AGAIN, OR FORGET IT? A FORGOTTEN '
+                         'DEVICE HAS TO BE PAIRED AGAIN.', 'FORGET', 'RE-CONNECT')
+
+
+def _net_confirm_go(kind):
+    """The left (destructive) button: forget the network or the device."""
+    if kind == 'bt_device':
+        with state['lock']:
+            is_input = state['net_confirm_input']
+        if is_input:
+            _show_alert('BT_KEEP_KEYBOARD', 'bluetooth')
+            return
+    with state['lock']:
+        ssid, mac = state['net_ssid'], state['net_mac']
+        state['screen']       = 'netstate'
+        state['net_kind']     = 'W' if kind == 'forget_wifi' else 'B'
+        state['net_source']   = 'forget'
+        state['net_status']   = 'WORKING'
+        state['net_detail']   = 'Forgetting...'
+        state['confirm_sel']  = 'keep'
+    push_netstate()
+
+    def work():
+        result = netctl.wifi_forget(ssid) if kind == 'forget_wifi' else netctl.bt_forget(mac)
+        with state['lock']:
+            if state['screen'] != 'netstate' or state['net_source'] != 'forget':
+                return
+        if result.ok:
+            _open_wifi() if kind == 'forget_wifi' else _open_bluetooth()
+        else:
+            with state['lock']:
+                state['net_status'] = 'FAIL'
+                state['net_detail'] = result.detail
+            push_netstate()
+    _run_async(work)
 
 
 def _open_netpass(ssid):
@@ -3001,16 +3172,16 @@ def push_netpass():
 
 def _from_netpass(keycode):
     """Like New Message: the phone keyboard has no Esc, so ↑ selects the header's < and Enter there goes
-    back to the network list. Typing while < is selected returns to the field and types."""
+    back to the Wi-Fi list. Typing while < is selected returns to the field and types."""
     with state['lock']:
         ssid  = state['net_ssid']
         typed = state['net_pass']
         hdr   = state['net_pass_hdr']
     if keycode == 'KEY_ESC' or (hdr and keycode == 'KEY_ENTER'):
         with state['lock']:
-            state['screen']       = 'netlist'
+            state['screen']       = 'wifi'
             state['net_pass_hdr'] = False
-        push_netlist()
+        push_net()
     elif keycode in ('KEY_UP', 'KEY_DOWN'):
         with state['lock']:
             state['net_pass_hdr'] = keycode == 'KEY_UP'
@@ -3047,19 +3218,18 @@ def _open_netstate_wifi(ssid, password, source):
             state['net_status'] = 'OK' if result.ok else 'FAIL'
             state['net_detail'] = f'Connected to {ssid}.' if result.ok else result.detail
         push_netstate()
-        if result.ok:
-            _refresh_settings_status()
     _run_async(work)
 
 
-def _open_netstate_bt(mac, name):
+def _open_netstate_bt(mac, name, source):
     with state['lock']:
         state['screen']     = 'netstate'
         state['net_kind']   = 'B'
         state['net_mac']    = mac
         state['net_name']   = name
+        state['net_source'] = source
         state['net_status'] = 'WORKING'
-        state['net_detail'] = f'Pairing with {name}...'
+        state['net_detail'] = f'Connecting to {name}...' if source == 'bluetooth' else f'Pairing with {name}...'
     push_netstate()
 
     def work():
@@ -3070,8 +3240,6 @@ def _open_netstate_bt(mac, name):
             state['net_status'] = 'OK' if result.ok else 'FAIL'
             state['net_detail'] = f'Connected to {name}.' if result.ok else result.detail
         push_netstate()
-        if result.ok:
-            _refresh_settings_status()
     _run_async(work)
 
 
@@ -3084,20 +3252,25 @@ def push_netstate():
 
 
 def _from_netstate(keycode):
+    """OK goes back to the refreshed Wi-Fi / Bluetooth list. FAIL goes back to where the attempt started (the
+    password box keeps what was typed). Leaving while WORKING abandons it; the late result is dropped."""
     if keycode not in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):
         return
     with state['lock']:
         kind   = state['net_kind']
         status = state['net_status']
         source = state['net_source']
-    if status == 'WORKING':
-        target = 'netlist'                                    # abandon; the background result will be dropped
-    elif status == 'OK':
-        target = 'settings'
+        state['net_source'] = '' if source == 'forget' else source    # a late forget result is dropped
+    if status == 'OK' or source == 'forget':
+        _open_wifi() if kind == 'W' else _open_bluetooth()
+        return
+    if kind == 'W':
+        target = 'netpass' if (status == 'FAIL' and source == 'netpass') else 'wifi'
     else:
-        target = 'netpass' if (kind == 'W' and source == 'netpass') else 'netlist'
+        target = source if source in ('bluetooth', 'btpair') else 'bluetooth'
     with state['lock']:
-        state['screen'] = target
+        state['screen']   = target
+        state['net_kind'] = {'wifi': 'W', 'netpass': 'W', 'bluetooth': 'B', 'btpair': 'P'}[target]
     _push_for_screen(target)
 
 
