@@ -39,12 +39,12 @@ if not SIM_MODE:
     from input_handler import KeyboardHandler
     from trackpad_handler import TrackpadHandler
 
-from twilio.rest import Client
-
 import reader_epub
 import reader_layout as rl
 import music_library
 import music_player
+import modem
+import network_control as netctl
 import version
 
 VERSION = version.VERSION
@@ -90,18 +90,6 @@ COMPOSER_LINES  = 3
 # KYPHONE_SIM_SEND=sent to see the SENDING... -> SENT path in the emulator.
 SIM_SEND       = os.environ.get('KYPHONE_SIM_SEND', 'not_sent')   # 'sent' | 'not_sent'
 SIM_SEND_DELAY = 1.4    # seconds SENDING... stays on screen in the sim
-
-# --- Twilio Credentials ---
-ACCOUNT_SID   = os.environ.get('TWILIO_SID')
-AUTH_TOKEN    = os.environ.get('TWILIO_TOKEN')
-TWILIO_NUMBER = os.environ.get('TWILIO_NUMBER') or ('+1sim' if SIM_MODE else None)
-
-if not all([ACCOUNT_SID, AUTH_TOKEN, TWILIO_NUMBER]):
-    if not SIM_MODE and os.environ.get('TWILIO_NUMBER'):
-        print("Warning: Twilio env vars not set — SMS polling disabled.")
-    elif not SIM_MODE:
-        print("Error: set TWILIO_SID, TWILIO_TOKEN, and TWILIO_NUMBER env vars.")
-        sys.exit(1)
 
 # --- Contacts ---
 # Address book records: [{first, last, number}, ...]. OS 0.1 stored a flat
@@ -225,6 +213,12 @@ LISTENING_FILE    = os.path.join(DATA_DIR, 'listening.json')    # {'volume': 40,
 MUSIC_ROWS        = 5
 MUSIC_TITLE_MAX   = 22
 MUSIC_SUB_MAX     = 24
+
+# --- Settings (Wi-Fi / Bluetooth) ---
+NET_ROWS      = 5    # visible rows in the Wi-Fi/Bluetooth picker (RESCAN + up to 4 networks/devices)
+NET_NAME_MAX  = 22   # a network SSID or device name column
+NET_SUB_MAX   = 30   # the settings list's status subtitle ("Connected: ...")
+NET_PASS_MAX  = 63   # the longest a WPA passphrase can be
 NOW_TITLE_MAX     = 56       # two 28-character lines
 NOW_LINE_MAX      = 44
 MUSIC_TICK_SECONDS = 30      # while the now-playing screen is up, redraw this often so the time moves
@@ -272,7 +266,7 @@ ALERTS = {
 # --- State ---
 # The order is Kyle's (2026-09-19): texts, calls, books, music, address book. The design
 # handoff had CONTACTS third; only the first three rows are on screen on first view.
-HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']
+HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS']
 
 # How the home menu looks: pixel icons (the design's default), icons with their
 # words, or words only. Set KYPHONE_HOME_STYLE=icons|both|words; the renderer draws
@@ -282,7 +276,7 @@ HOME_STYLE  = HOME_STYLES.get(os.environ.get('KYPHONE_HOME_STYLE', 'icons'), 'I'
 
 state = {
     'screen':           'lock',
-    'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=READ 3=LISTEN 4=CONTACTS
+    'home_index':       0,          # -1=header | position in HOME_MENU: 0=TEXT 1=CALL 2=READ 3=LISTEN 4=CONTACTS 5=SETTINGS
     'texts_index':      0,          # -1=header row selected
     'texts_start':      0,          # first thread in the 5-row window
     'texts_header_sel': 'back',     # 'back' | 'plus'
@@ -303,7 +297,6 @@ state = {
     'stub_text':        None,       # (title, body) for a stop alert; None = STUB_INFO[stub_key]
     'quote_index':      0,
     'messages':         [],         # [{sender, name, body, read, ts}]
-    'last_sid':         None,
 
     'contacts_query':      '',
     'contacts_index':      0,       # -1=header row selected
@@ -355,6 +348,24 @@ state = {
     'music_return':   'music',      # where Esc on the now-playing screen goes: 'music' | 'tracks'
     'music_last':     None,         # {'path', 'position'} from listening.json, offered as RESUME
 
+    'settings_index': 0,            # -1=header | 0=Wi-Fi | 1=Bluetooth
+    'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
+    'settings_bt':    None,         # network_control.BtStatus, same
+
+    'net_kind':       'W',          # 'W' Wi-Fi | 'B' Bluetooth — which picker/flow is open
+    'net_rows':       [],           # the last scan's WifiNetwork/BtDevice list
+    'net_index':      0,            # -1=header | 0=RESCAN | 1..=net_rows[i-1]
+    'net_start':      0,
+    'net_scanning':   False,        # a scan is running in the background; only Esc works meanwhile
+    'net_ssid':       '',           # the Wi-Fi network being typed a password for or connected to
+    'net_pass':       '',           # the password typed so far on NETPASS (never sent to the screen)
+    'net_pass_hdr':   False,        # NETPASS: True = the header's < is selected (Enter there backs out)
+    'net_source':     'netlist',    # where a Wi-Fi connect attempt was started: 'netlist' (open) | 'netpass' (secured)
+    'net_mac':        '',           # the Bluetooth device being paired/connected
+    'net_name':       '',           # that device's name, for the NETSTATE message
+    'net_status':     'WORKING',    # NETSTATE: 'WORKING' | 'OK' | 'FAIL'
+    'net_detail':     '',           # NETSTATE's short message
+
     'running': True,
     'lock':    threading.Lock(),
 }
@@ -378,8 +389,6 @@ if not SIM_MODE:
         sys.exit(1)
     spi.max_speed_hz = SPI_SPEED_HZ
     spi.mode = 0
-
-client = Client(ACCOUNT_SID, AUTH_TOKEN) if all([ACCOUNT_SID, AUTH_TOKEN]) else None
 
 # --- Simulator ---
 simulator = None
@@ -429,8 +438,8 @@ def format_msg_time(ts):
 def is_outgoing(m):
     if m.get('dir') == 'out':
         return True
-    # OS 0.2 stored a sent message as sender=<own number> with no recipient.
-    return 'peer' not in m and bool(TWILIO_NUMBER) and m.get('sender') == TWILIO_NUMBER
+    # OS 0.2 stored a sent message as sender=<own number>, name 'You', with no recipient.
+    return 'peer' not in m and m.get('name') == 'You'
 
 
 def peer_of(m):
@@ -1021,6 +1030,8 @@ def _push_for_screen(screen_name):
         'in_call': push_call_screen,
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
+        'settings': push_settings, 'netlist': push_netlist,
+        'netpass': push_netpass, 'netstate': push_netstate,
     }
     pusher = pushers.get(screen_name)
     if pusher:
@@ -1031,7 +1042,7 @@ def _push_for_screen(screen_name):
 
 # Screens where printable characters are real typed input, so Q/WASD must
 # stay literal there instead of acting as back/arrow shortcuts.
-TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit')
+TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit', 'netpass')
 
 
 def handle_key(keycode):
@@ -1112,6 +1123,18 @@ def handle_key(keycode):
     elif screen == 'nowplaying':
         _from_nowplaying(keycode)
 
+    elif screen == 'settings':
+        _from_settings(keycode)
+
+    elif screen == 'netlist':
+        _from_netlist(keycode)
+
+    elif screen == 'netpass':
+        _from_netpass(keycode)
+
+    elif screen == 'netstate':
+        _from_netstate(keycode)
+
     elif screen == 'stub':
         if keycode in ('KEY_ESC', 'KEY_ENTER'):
             with state['lock']:
@@ -1176,6 +1199,8 @@ def _from_home(keycode):
             _open_library()
         elif HOME_MENU[idx] == 'LISTEN':
             _open_music()
+        elif HOME_MENU[idx] == 'SETTINGS':
+            _open_settings()
     elif keycode == 'CHAR:i':
         # Demo shortcut: simulate an incoming call.
         with state['lock']:
@@ -2093,7 +2118,6 @@ def load_messages():
         with open(MESSAGES_FILE, 'r') as f:
             data = json.load(f)
         state['messages'] = data.get('messages', [])
-        state['last_sid']  = data.get('last_sid')
         # A send that was still in flight when the phone last stopped never finished.
         for m in state['messages']:
             if m.get('state') == 'sending':
@@ -2109,28 +2133,47 @@ def save_messages():
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(MESSAGES_FILE, 'w') as f:
-            json.dump({'messages': state['messages'], 'last_sid': state['last_sid']}, f)
+            json.dump({'messages': state['messages']}, f)
     except Exception as e:
         print(f"Warning: could not save messages: {e}")
 
 
-# ─── Twilio ───────────────────────────────────────────────────────────────────
+# ─── Modem ────────────────────────────────────────────────────────────────────
+
+_modem = None    # a modem.SerialModem, once _init_modem() succeeds at startup; None = no dongle configured
+
+
+def _init_modem():
+    """Bring up the real cellular modem once, at startup, if KYPHONE_MODEM_PORT is set — that
+    environment variable is the deliberate opt-in, so the code never goes probing a serial port that
+    just happens to be free for something else. Never raises: if the dongle is not there or not
+    answering, _modem stays None and every send ends as 'no service' (NOT SENT)."""
+    global _modem
+    if SIM_MODE or not os.environ.get(modem.MODEM_PORT_ENV):
+        return
+    try:
+        _modem = modem.SerialModem()
+        print(f"Modem ready on {_modem.port}.")
+        if not _modem.registered():
+            print("Warning: the modem has not registered on the carrier's network yet.")
+    except modem.ModemError as e:
+        print(f"Warning: modem not available ({e}); texts will not send.")
+
 
 def _transport_send(to_number, body):
     """Hand one text to the radio. Raises if it could not be sent.
 
-    There is no cellular modem yet and Twilio is switched off, so on the phone
-    this raises ('no service') and the message becomes NOT SENT. That is the
-    normal outcome for now, not an error case."""
+    Sends through the real cellular modem if one came up at startup, else gives up with 'no service' —
+    the phone's normal outcome until a modem with a working SIM is actually plugged in."""
     if SIM_MODE:
         time.sleep(SIM_SEND_DELAY)
         if SIM_SEND != 'sent':
             raise RuntimeError('simulated: no service')
         return
-    if client is None:
+    if _modem is None:
         raise RuntimeError('no service')
-    msg = client.messages.create(body=body, from_=TWILIO_NUMBER, to=normalize_number(to_number))
-    print(f"  → sent: {body} (SID: {msg.sid})")
+    _modem.send(normalize_number(to_number), body)
+    print(f"  → sent via modem: {body}")
 
 
 # ─── Reader (books) ───────────────────────────────────────────────────────────
@@ -2753,6 +2796,311 @@ def _run_async(fn):
     threading.Thread(target=fn, daemon=True).start()
 
 
+# ─── Settings (Wi-Fi / Bluetooth) ──────────────────────────────────────────────
+# SETTINGS on the home menu opens a two-row list (Wi-Fi, Bluetooth — network_control.py talks to the small
+# computer's own nmcli/bluetoothctl). Enter on either opens NETLIST: a RESCAN row followed by whatever the last
+# scan found. Wi-Fi: an open network connects at once, a locked one opens NETPASS for a password first.
+# Bluetooth: any row pairs (if needed) and connects. Both funnel into NETSTATE, which shows WORKING while a
+# background thread talks to nmcli/bluetoothctl, then OK or FAIL — the keyboard is never blocked on a scan,
+# a connect, or a pair (see _run_async and _dispatch_send's messages, which follow the same shape).
+#
+# A scan or a connect/pair attempt that finishes after the phone has navigated away is dropped (checked by
+# screen + the network/device it was for), the same "abandoned work" rule the reader's page sender follows.
+
+def _wifi_status_text(status):
+    if status and status.connected:
+        return sanitize('Connected: ' + status.ssid)[:NET_SUB_MAX]
+    return 'Not connected'
+
+
+def _bt_status_text(status):
+    if status and status.connected_names:
+        return sanitize('Connected: ' + ', '.join(status.connected_names))[:NET_SUB_MAX]
+    return 'Not connected'
+
+
+def _refresh_settings_status():
+    wifi = netctl.wifi_status()
+    bt   = netctl.bt_status()
+    with state['lock']:
+        state['settings_wifi'] = wifi
+        state['settings_bt']   = bt
+
+
+def _open_settings():
+    with state['lock']:
+        state['screen']          = 'settings'
+        state['settings_index']  = 0
+    _refresh_settings_status()
+    push_settings()
+
+
+def push_settings():
+    with state['lock']:
+        idx  = state['settings_index']
+        wifi = state['settings_wifi']
+        bt   = state['settings_bt']
+    rows = [
+        ['Wi-Fi', _wifi_status_text(wifi), ''],
+        ['Bluetooth', _bt_status_text(bt), ''],
+    ]
+    push_screen(_list_command(["SETTINGS", str(idx)], rows, shrink_order=(1,)))
+
+
+def _from_settings(keycode):
+    with state['lock']:
+        idx = state['settings_index']
+    if keycode == 'KEY_UP':
+        with state['lock']:
+            state['settings_index'] = max(-1, idx - 1)
+        push_settings()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['settings_index'] = min(1, idx + 1)
+        push_settings()
+    elif keycode == 'KEY_ENTER':
+        if idx == 0:
+            _open_netlist('W')
+        elif idx == 1:
+            _open_netlist('B')
+        else:                                                 # header selected — same as Esc
+            with state['lock']:
+                state['screen']     = 'home'
+                state['home_index'] = HOME_MENU.index('SETTINGS')
+            push_home2()
+    elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
+        with state['lock']:
+            state['screen']     = 'home'
+            state['home_index'] = HOME_MENU.index('SETTINGS')
+        push_home2()
+
+
+def _open_netlist(kind):
+    with state['lock']:
+        state['screen']       = 'netlist'
+        state['net_kind']     = kind
+        state['net_index']    = 0
+        state['net_start']    = 0
+        state['net_rows']     = []
+        state['net_scanning'] = True
+    push_netlist()
+    _run_async(lambda: _do_net_scan(kind))
+
+
+def _rescan_netlist():
+    with state['lock']:
+        kind = state['net_kind']
+        state['net_scanning'] = True
+        state['net_index']    = 0
+        state['net_start']    = 0
+    push_netlist()
+    _run_async(lambda: _do_net_scan(kind))
+
+
+def _do_net_scan(kind):
+    rows = netctl.wifi_scan() if kind == 'W' else netctl.bt_scan()
+    with state['lock']:
+        if state['screen'] != 'netlist' or state['net_kind'] != kind:
+            return                                            # navigated away meanwhile: the result is dropped
+        state['net_scanning'] = False
+        state['net_rows']     = rows
+    push_netlist()
+
+
+def push_netlist():
+    with state['lock']:
+        kind     = state['net_kind']
+        idx      = state['net_index']
+        rows     = list(state['net_rows'])
+        scanning = state['net_scanning']
+
+    if scanning:
+        push_screen(_list_command(["NETLIST", kind, "-1" if idx == -1 else "0"],
+                                   [['SCANNING...', '', '']], shrink_order=(0,)))
+        return
+
+    if kind == 'W':
+        cols = [[sanitize(n.ssid)[:NET_NAME_MAX], 'Secured' if n.secured else 'Open',
+                 'CONNECTED' if n.in_use else ''] for n in rows]
+    else:
+        cols = [[sanitize(n.name)[:NET_NAME_MAX], 'Paired' if n.paired else 'New device',
+                 'CONNECTED' if n.connected else ''] for n in rows]
+    # An empty scan says so on the RESCAN row itself, so the list is never silently blank.
+    empty = ('No networks found' if kind == 'W' else 'No devices found') if not rows else ''
+    entries = [['RESCAN', empty, '']] + cols
+
+    with state['lock']:
+        start = window_start(state['net_start'], max(0, idx), NET_ROWS, len(entries))
+        state['net_start'] = start
+    send_idx = idx if idx < 0 else idx - start
+    shown = entries[start:start + NET_ROWS]
+    push_screen(_list_command(["NETLIST", kind, str(send_idx)], shown, shrink_order=(0,)))
+
+
+def _from_netlist(keycode):
+    with state['lock']:
+        idx      = state['net_index']
+        rows     = list(state['net_rows'])
+        kind     = state['net_kind']
+        scanning = state['net_scanning']
+    max_idx = len(rows)                                        # 0=RESCAN, 1..len(rows)=rows[i-1]
+
+    if keycode == 'KEY_ESC':
+        with state['lock']:
+            state['screen'] = 'settings'
+        push_settings()
+        return
+    if scanning:
+        return                                                 # only Esc works while a scan is running
+
+    if keycode == 'KEY_UP':
+        with state['lock']:
+            state['net_index'] = max(-1, idx - 1)
+        push_netlist()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            state['net_index'] = min(max_idx, idx + 1)
+        push_netlist()
+    elif keycode == 'KEY_ENTER':
+        if idx == -1:
+            with state['lock']:
+                state['screen'] = 'settings'
+            push_settings()
+        elif idx == 0:
+            _rescan_netlist()
+        elif kind == 'W':
+            n = rows[idx - 1]
+            if n.secured:
+                _open_netpass(n.ssid)
+            else:
+                _open_netstate_wifi(n.ssid, None, source='netlist')
+        else:
+            d = rows[idx - 1]
+            _open_netstate_bt(d.mac, d.name)
+
+
+def _open_netpass(ssid):
+    with state['lock']:
+        state['screen']   = 'netpass'
+        state['net_ssid'] = ssid
+        state['net_pass'] = ''
+        state['net_pass_hdr'] = False
+    push_netpass()
+
+
+def push_netpass():
+    """The password never travels on the wire — only a `*` mask the same length, so the firmware never draws
+    (and no capture of the SPI link ever carries) what was actually typed. The last field is `B` when the
+    header's < is selected."""
+    with state['lock']:
+        ssid  = state['net_ssid']
+        typed = state['net_pass']
+        hdr   = 'B' if state['net_pass_hdr'] else ''
+    push_screen(f"NETPASS|{sanitize(ssid)}|{'*' * min(len(typed), NET_PASS_MAX)}|{hdr}")
+
+
+def _from_netpass(keycode):
+    """Like New Message: the phone keyboard has no Esc, so ↑ selects the header's < and Enter there goes
+    back to the network list. Typing while < is selected returns to the field and types."""
+    with state['lock']:
+        ssid  = state['net_ssid']
+        typed = state['net_pass']
+        hdr   = state['net_pass_hdr']
+    if keycode == 'KEY_ESC' or (hdr and keycode == 'KEY_ENTER'):
+        with state['lock']:
+            state['screen']       = 'netlist'
+            state['net_pass_hdr'] = False
+        push_netlist()
+    elif keycode in ('KEY_UP', 'KEY_DOWN'):
+        with state['lock']:
+            state['net_pass_hdr'] = keycode == 'KEY_UP'
+        push_netpass()
+    elif keycode == 'KEY_ENTER':
+        _open_netstate_wifi(ssid, typed, source='netpass')
+    elif keycode == 'KEY_BACKSPACE':
+        with state['lock']:
+            state['net_pass']     = typed[:-1]
+            state['net_pass_hdr'] = False
+        push_netpass()
+    elif keycode.startswith('CHAR:'):
+        with state['lock']:
+            state['net_pass']     = (typed + keycode[5:])[:NET_PASS_MAX]
+            state['net_pass_hdr'] = False
+        push_netpass()
+
+
+def _open_netstate_wifi(ssid, password, source):
+    with state['lock']:
+        state['screen']     = 'netstate'
+        state['net_kind']   = 'W'
+        state['net_ssid']   = ssid
+        state['net_source'] = source
+        state['net_status'] = 'WORKING'
+        state['net_detail'] = f'Connecting to {ssid}...'
+    push_netstate()
+
+    def work():
+        result = netctl.wifi_connect(ssid, password or None)
+        with state['lock']:
+            if state['screen'] != 'netstate' or state['net_kind'] != 'W' or state['net_ssid'] != ssid:
+                return                                         # navigated away meanwhile: the result is dropped
+            state['net_status'] = 'OK' if result.ok else 'FAIL'
+            state['net_detail'] = f'Connected to {ssid}.' if result.ok else result.detail
+        push_netstate()
+        if result.ok:
+            _refresh_settings_status()
+    _run_async(work)
+
+
+def _open_netstate_bt(mac, name):
+    with state['lock']:
+        state['screen']     = 'netstate'
+        state['net_kind']   = 'B'
+        state['net_mac']    = mac
+        state['net_name']   = name
+        state['net_status'] = 'WORKING'
+        state['net_detail'] = f'Pairing with {name}...'
+    push_netstate()
+
+    def work():
+        result = netctl.bt_pair_connect(mac)
+        with state['lock']:
+            if state['screen'] != 'netstate' or state['net_kind'] != 'B' or state['net_mac'] != mac:
+                return                                         # navigated away meanwhile: the result is dropped
+            state['net_status'] = 'OK' if result.ok else 'FAIL'
+            state['net_detail'] = f'Connected to {name}.' if result.ok else result.detail
+        push_netstate()
+        if result.ok:
+            _refresh_settings_status()
+    _run_async(work)
+
+
+def push_netstate():
+    with state['lock']:
+        kind   = state['net_kind']
+        status = state['net_status']
+        detail = state['net_detail']
+    push_screen(f"NETSTATE|{kind}|{status}|{sanitize(detail)}")
+
+
+def _from_netstate(keycode):
+    if keycode not in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):
+        return
+    with state['lock']:
+        kind   = state['net_kind']
+        status = state['net_status']
+        source = state['net_source']
+    if status == 'WORKING':
+        target = 'netlist'                                    # abandon; the background result will be dropped
+    elif status == 'OK':
+        target = 'settings'
+    else:
+        target = 'netpass' if (kind == 'W' and source == 'netpass') else 'netlist'
+    with state['lock']:
+        state['screen'] = target
+    _push_for_screen(target)
+
+
 def _refresh_after_send(peer):
     with state['lock']:
         screen, thread_id = state['screen'], state['thread_id']
@@ -2845,42 +3193,36 @@ def call_timer_loop():
             push_call_screen()
 
 
-def sms_loop():
-    if client is None:
-        print("SMS polling disabled (no Twilio credentials).")
+def modem_sms_loop():
+    """Polls the real modem for texts that arrived while the phone wasn't looking. Each one the modem
+    hands back is already removed from its own storage (modem.SerialModem.poll_new deletes as it reads),
+    so there is no dedup bookkeeping to do here."""
+    if _modem is None:
         return
-    print(f"Polling for SMS every {SMS_POLL_INTERVAL}s...")
+    print(f"Polling the modem for texts every {SMS_POLL_INTERVAL}s...")
     while state['running']:
         try:
-            messages = client.messages.list(to=TWILIO_NUMBER, limit=5)
-            for msg in messages:
-                if msg.sid == state['last_sid']:
-                    break
-                if msg.direction != 'inbound':
-                    continue
+            for msg in _modem.poll_new():
                 with state['lock']:
-                    state['last_sid'] = messages[0].sid
-                    name = format_name(msg.from_)
+                    name = format_name(msg['sender'])
                     state['messages'].append({
-                        'sender': msg.from_,
+                        'sender': msg['sender'],
                         'name':   name,
-                        'body':   msg.body,
+                        'body':   msg['body'],
                         'read':   False,
-                        'ts':     datetime.now().isoformat(),
+                        'ts':     msg['ts'],
                     })
                 save_messages()
-                print(f"\n[NEW SMS] {name}: {msg.body}")
+                print(f"\n[NEW SMS] {name}: {msg['body']}")
                 with state['lock']:
                     current_screen = state['screen']
                     thread_id      = state['thread_id']
-                if current_screen == 'thread' and thread_id == msg.from_:
+                if current_screen == 'thread' and thread_id == msg['sender']:
                     push_thread2()
-                elif current_screen in ('texts_list',):
+                elif current_screen == 'texts_list':
                     push_texts()
-                # Other screens: message waits silently (badge visible on home/texts)
-                break
-        except Exception as e:
-            print(f"Poll error: {e}")
+        except modem.ModemError as e:
+            print(f"Modem poll error: {e}")
         time.sleep(SMS_POLL_INTERVAL)
 
 
@@ -2889,31 +3231,10 @@ def sms_loop():
 def main():
     load_messages()
     load_calls()
-
-    # Backfill recent messages from Twilio on first run
-    if not SIM_MODE and state['last_sid'] is None and client is not None:
-        try:
-            recent  = client.messages.list(to=TWILIO_NUMBER, limit=20)
-            if recent:
-                state['last_sid'] = recent[0].sid
-            inbound = [m for m in recent if m.direction == 'inbound']
-            for msg in reversed(inbound):
-                ts = msg.date_created.isoformat() if msg.date_created else datetime.now().isoformat()
-                state['messages'].append({
-                    'sender': msg.from_,
-                    'name':   format_name(msg.from_),
-                    'body':   msg.body,
-                    'read':   True,
-                    'ts':     ts,
-                })
-            if inbound:
-                save_messages()
-                print(f"Backfilled {len(inbound)} messages.")
-        except Exception as e:
-            print(f"Warning: could not backfill: {e}")
+    _init_modem()
 
     threading.Thread(target=clock_loop,      daemon=True).start()
-    threading.Thread(target=sms_loop,        daemon=True).start()
+    threading.Thread(target=modem_sms_loop,  daemon=True).start()
     threading.Thread(target=call_timer_loop, daemon=True).start()
     threading.Thread(target=music_tick_loop, daemon=True).start()
 
@@ -2923,8 +3244,8 @@ def main():
         TrackpadHandler(handle_key).start()
 
     print(f"\n--- KyPhone OS {VERSION} ---")
-    if TWILIO_NUMBER and not SIM_MODE:
-        print(f"Number: {TWILIO_NUMBER}")
+    if _modem is not None:
+        print(f"Modem: {_modem.port} (signal {_modem.signal_quality()})")
 
     try:
         if SIM_MODE:

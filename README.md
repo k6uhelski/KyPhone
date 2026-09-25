@@ -25,7 +25,7 @@ A Python state machine on the Radxa draws every screen on the Inkplate over SPI,
 - **Emulator:** the pygame emulator, run with the `--sim` flag as shown under Running it below, mirrors the panel and is what the tests drive.
 
 ### **What does not work yet**
-- **Nothing can actually be sent.** Twilio is no longer paid for and is switched off, and there is no cellular modem yet, so a sent message ends as NOT SENT. That is the phone's normal outcome for now.
+- **Nothing can actually be sent yet.** Texts go through a cellular modem (a SIM7600G-H USB dongle); until it is plugged into the Radxa with an active SIM, a sent message ends as NOT SENT. That is the phone's normal outcome for now. (Twilio, the old way, has been removed.)
 - **Calls are simulated.** The CALL screens exist but there is no telephony.
 - **READ and LISTEN** (books and music) work in the emulator and on a computer-built copy of the firmware, but have not been flashed to the panel yet, and the music has not been heard through the headphone jack.
 
@@ -34,9 +34,8 @@ A Python state machine on the Radxa draws every screen on the Inkplate over SPI,
 # On Radxa (hardware — auto-starts via systemd, or manually:)
 sudo systemctl restart kyphone
 
-# On Mac (emulator) — no hardware, no Twilio account and no credentials needed
-# (twilio is only imported; the library must be installed)
-pip3 install pygame twilio
+# On Mac (emulator) — no hardware and no credentials needed
+pip3 install pygame
 KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim     # a scratch data folder; put .epub files in its books/ folder to try READ
 #   KYPHONE_SIM_SEND=sent        make the fake radio succeed (default: not sent)
 #   KYPHONE_HOME_STYLE=icons|both|words
@@ -52,7 +51,8 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_mach
   spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
   spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py   # expect 639 passed
+  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py \
+  spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py   # expect 746 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 

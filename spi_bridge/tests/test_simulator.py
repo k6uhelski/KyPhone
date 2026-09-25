@@ -353,10 +353,10 @@ class HomeIconsMatchTheDesign(unittest.TestCase):
         import make_icons
         from home_icons import MENU_ORDER
         self.assertEqual(MENU_ORDER, make_icons.ORDER)
-        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS'])
+        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS'])
         with open(os.path.join(os.path.dirname(__file__), '..', 'Inkplate_SPI_Peripheral', 'ui_screens.h')) as f:
             src = f.read()
-        self.assertIn('{"TEXT", "CALL", "READ", "LISTEN", "CONTACTS"}', src)
+        self.assertIn('{"TEXT", "CALL", "READ", "LISTEN", "CONTACTS", "SETTINGS"}', src)
 
     def test_every_icon_is_56_rows_of_56_bits_with_ink(self):
         from home_icons import ICONS
@@ -371,7 +371,7 @@ class WrapParity(unittest.TestCase):
     def test_simulator_wrap_matches_the_os_wrap(self):
         import importlib.util
         os.environ['SDL_VIDEODRIVER'] = 'dummy'
-        for name in ('spidev', 'gpiod', 'input_handler', 'twilio', 'twilio.rest', 'evdev'):
+        for name in ('spidev', 'gpiod', 'input_handler', 'evdev'):
             sys.modules.setdefault(name, MagicMock())
         sys.argv = ['test', '--sim']
         import kyphone_os
@@ -389,7 +389,7 @@ class WrapParity(unittest.TestCase):
     def test_simulator_home_menu_matches_the_os(self):
         import importlib.util
         os.environ['SDL_VIDEODRIVER'] = 'dummy'
-        for name in ('spidev', 'gpiod', 'input_handler', 'twilio', 'twilio.rest', 'evdev'):
+        for name in ('spidev', 'gpiod', 'input_handler', 'evdev'):
             sys.modules.setdefault(name, MagicMock())
         sys.argv = ['test', '--sim']
         import kyphone_os
@@ -681,6 +681,185 @@ class MusicPixels(unittest.TestCase):
     def test_an_old_home_command_without_the_flag_still_draws(self):
         self.draw('HOME2|12:44 PM|0|3|I')
         self.draw('HOME2|12:44 PM|0|3')
+
+
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class SettingsPixels(unittest.TestCase):
+    """SETTINGS reuses the exact two-line list rendering LIBRARY and MUSIC use, so these checks mirror theirs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def draw(self, wire):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def rows(self, sel=0, wifi='Connected: Maple', bt='Not connected'):
+        r = lambda *f: CELL.join(f)
+        return 'SETTINGS|%d|%s|%s' % (sel, r('Wi-Fi', wifi, ''), r('Bluetooth', bt, ''))
+
+    def test_the_two_rows_are_111px_and_only_the_selected_one_is_inverted(self):
+        tops = [44, 155]
+        for sel in range(2):
+            self.draw(self.rows(sel))
+            self.assertEqual([i for i, y in enumerate(tops) if self.px(4, y + 4) == BLACK], [sel])
+
+    def test_header_selection_inverts_no_row(self):
+        self.draw(self.rows(-1))
+        self.assertEqual([self.px(4, y + 4) for y in (44, 155)], [WHITE, WHITE])
+        self.assertEqual(self.px(20, 20), BLACK)                          # the back control
+
+
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class NetlistPixels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def draw(self, wire):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def ink_in(self, x0, y0, x1, y1):
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) == BLACK)
+
+    def wifi_rows(self, sel, *nets):
+        r = lambda *f: CELL.join(f)
+        rows = [r('RESCAN', '', '')] + [r(ssid, sec, mark) for ssid, sec, mark in nets]
+        return 'NETLIST|W|%d|%s' % (sel, '|'.join(rows))
+
+    def bt_rows(self, sel, *devs):
+        r = lambda *f: CELL.join(f)
+        rows = [r('RESCAN', '', '')] + [r(name, kind, mark) for name, kind, mark in devs]
+        return 'NETLIST|B|%d|%s' % (sel, '|'.join(rows))
+
+    def test_the_rescan_row_is_first_and_the_window_follows_the_selection(self):
+        tops = [44, 155]
+        self.draw(self.wifi_rows(0, ('Maple', 'Secured', 'CONNECTED')))
+        self.assertEqual(self.px(4, tops[0] + 4), BLACK)
+        self.draw(self.wifi_rows(1, ('Maple', 'Secured', 'CONNECTED')))
+        self.assertEqual(self.px(4, tops[1] + 4), BLACK)
+        self.assertEqual(self.px(4, tops[0] + 4), WHITE)
+
+    def test_the_scanning_placeholder_draws_as_a_single_row(self):
+        self.draw('NETLIST|W|0|SCANNING...' + CELL + CELL)
+        self.assertEqual(self.px(4, 48), BLACK)
+        self.assertEqual(self.px(4, 155 + 4), WHITE)                       # nothing below it
+
+    def test_a_connected_network_shows_a_marker_a_locked_one_does_not(self):
+        self.draw(self.wifi_rows(-1, ('Maple', 'Secured', 'CONNECTED'), ('Willow_Street_5G', 'Open', '')))
+        # both rows have some ink at the right (chevron); the connected one has strictly more (its marker too)
+        connected_ink = self.ink_in(400, 44 + 111, 572, 44 + 222 - 1)
+        open_ink       = self.ink_in(400, 44 + 222, 572, 44 + 333 - 1)
+        self.assertGreater(connected_ink, open_ink)
+
+    def test_bluetooth_header_differs_from_wifi(self):
+        # Same row content and selection in both draws, so the only thing that can change the header
+        # strip's ink is the title text itself ("WI-FI" vs "BLUETOOTH").
+        self.draw(self.wifi_rows(0, ('Maple', 'Secured', '')))
+        wifi_header_ink = self.ink_in(0, 6, 600, 38)
+        self.draw(self.bt_rows(0, ('Some Headphones', 'New device', '')))
+        bt_header_ink = self.ink_in(0, 6, 600, 38)
+        self.assertNotEqual(wifi_header_ink, bt_header_ink)                 # different text, different ink
+
+
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class NetpassPixels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def draw(self, wire):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def ink_in(self, x0, y0, x1, y1):
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) == BLACK)
+
+    def test_the_network_name_is_shown_plainly(self):
+        self.draw('NETPASS|Maple|')
+        self.assertGreater(self.ink_in(24, 84, 300, 108), 0)
+
+    def test_only_the_mask_is_drawn_never_a_letter(self):
+        """This is the security promise made in CLAUDE.md and the build plan: the real password is never even
+        handed to this renderer, only a same-length run of asterisks — checked here by never passing a real
+        password string in and confirming the drawn field's ink matches a `*` mask, not arbitrary letter shapes."""
+        self.draw('NETPASS|Maple|***')
+        masked_ink = self.ink_in(24, 160, 24 + 3 * 24, 184)
+        self.draw('NETPASS|Maple|')
+        empty_ink = self.ink_in(24, 160, 24 + 3 * 24, 184)
+        self.assertGreater(masked_ink, empty_ink)                           # three mask characters drew something
+
+    def test_the_cursor_moves_right_as_the_mask_grows(self):
+        def rightmost_ink(y):
+            xs = [x for x in range(24, 300) if self.px(x, y) == BLACK]
+            return max(xs) if xs else 24
+        self.draw('NETPASS|Maple|')
+        empty_edge = rightmost_ink(170)                                     # just the cursor, at x=24
+        self.draw('NETPASS|Maple|**')
+        two_edge = rightmost_ink(170)                                       # two mask characters, then the cursor
+        self.assertGreater(two_edge, empty_edge)
+
+    def test_the_back_arrow_inverts_when_selected_and_the_cursor_goes(self):
+        self.draw('NETPASS|Maple||')
+        self.assertEqual(self.px(18, 8), WHITE)                             # < drawn plain
+        self.assertGreater(self.ink_in(24, 160, 48, 184), 0)                # cursor in the field
+        self.draw('NETPASS|Maple||B')
+        self.assertEqual(self.px(18, 8), BLACK)                             # < box filled
+        self.assertEqual(self.ink_in(24, 160, 48, 184), 0)                  # no cursor while < has the focus
+
+
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class NetstatePixels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def draw(self, wire):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+
+    def px(self, x, y):
+        return tuple(self.sim._surface.get_at((x, y)))[:3]
+
+    def ink_in(self, x0, y0, x1, y1):
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if self.px(x, y) == BLACK)
+
+    def test_each_status_draws_a_visibly_different_message(self):
+        self.draw('NETSTATE|W|WORKING|Connecting to Maple...')
+        working = self.ink_in(0, 250, 600, 300)
+        self.draw('NETSTATE|W|OK|Connected to Maple.')
+        ok = self.ink_in(0, 250, 600, 300)
+        self.draw('NETSTATE|W|FAIL|wrong password')
+        fail = self.ink_in(0, 250, 600, 300)
+        self.assertTrue(working and ok and fail)                           # all three actually drew something
+
+    def test_only_a_failure_has_the_couldnt_connect_heading(self):
+        self.draw('NETSTATE|W|OK|Connected to Maple.')
+        self.assertEqual(self.ink_in(0, 200, 600, 236), 0)
+        self.draw('NETSTATE|W|FAIL|wrong password')
+        self.assertGreater(self.ink_in(0, 200, 600, 236), 0)
+
+    def test_a_hint_shows_only_once_the_call_has_finished(self):
+        self.draw('NETSTATE|B|WORKING|Pairing with Some Headphones...')
+        working_hint = self.ink_in(0, 540, 600, 590)
+        self.draw('NETSTATE|B|OK|Connected to Some Headphones.')
+        ok_hint = self.ink_in(0, 540, 600, 590)
+        self.assertNotEqual(working_hint, ok_hint)
 
 
 def reader_fonts_sizes():

@@ -88,7 +88,7 @@ One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and
 *   **Where it shows:** the lock screen (bottom left, "OS 0.3.1" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
 *   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
 *   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
-*   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
+*   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, the settings screens (SETTINGS: the Wi-Fi/Bluetooth picker, the password box, the connect/pair result), plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
 *   **Releases** are tagged in git as `v0.3.0`, `v0.3.1`, … (`v0.3.0` was tagged and pushed 2026-09-20). The names `os-0.2.1-build`, `reader-build` and `music-build` are historical branch names, and "OS 0.2" / "OS 0.2.1" in the design handoff name design generations, not software releases.
 
 | Version | What it is | Where |
@@ -135,7 +135,14 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 `Q`/`W`/`A`/`S`/`D` act as Esc and the arrows on screens where letters are not being typed.
 
 ### **Sending**
-`send_reply()` stores the message as **SENDING…** and returns; a worker thread hands it to `_transport_send()` so the keyboard never waits on the network. With no modem and Twilio switched off, `_transport_send` raises `no service`, so **NOT SENT is the phone's normal outcome today**, not an error case. The path to Twilio still exists if credentials are set. In the simulator, `KYPHONE_SIM_SEND=sent` makes the fake radio succeed (default: not sent, like the phone).
+`send_reply()` stores the message as **SENDING…** and returns; a worker thread hands it to `_transport_send()` so the keyboard never waits on the network. `_transport_send` hands it to the real cellular modem (below), or raises `no service` when there is none, so **NOT SENT is the phone's normal outcome until a modem with a working SIM is plugged in**, not an error case. In the simulator, `KYPHONE_SIM_SEND=sent` makes the fake radio succeed (default: not sent, like the phone) — the simulator never touches the real modem code, only this one env var.
+
+### **Modem (real texting)**
+*   **Hardware:** a Waveshare SIM7600G-H 4G USB dongle, a global-bands modem that takes a physical SIM (nano-SIM, not eSIM). It plugs into a USB port on the Radxa and shows up as a few `/dev/ttyUSB*` ports; one of them speaks plain AT commands.
+*   **`modem.py`** (importable without hardware): `SimModem` — no hardware, an in-memory inbox/outbox for the emulator and every test (`.deliver()` to make a text "arrive", `.sent` to see what was sent, `.fail_next_send()` to test a failure). `SerialModem` — the real thing, talking Hayes AT commands (`AT+CMGS` to send, `AT+CMGL="REC UNREAD"` / `AT+CMGD` to read and clear incoming texts, `AT+CSQ` / `AT+CREG?` for signal and network registration) over the dongle's AT port via `pyserial`, imported lazily so nothing else needs it installed.
+*   **Turning it on:** set `KYPHONE_MODEM_PORT` (e.g. `/dev/ttyUSB2`) on the Radxa — that env var is the deliberate opt-in, so the code never goes probing a serial port that happens to be free for something else. `_init_modem()` runs once at startup; if the dongle is not there or does not answer, it stays off and every send ends as NOT SENT (`no service`). Which `/dev/ttyUSBn` lands on the AT interface depends on USB enumeration order — check with `journalctl`/`dmesg` after plugging it in.
+*   **Receiving:** `modem_sms_loop()` polls the modem every `SMS_POLL_INTERVAL` seconds. There is no dedup bookkeeping to do — `SerialModem.poll_new()` deletes each text from the modem's own storage as it reads it, so nothing ever repeats.
+*   **Not yet proven:** everything here is checked against a fake serial port only (`tests/test_modem.py`); no test can show real hardware talks back correctly. The device-session checklist is: plug in the dongle with an activated SIM, confirm registration (`AT+CREG?` / the startup banner's signal number), send a real text to a real number, and receive one back.
 
 ### **Reader (books)**
 *   **Loading books:** copy `.epub` files into `data/books/` on the Radxa (no upload screen yet). READ lists them by title with progress; the list is rescanned each time it opens. DRM'd, corrupt or picture-only books are listed and explain themselves when opened.
@@ -168,7 +175,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 | Screen | Command |
 | :--- | :--- |
 | Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.3.1`) is drawn as "OS 0.3.1" bottom left; a firmware that receives none draws no label |
-| Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
+| Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS 5 SETTINGS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
 | Texts | `TEXTS\|sel\|name·preview·unread·time\|…` — sel −1 back, −2 plus, else the row in the window; ≤5 rows; preview starts `You: ` or `! ` (unsent); no rows = empty state |
 | Contacts | `CONTACTSPICK\|sel\|query\|3 / 14\|name·number\|…` — ≤7 rows; no rows = NO MATCH (query set) or NO CONTACTS |
 | Calls | `CALLS\|sel\|name·tag·time·duration\|…` — ≤6 rows; the first list entry is `DIAL A NUMBER·NEW··` |
@@ -176,6 +183,10 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 | Compose | `COMPOSE\|to\|msg\|to_active\|hdr\|plus_sel\|send_sel` |
 | Contact | `CONTACT\|title\|sub\|kind\|sel` — kind `S` saved, `N` no number, `U` unsaved; sel `B E C T V A` |
 | Contact form | `CONTACTEDIT\|first\|last\|number\|idx\|kind` — idx −1 cancel, 0–2 fields, 3 save, 4 delete; kind `N` new, `E` edit |
+| Settings | `SETTINGS\|sel\|Wi-Fi·status·\|Bluetooth·status·` — sel −1 back, 0 Wi-Fi, 1 Bluetooth |
+| Network list | `NETLIST\|W/B\|sel\|name·sub·right\|…` — the first row is `RESCAN` (or `SCANNING...` while a scan runs; after an empty scan its sub reads `No networks found` / `No devices found`); sub `Secured`/`Open` or `Paired`/`New device`; right `CONNECTED` or blank |
+| Wi-Fi password | `NETPASS\|network\|mask\|hdr` — `mask` is `*` only (the password never travels); hdr `B` = the header's `<` is selected |
+| Connect result | `NETSTATE\|W/B\|WORKING/OK/FAIL\|detail` — FAIL draws a COULDN'T CONNECT heading above the reason; WORKING says Q TO CANCEL |
 | Stop alert | `STUB\|title\|body` |
 | Confirm | `CONFIRM\|title\|body\|go\|keep\|sel` — sel `D` / `K` |
 | Library | `LIBRARY\|sel\|title·author·pct\|…` — sel −1 back, else the row in the window; ≤5 rows; no rows = NO BOOKS |
@@ -194,7 +205,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Eleven suites, 639 tests (`test_state_machine.py` 241, `test_reader_state.py` 47, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 69, `test_firmware_host.py` 48, `test_version.py` 8):
+Thirteen suites, 746 tests (`test_state_machine.py` 286, `test_reader_state.py` 47, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 82, `test_firmware_host.py` 48, `test_version.py` 8, `test_network_control.py` 31, `test_modem.py` 18):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
@@ -203,9 +214,9 @@ Eleven suites, 639 tests (`test_state_machine.py` 241, `test_reader_state.py` 47
 *   **`test_firmware_host.py`** — builds `ui_screens.h` for the computer with `tests/firmware_host/` (a fake display using the real GFX font) and checks exact geometry, that firmware and emulator agree on every rule and inverted row, and memory safety (thousands of malformed and maximum-length commands under the address and undefined-behaviour sanitizers). Needs `clang++` and Adafruit_GFX's `glcdfont.c`; skips otherwise.
 
 ```
-KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py
+KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py
 ```
-Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `639 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `746 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 
@@ -213,20 +224,20 @@ Other tools: `tools/make_icons.py [--check]` (icon bitmaps), `tools/make_reader_
 
 ### **Simulator**
 ```
-pip3 install pygame twilio          # twilio is imported even in emulator mode (no account or credentials needed)
+pip3 install pygame
 KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim
 ```
-To try the reader, make `books/` inside that scratch folder and put an `.epub` in it before starting (any Project Gutenberg EPUB works). A window opens; press any key to wake, Down ×3 and Enter for READ. The tests do not need twilio (they mock it), only the emulator run does.
+To try the reader, make `books/` inside that scratch folder and put an `.epub` in it before starting (any Project Gutenberg EPUB works). A window opens; press any key to wake, Down ×3 and Enter for READ.
 Renders every screen in a 600×600 pygame window with full keyboard navigation. Environment: `KYPHONE_SIM_SEND=sent|not_sent`, `KYPHONE_HOME_STYLE=icons|both|words`, `KYPHONE_DATA_DIR=<folder>` (where `contacts.json` and `messages.json` live; default `data/` beside `spi_bridge/`). The emulator's text is narrower than the panel's fixed 6×8-cell font, so wrapping follows the device figures (composer 30 columns, bubbles 20) rather than the font.
 
 ### **Deploying**
-*   **Radxa:** systemd `kyphone.service` runs `spi_bridge/kyphone_os.py` as root from `~/kyphone`. To update: copy `kyphone_os.py`, `simulator.py`, `home_icons.py`, `version.py` and (reader) `reader_epub.py`, `reader_layout.py`, `reader_fonts.py`, `music_library.py`, `music_player.py`; put books in `~/kyphone/data/books/` and music in `~/kyphone/data/music/` (wired playback needs no new packages: GStreamer and its Python bindings are already on the Radxa); `sudo systemctl restart kyphone`; check `journalctl -u kyphone` on the Radxa and `/tmp/inkplate_serial.log` **on the Mac mini** (its logger streams the Inkplate's USB serial output, one line per command it receives). The Radxa's git clone is not kept in step — files are copied in.
+*   **Radxa:** systemd `kyphone.service` runs `spi_bridge/kyphone_os.py` as root from `~/kyphone`. To update: copy `kyphone_os.py`, `simulator.py`, `home_icons.py`, `version.py` and (reader) `reader_epub.py`, `reader_layout.py`, `reader_fonts.py`, (music) `music_library.py`, `music_player.py`, (settings) `network_control.py`, (modem) `modem.py`; put books in `~/kyphone/data/books/` and music in `~/kyphone/data/music/` (wired playback needs no new packages: GStreamer and its Python bindings are already on the Radxa); for real texting, plug in the SIM7600G-H and set `KYPHONE_MODEM_PORT` in `kyphone.service`'s environment before restarting; `sudo systemctl restart kyphone`; check `journalctl -u kyphone` on the Radxa and `/tmp/inkplate_serial.log` **on the Mac mini** (its logger streams the Inkplate's USB serial output, one line per command it receives). The Radxa's git clone is not kept in step — files are copied in.
 *   **Inkplate:** `flash_macmini.sh`, or write only the app image at `0x10000` with esptool (the bootloader and partition table do not change). **Stop `serial_log_macmini.py` first** — it holds the port — and start it again afterwards.
 *   **Always back up both first.** Inkplate: `esptool read_flash 0 0x400000 <file>` gives an exact 4 MB rollback (about 6 minutes at 115200). Radxa: copy `spi_bridge/`, `data/` and the unit file. Python and firmware must ship **together** when a wire format changes.
 
 ### **Security / privacy constraints**
 *   Phone numbers live only on the Radxa in gitignored `data/contacts.json`, `data/messages.json` and `data/calls.json` (the call log) — never committed. Tests and screenshots use fictional `(555) 01x-xxxx` numbers.
-*   **Twilio is switched off** on the Radxa: `TWILIO_SID` and `TWILIO_TOKEN` are commented out in `kyphone.service` and `start_kyphone.sh` (backups `*.bak-2026-09-18`). `TWILIO_NUMBER` must stay set — the module exits without it. Credentials never belong in git or in this file; rotate any that have appeared in a transcript.
+*   **Twilio is gone** (removed 2026-09-24; texts go only through the modem, and nothing needs the `twilio` library). The Radxa's `kyphone.service` and `start_kyphone.sh` still carry the old `TWILIO_*` lines (SID and token commented out since 2026-09-18, backups `*.bak-2026-09-18`); the code ignores them, so they can be deleted at the next deploy. The old Twilio account should be closed so it can never bill. Credentials never belong in git or in this file; rotate any that have appeared in a transcript.
 *   `kyphone_app.py` (OS 0.0, demo mode) is untracked and gitignored, and the OS 0.2 code has no demo mode.
 
 ## 7. File & Directory Map
@@ -236,9 +247,11 @@ Renders every screen in a 600×600 pygame window with full keyboard navigation. 
 *   `spi_bridge/Inkplate_SPI_Peripheral/Inkplate_SPI_Peripheral.ino` — firmware: transport, lock screen, dial/call state, `handle_command()`, USB preview. `ui_screens.h` — the OS 0.2.1 renderers. `ui_icons.h` — generated bitmaps.
 *   `spi_bridge/reader_epub.py`, `reader_layout.py`, `reader_fonts.py` (generated) — the reader's parser, layout and font tables; `spi_bridge/Inkplate_SPI_Peripheral/ui_reader.h` and `fonts/` — the firmware side.
 *   `spi_bridge/music_library.py`, `music_player.py` — the music library scan / tag readers and the playback session and players.
+*   `spi_bridge/network_control.py` — the Wi-Fi/Bluetooth wrapper behind SETTINGS (`nmcli`/`bluetoothctl`, all in one file so it's the one thing mocked in tests).
+*   `spi_bridge/modem.py` — send/receive texts over the real SIM7600G-H modem.
 
 *   `spi_bridge/tools/` — `make_icons.py`, `make_reader_fonts.py`, `preview_screens.py`. `spi_bridge/assets/` — the icon and font licence notices.
-*   `spi_bridge/tests/` — the eleven test files above, `epub_fixtures.py`, `audio_fixtures.py`, `firmware_host/` (fake display with GFX custom-font printing, `render_host.cpp`, `render_reader.cpp`, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
+*   `spi_bridge/tests/` — the test files above, `epub_fixtures.py`, `audio_fixtures.py`, `firmware_host/` (fake display with GFX custom-font printing, `render_host.cpp`, `render_reader.cpp`, canned screens); the older hardware diagnostics (`Signal_Detector.ino`, `wire_verifier.py`, …) are not unit tests.
 *   `docs/02-design/design_handoff_os_0_2/` — the design spec, geometry table, prototypes and captures.
 *   `planning/os-0.2.1-build-plan.md` — build status, wire changes, decisions, rollbacks. `planning/kyphone_backlog.md`, `kyphone_milestones.md` — longer-range plans.
 *   `flash_macmini.sh` (untracked, machine-specific), `serial_log_macmini.py`.

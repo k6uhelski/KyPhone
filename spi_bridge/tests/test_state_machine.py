@@ -26,9 +26,6 @@ _faked = [name for name in ('pygame', 'simulator') if name not in sys.modules]
 for _name in _faked:
     sys.modules[_name] = MagicMock()
 sys.modules.setdefault('evdev', MagicMock())
-_twilio_mock = MagicMock()
-sys.modules.setdefault('twilio', _twilio_mock)
-sys.modules.setdefault('twilio.rest', _twilio_mock)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import kyphone_os  # noqa: E402  (import after sys.path manipulation)
@@ -67,7 +64,6 @@ def reset_state(**overrides):
         'compose_send_sel': False,
         'quote_index': 0,
         'messages': [],
-        'last_sid': None,
         'running': True,
     }
     defaults.update(overrides)
@@ -146,11 +142,11 @@ class TestHomeScreen(unittest.TestCase):
         self.assertEqual(kyphone_os.state['home_index'], 1)
 
     @patch.object(kyphone_os, 'push_screen')
-    def test_down_clamped_at_4(self, _ps):
-        # The home menu has 5 rows (TEXT/CALL/READ/LISTEN/CONTACTS).
-        reset_state(screen='home', home_index=4)
+    def test_down_clamped_at_the_last_row(self, _ps):
+        last = len(kyphone_os.HOME_MENU) - 1
+        reset_state(screen='home', home_index=last)
         kyphone_os.handle_key('KEY_DOWN')
-        self.assertEqual(kyphone_os.state['home_index'], 4)
+        self.assertEqual(kyphone_os.state['home_index'], last)
 
     @patch.object(kyphone_os, 'push_screen')
     def test_up_at_0_enters_header(self, _ps):
@@ -711,21 +707,24 @@ class TestTextsWindow(ListWindowBase):
         self.assertEqual(len(row[1]), kyphone_os.PREVIEW_MAX)
 
     def test_worst_case_rows_still_fit_the_frame_whole(self):
-        # five max-length names/previews and the longest time string ("WEDNESDAY"):
+        # five max-length names/previews and the longest weekday name reachable within the last week
+        # (usually "WEDNESDAY"; today shows as a time and yesterday as "Yesterday", never a weekday
+        # name, so on Wednesdays and Thursdays this picks the longest of the other five instead):
         # the column caps alone come to ~267 characters, over the 253-character frame.
-        wed = next(datetime.now() - timedelta(days=k) for k in range(2, 7)
-                   if (datetime.now() - timedelta(days=k)).weekday() == 2)
+        candidates = [datetime.now() - timedelta(days=k) for k in range(2, 7)]
+        worst = max(candidates, key=lambda d: len(d.strftime('%A')))
         msgs = [{'sender': f'+1555000{i:04d}', 'name': 'x', 'body': 'p' * 60, 'read': False,
-                 'ts': wed.isoformat()} for i in range(5)]
+                 'ts': worst.isoformat()} for i in range(5)]
         reset_state(screen='texts_list', messages=msgs)
         kyphone_os.CONTACTS[:] = [{'first': 'N' * 14, 'last': '', 'number': m['sender']} for m in msgs]
         wire = self._push()
         self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
         rows = _rows(wire, 2)
         self.assertEqual(len(rows), 5)
+        expected = worst.strftime('%A').upper()
         for row in rows:
             self.assertEqual(row.count(CELL), 3)              # no row cut mid-field
-            self.assertEqual(row.split(CELL)[3], 'WEDNESDAY')  # the time survives intact
+            self.assertEqual(row.split(CELL)[3], expected)    # the time survives intact
 
     def test_empty_list_sends_no_rows_and_selects_plus(self):
         reset_state(screen='texts_list', messages=[])
@@ -949,7 +948,7 @@ class TestSendingAndStates(SendBase):
         self.assertEqual(_entries(self.thread_wire())[-1][:1], ['Y2'])
 
     def test_old_sent_messages_without_a_recipient_are_hidden_not_shown_as_a_conversation(self):
-        legacy = {'sender': kyphone_os.TWILIO_NUMBER, 'name': 'You', 'body': 'old reply', 'read': True,
+        legacy = {'sender': '+15550100099', 'name': 'You', 'body': 'old reply', 'read': True,
                   'ts': datetime.now().isoformat()}
         reset_state(screen='thread', thread_id=ALICE, messages=[_inbound(), legacy])
         self.assertEqual([t['sender'] for t in kyphone_os.get_threads()], [ALICE])
@@ -985,7 +984,7 @@ class TestSendingAndStates(SendBase):
         path = os.path.join(tempfile.mkdtemp(), 'messages.json')
         with open(path, 'w') as f:
             json.dump({'messages': [{'dir': 'out', 'peer': ALICE, 'name': 'You', 'body': 'x', 'read': True,
-                                     'ts': datetime.now().isoformat(), 'state': 'sending'}], 'last_sid': None}, f)
+                                     'ts': datetime.now().isoformat(), 'state': 'sending'}], 'last_sid': 'SMxxxx'}, f)
         with patch.object(kyphone_os, 'MESSAGES_FILE', path):
             kyphone_os.load_messages()
         self.assertEqual(kyphone_os.state['messages'][0]['state'], 'not_sent')
@@ -1834,9 +1833,10 @@ class TestHomeMenuOrder(unittest.TestCase):
 
     ROW = staticmethod(lambda name: kyphone_os.HOME_MENU.index(name))
 
-    def test_the_order_is_texts_calls_books_music_address_book(self):
-        # Kyle's order (2026-09-19). The design handoff had CONTACTS third; this is deliberate.
-        self.assertEqual(kyphone_os.HOME_MENU, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS'])
+    def test_the_order_is_texts_calls_books_music_address_book_settings(self):
+        # Kyle's order (2026-09-19; SETTINGS added 2026-09-22). The design handoff had CONTACTS
+        # third; that reordering is deliberate.
+        self.assertEqual(kyphone_os.HOME_MENU, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS'])
 
     def test_each_row_opens_its_screen(self):
         self.enter_row(self.ROW('TEXT'));  self.assertEqual(kyphone_os.state['screen'], 'texts_list')
@@ -1849,6 +1849,9 @@ class TestHomeMenuOrder(unittest.TestCase):
                     patch.object(kyphone_os, 'MUSIC_INDEX_FILE', '/nonexistent-kyphone/music_index.json'), \
                     patch.object(kyphone_os, 'LISTENING_FILE', '/nonexistent-kyphone/listening.json'):
                 self.enter_row(self.ROW('LISTEN'));  self.assertEqual(kyphone_os.state['screen'], 'music')
+        with patch.object(kyphone_os.netctl, 'wifi_status', return_value=kyphone_os.netctl.WifiStatus(False)), \
+                patch.object(kyphone_os.netctl, 'bt_status', return_value=kyphone_os.netctl.BtStatus(True, [])):
+            self.enter_row(self.ROW('SETTINGS'));  self.assertEqual(kyphone_os.state['screen'], 'settings')
 
     def test_contacts_opens_a_fresh_list_returning_to_home(self):
         saved = list(kyphone_os.CONTACTS)
@@ -1879,10 +1882,10 @@ class TestHomeMenuOrder(unittest.TestCase):
         reset_state(screen='home', home_index=0)
         with patch.object(kyphone_os, 'push_screen'):
             seen = []
-            for _ in range(6):
+            for _ in range(7):
                 kyphone_os.handle_key('KEY_DOWN')
                 seen.append(kyphone_os.HOME_MENU[kyphone_os.state['home_index']])
-        self.assertEqual(seen, ['CALL', 'READ', 'LISTEN', 'CONTACTS', 'CONTACTS', 'CONTACTS'])
+        self.assertEqual(seen, ['CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS', 'SETTINGS', 'SETTINGS'])
 
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
@@ -1915,8 +1918,9 @@ class TestDataDirOverride(unittest.TestCase):
         "import sys, json\n"
         "from unittest.mock import MagicMock\n"
         "sys.argv = ['x', '--sim']\n"
-        "for m in ('spidev', 'gpiod', 'input_handler', 'pygame', 'simulator', 'evdev', 'twilio', 'twilio.rest'):\n"
+        "for m in ('spidev', 'gpiod', 'input_handler', 'pygame', 'simulator', 'evdev'):\n"
         "    sys.modules[m] = MagicMock()\n"
+        "sys.modules['twilio'] = None   # Twilio is gone: importing it at all would fail here\n"
         "sys.path.insert(0, %r)\n"
         "import kyphone_os as k\n"
         "%s"
@@ -1964,7 +1968,8 @@ class TestDataDirOverride(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
-            for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py')]
+            for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py'),
+                         os.path.join(here, 'network_control.py'), os.path.join(here, 'modem.py')]
                         + glob.glob(os.path.join(here, 'reader_*.py')) + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
@@ -2401,6 +2406,451 @@ class TestCallLog(unittest.TestCase):
         kyphone_os.state['call_dir'] = 'OUT'
         self.press('KEY_ESC')
         self.assertEqual((self.log()[0]['tag'], self.log()[0]['duration']), ('OUT', '0:00'))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Settings — Wi-Fi and Bluetooth (network_control.py is mocked throughout; no real
+# nmcli/bluetoothctl call happens in this suite)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+nc = kyphone_os.netctl
+md = kyphone_os.modem
+
+
+class SettingsBase(unittest.TestCase):
+    def setUp(self):
+        self._run_async = patch.object(kyphone_os, '_run_async', new=lambda fn: fn())   # synchronous for tests
+        self._run_async.start()
+
+    def tearDown(self):
+        self._run_async.stop()
+
+    def press(self, keycode):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key(keycode)
+        return _wire(ps)
+
+
+class TestSettingsScreen(SettingsBase):
+    def test_opening_reads_status_once_and_shows_it(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        with patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(True, 'Maple')) as ws, \
+                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, ['ZitaoTech_q10'])) as bs:
+            wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+        ws.assert_called_once()
+        bs.assert_called_once()
+        rows = _rows(wire, 2)
+        self.assertIn('Connected: Maple', rows[0])
+        self.assertIn('Connected: ZitaoTech_q10', rows[1])
+
+    def test_not_connected_reads_plainly(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        with patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(False)), \
+                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
+            wire = self.press('KEY_ENTER')
+        rows = _rows(wire, 2)
+        self.assertIn('Not connected', rows[0])
+        self.assertIn('Not connected', rows[1])
+
+    def test_up_down_and_header(self):
+        reset_state(screen='settings', settings_index=0,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        self.press('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['settings_index'], 1)
+        self.press('KEY_DOWN')                                 # clamped: only two rows
+        self.assertEqual(kyphone_os.state['settings_index'], 1)
+        self.press('KEY_UP')
+        self.press('KEY_UP')
+        self.assertEqual(kyphone_os.state['settings_index'], -1)
+
+    def test_enter_on_wifi_row_opens_the_wifi_picker(self):
+        reset_state(screen='settings', settings_index=0,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        with patch.object(nc, 'wifi_scan', return_value=[]):
+            self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_kind']), ('netlist', 'W'))
+
+    def test_enter_on_bluetooth_row_opens_the_bluetooth_picker(self):
+        reset_state(screen='settings', settings_index=1,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        with patch.object(nc, 'bt_scan', return_value=[]):
+            self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_kind']), ('netlist', 'B'))
+
+    def test_esc_and_header_enter_return_home(self):
+        reset_state(screen='settings', settings_index=0,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+        self.assertEqual(kyphone_os.state['home_index'], kyphone_os.HOME_MENU.index('SETTINGS'))
+
+        reset_state(screen='settings', settings_index=-1,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+
+
+class TestWifiPicker(SettingsBase):
+    OPEN   = nc.WifiNetwork('Willow_Street_5G', 60, False, False)
+    LOCKED = nc.WifiNetwork('Maple', 89, True, True)
+
+    def open_picker(self, networks):
+        reset_state(screen='settings', settings_index=0,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        with patch.object(nc, 'wifi_scan', return_value=networks) as scan:
+            self.press('KEY_ENTER')
+        return scan
+
+    def test_scan_result_lands_after_the_rescan_row(self):
+        self.open_picker([self.LOCKED, self.OPEN])
+        self.assertFalse(kyphone_os.state['net_scanning'])
+        self.assertEqual([n.ssid for n in kyphone_os.state['net_rows']], ['Maple', 'Willow_Street_5G'])
+
+    def test_the_scanning_screen_is_plain_ascii(self):
+        reset_state(screen='settings', settings_index=0,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        with patch.object(kyphone_os, '_run_async', new=lambda fn: None):      # the scan never answers
+            wire = self.press('KEY_ENTER')
+        self.assertIn('SCANNING...', wire)
+        self.assertTrue(all(32 <= ord(c) < 127 or c == '\xb7' for c in wire), wire)
+
+    def test_an_empty_scan_says_so_on_the_rescan_row(self):
+        self.open_picker([])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_netlist()
+        self.assertEqual(_wire(ps), 'NETLIST|W|0|RESCAN\xb7No networks found\xb7')
+
+    def test_a_scan_with_results_leaves_the_rescan_row_plain(self):
+        self.open_picker([self.OPEN])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_netlist()
+        self.assertTrue(_wire(ps).startswith('NETLIST|W|0|RESCAN\xb7\xb7|'))
+
+    def test_rescan_row_runs_another_scan(self):
+        scan = self.open_picker([])
+        scan.reset_mock()
+        with patch.object(nc, 'wifi_scan', return_value=[self.OPEN]) as scan2:
+            self.press('KEY_ENTER')                            # net_index is 0 == RESCAN
+        scan2.assert_called_once()
+        self.assertEqual([n.ssid for n in kyphone_os.state['net_rows']], ['Willow_Street_5G'])
+
+    def test_open_network_connects_without_a_password_screen(self):
+        self.open_picker([self.OPEN])
+        kyphone_os.state['net_index'] = 1
+        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)) as connect:
+            self.press('KEY_ENTER')
+        connect.assert_called_once_with('Willow_Street_5G', None)
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_status']), ('netstate', 'OK'))
+
+    def test_locked_network_opens_the_password_screen_first(self):
+        self.open_picker([self.LOCKED])
+        kyphone_os.state['net_index'] = 1
+        self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_ssid']), ('netpass', 'Maple'))
+
+    def test_esc_from_the_picker_goes_to_settings(self):
+        self.open_picker([])
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+
+    def test_only_esc_works_while_a_scan_is_running(self):
+        reset_state(screen='netlist', net_kind='W', net_rows=[], net_index=0, net_scanning=True)
+        with patch.object(kyphone_os, '_run_async'):            # scan never completes in this test
+            self.press('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['net_index'], 0)       # unmoved
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+
+    def test_a_scan_that_finishes_after_leaving_the_screen_is_dropped(self):
+        """The async-scan pattern shared with the reader's page sender: if the phone has moved on by the time
+        the background call returns, the result must not silently land on some other screen."""
+        pending = []
+        with patch.object(kyphone_os, '_run_async', new=pending.append), \
+                patch.object(nc, 'wifi_scan', return_value=[self.OPEN]), \
+                patch.object(kyphone_os, 'push_screen'):
+            kyphone_os._open_netlist('W')
+        self.assertTrue(kyphone_os.state['net_scanning'])
+        kyphone_os.state['screen'] = 'home'                       # navigated away before the scan returned
+        pending[0]()                                              # the scan "finishes" now
+        self.assertEqual(kyphone_os.state['net_rows'], [])         # dropped, not applied
+
+
+class TestBluetoothPicker(SettingsBase):
+    KEYBOARD = nc.BtDevice('11:22:33:44:55:66', 'ZitaoTech_q10', True, True)
+    NEW      = nc.BtDevice('AA:BB:CC:DD:EE:FF', 'Some Headphones', False, False)
+
+    def open_picker(self, devices):
+        reset_state(screen='settings', settings_index=1,
+                     settings_wifi=nc.WifiStatus(False), settings_bt=nc.BtStatus(True, []))
+        with patch.object(nc, 'bt_scan', return_value=devices):
+            self.press('KEY_ENTER')
+
+    def test_an_empty_scan_says_no_devices_found(self):
+        self.open_picker([])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_netlist()
+        self.assertEqual(_wire(ps), 'NETLIST|B|0|RESCAN\xb7No devices found\xb7')
+
+    def test_q_cancels_a_pairing_in_progress(self):
+        """The connecting screen's hint says Q: the phone keyboard has no Esc key."""
+        self.open_picker([self.NEW])
+        kyphone_os.state['net_index'] = 1
+        with patch.object(kyphone_os, '_run_async', new=lambda fn: None):      # the pairing never answers
+            self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['net_status'], 'WORKING')
+        self.press('CHAR:q')
+        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+
+    def test_enter_on_a_new_device_pairs_and_connects(self):
+        self.open_picker([self.NEW])
+        kyphone_os.state['net_index'] = 1
+        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(True)) as pc:
+            self.press('KEY_ENTER')
+        pc.assert_called_once_with('AA:BB:CC:DD:EE:FF')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['net_status']), ('netstate', 'OK'))
+
+    def test_never_calls_for_any_device_but_the_one_selected(self):
+        """The keyboard must never be touched by an action meant for a different device."""
+        self.open_picker([self.KEYBOARD, self.NEW])
+        kyphone_os.state['net_index'] = 2                        # the NEW device, not the keyboard
+        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(True)) as pc:
+            self.press('KEY_ENTER')
+        pc.assert_called_once_with('AA:BB:CC:DD:EE:FF')
+
+    def test_a_pairing_failure_goes_back_to_the_picker_not_a_password_screen(self):
+        self.open_picker([self.NEW])
+        kyphone_os.state['net_index'] = 1
+        with patch.object(nc, 'bt_pair_connect', return_value=nc.Result(False, 'pairing was refused')):
+            self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['net_status'], 'FAIL')
+        self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+
+
+class TestWifiPassword(SettingsBase):
+    def open(self, ssid='Maple'):
+        reset_state(screen='netpass', net_ssid=ssid, net_pass='', net_pass_hdr=False, net_kind='W', net_rows=[])
+
+    def test_up_selects_the_back_arrow_and_enter_there_goes_back_to_the_picker(self):
+        """The phone keyboard has no Esc key: ↑ then Enter is the way out, as on New Message."""
+        self.open()
+        kyphone_os.state['net_pass'] = 'hunt'
+        with patch.object(nc, 'wifi_connect') as connect:
+            wire = self.press('KEY_UP')
+            self.assertEqual(wire.split('|')[3], 'B')
+            self.press('KEY_ENTER')
+        connect.assert_not_called()                               # backing out never tries to connect
+        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+
+    def test_down_returns_to_the_field(self):
+        self.open()
+        self.press('KEY_UP')
+        wire = self.press('KEY_DOWN')
+        self.assertEqual(wire.split('|')[3], '')
+        self.assertFalse(kyphone_os.state['net_pass_hdr'])
+
+    def test_typing_while_the_back_arrow_is_selected_returns_to_the_field_and_types(self):
+        self.open()
+        self.press('KEY_UP')
+        wire = self.press('CHAR:q')                               # q is a letter here, not back
+        self.assertEqual(kyphone_os.state['screen'], 'netpass')
+        self.assertEqual(kyphone_os.state['net_pass'], 'q')
+        self.assertEqual(wire.split('|')[2:], ['*', ''])
+
+    def test_reopening_starts_in_the_field(self):
+        reset_state(screen='netlist', net_kind='W', net_index=1, net_scanning=False, net_pass_hdr=True,
+                     net_rows=[nc.WifiNetwork('Maple', 89, True, False)])
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'NETPASS|Maple||')
+
+    def test_typing_never_puts_the_real_password_on_the_wire(self):
+        self.open()
+        wire = self.press('CHAR:h')
+        self.assertNotIn('h', wire.split('|')[2])                 # only the mask travels
+        for ch in 'unter2':
+            wire = self.press('CHAR:' + ch)
+        self.assertEqual(kyphone_os.state['net_pass'], 'hunter2')
+        self.assertEqual(wire.split('|')[2], '*' * len('hunter2'))
+
+    def test_backspace_edits_the_typed_password(self):
+        self.open()
+        kyphone_os.state['net_pass'] = 'wrongpw'
+        wire = self.press('KEY_BACKSPACE')
+        self.assertEqual(kyphone_os.state['net_pass'], 'wrongp')
+        self.assertEqual(wire.split('|')[2], '*' * len('wrongp'))
+
+    def test_enter_attempts_the_connection(self):
+        self.open('Maple')
+        kyphone_os.state['net_pass'] = 'hunter2'
+        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)) as connect:
+            self.press('KEY_ENTER')
+        connect.assert_called_once_with('Maple', 'hunter2')
+        self.assertEqual(kyphone_os.state['net_status'], 'OK')
+
+    def test_a_wrong_password_returns_to_the_password_screen_with_it_kept(self):
+        self.open('Maple')
+        kyphone_os.state['net_pass'] = 'wrongpw'
+        with patch.object(nc, 'wifi_connect', return_value=nc.Result(False, 'wrong password')):
+            self.press('KEY_ENTER')                               # -> netstate, FAIL
+        self.press('KEY_ENTER')                                    # dismiss the result
+        self.assertEqual(kyphone_os.state['screen'], 'netpass')
+        self.assertEqual(kyphone_os.state['net_pass'], 'wrongpw')  # not cleared — one correction away, not a retype
+
+    def test_esc_goes_back_to_the_picker(self):
+        self.open()
+        self.press('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+
+
+class TestNetstate(SettingsBase):
+    def test_success_refreshes_settings_status_and_returns_there(self):
+        reset_state(screen='netlist', net_kind='W', net_rows=[], net_index=1,
+                     net_scanning=False)
+        network = nc.WifiNetwork('Willow_Street_5G', 60, False, False)
+        kyphone_os.state['net_rows'] = [network]
+        with patch.object(nc, 'wifi_connect', return_value=nc.Result(True)), \
+                patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(True, 'Willow_Street_5G')) as ws, \
+                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
+            self.press('KEY_ENTER')                               # netlist -> netstate (OK)
+            ws.assert_called_once()                                # refreshed as soon as it succeeded
+            self.press('KEY_ENTER')                                # dismiss
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+
+    def test_working_never_blocks_a_key_press(self):
+        """Esc/back must work even while a connect/pair is still WORKING (the call itself runs synchronously in
+        this test via the patched _run_async, but the state machine must not assume that)."""
+        reset_state(screen='netstate', net_kind='B', net_status='WORKING', net_detail='Pairing...', net_rows=[])
+        with patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.handle_key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'netlist')
+
+    def test_a_result_that_arrives_after_leaving_is_dropped(self):
+        reset_state(screen='netstate', net_kind='W', net_ssid='Maple', net_status='WORKING', net_source='netlist')
+        pending = []
+        with patch.object(kyphone_os, '_run_async', new=pending.append), \
+                patch.object(nc, 'wifi_connect', return_value=nc.Result(True)):
+            with patch.object(kyphone_os, 'push_screen'):
+                kyphone_os._open_netstate_wifi('Maple', None, source='netlist')
+        kyphone_os.state['screen'] = 'home'                        # navigated away before the call returned
+        pending[-1]()
+        self.assertEqual(kyphone_os.state['net_status'], 'WORKING')   # never overwritten
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# The real cellular modem (spi_bridge/modem.py) is the only way texts are sent and received. modem.SimModem is used throughout — no real hardware or pyserial anywhere in this file.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestModemTransport(unittest.TestCase):
+    def setUp(self):
+        self._save = patch.object(kyphone_os, 'save_messages')
+        self._save.start()
+        self.addCleanup(self._save.stop)
+        self.addCleanup(setattr, kyphone_os, '_modem', None)   # never leak a fake modem into other tests
+
+    def test_transport_send_goes_through_the_modem(self):
+        fake = md.SimModem()
+        kyphone_os._modem = fake
+        with patch.object(kyphone_os, 'SIM_MODE', False):
+            kyphone_os._transport_send('555-010-0001', 'hi')
+        self.assertEqual(fake.sent, [('+15550100001', 'hi')])
+
+    def test_transport_send_raises_no_service_without_a_modem(self):
+        kyphone_os._modem = None
+        with patch.object(kyphone_os, 'SIM_MODE', False):
+            with self.assertRaises(RuntimeError):
+                kyphone_os._transport_send('555-010-0001', 'hi')
+
+    def test_twilio_is_gone(self):
+        with open(kyphone_os.__file__) as f:
+            self.assertNotIn('twilio', f.read().lower())
+
+    def test_a_modem_send_failure_propagates_like_any_other_transport_failure(self):
+        fake = md.SimModem()
+        fake.fail_next_send('no signal')
+        kyphone_os._modem = fake
+        with patch.object(kyphone_os, 'SIM_MODE', False):
+            with self.assertRaises(md.ModemError):
+                kyphone_os._transport_send('555-010-0001', 'hi')
+
+    def test_init_modem_does_nothing_in_sim_mode(self):
+        kyphone_os._modem = None
+        with patch.object(kyphone_os, 'SIM_MODE', True):
+            kyphone_os._init_modem()
+        self.assertIsNone(kyphone_os._modem)
+
+    def test_init_modem_does_nothing_without_the_env_var(self):
+        kyphone_os._modem = None
+        with patch.object(kyphone_os, 'SIM_MODE', False):
+            os.environ.pop(md.MODEM_PORT_ENV, None)
+            kyphone_os._init_modem()
+        self.assertIsNone(kyphone_os._modem)
+
+    def test_init_modem_picks_up_a_working_dongle(self):
+        kyphone_os._modem = None
+        fake = md.SimModem()
+        with patch.object(kyphone_os, 'SIM_MODE', False), \
+                patch.dict(os.environ, {md.MODEM_PORT_ENV: '/dev/ttyUSB2'}), \
+                patch.object(md, 'SerialModem', return_value=fake):
+            kyphone_os._init_modem()
+        self.assertIs(kyphone_os._modem, fake)
+
+    def test_init_modem_falls_back_quietly_when_the_dongle_does_not_answer(self):
+        kyphone_os._modem = None
+        with patch.object(kyphone_os, 'SIM_MODE', False), \
+                patch.dict(os.environ, {md.MODEM_PORT_ENV: '/dev/ttyUSB2'}), \
+                patch.object(md, 'SerialModem', side_effect=md.ModemError('no such device')):
+            kyphone_os._init_modem()
+        self.assertIsNone(kyphone_os._modem)
+
+
+class TestModemReceiveLoop(unittest.TestCase):
+    """modem_sms_loop drains whatever the modem hands back into the message list — with no dedup
+    bookkeeping, since the modem's own storage already dedupes (poll_new removes each message as it's
+    read)."""
+
+    def setUp(self):
+        self._save = patch.object(kyphone_os, 'save_messages')
+        self._save.start()
+        self.addCleanup(self._save.stop)
+        self.addCleanup(setattr, kyphone_os, '_modem', None)
+
+    def run_one_pass(self, fake):
+        """modem_sms_loop's body is one iteration of an infinite poll loop; run exactly one pass by
+        having the loop's own time.sleep stop state['running'] right after the first poll."""
+        kyphone_os._modem = fake
+
+        def fake_sleep(_):
+            with kyphone_os.state['lock']:
+                kyphone_os.state['running'] = False
+
+        reset_state(running=True, screen='texts_list', messages=[])
+        with patch.object(kyphone_os.time, 'sleep', fake_sleep):
+            kyphone_os.modem_sms_loop()
+
+    def test_a_delivered_text_lands_in_messages_unread(self):
+        fake = md.SimModem()
+        fake.deliver('+15550100009', 'surprise!')
+        self.run_one_pass(fake)
+        self.assertEqual(len(kyphone_os.state['messages']), 1)
+        msg = kyphone_os.state['messages'][0]
+        self.assertEqual((msg['sender'], msg['body'], msg['read']), ('+15550100009', 'surprise!', False))
+
+    def test_two_delivered_texts_both_land(self):
+        fake = md.SimModem()
+        fake.deliver('+15550100009', 'one')
+        fake.deliver('+15550100008', 'two')
+        self.run_one_pass(fake)
+        self.assertEqual([m['body'] for m in kyphone_os.state['messages']], ['one', 'two'])
+
+    def test_nothing_delivered_is_a_quiet_no_op(self):
+        fake = md.SimModem()
+        self.run_one_pass(fake)
+        self.assertEqual(kyphone_os.state['messages'], [])
+
+    def test_no_modem_configured_returns_at_once(self):
+        kyphone_os._modem = None
+        kyphone_os.modem_sms_loop()   # must return immediately, not loop forever waiting on nothing
 
 
 if __name__ == '__main__':

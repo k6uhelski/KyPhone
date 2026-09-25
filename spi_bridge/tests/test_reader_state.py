@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.argv = ['test', '--sim']
-for _name in ('spidev', 'gpiod', 'input_handler', 'evdev', 'twilio', 'twilio.rest'):
+for _name in ('spidev', 'gpiod', 'input_handler', 'evdev'):
     sys.modules.setdefault(_name, MagicMock())
 _faked = [name for name in ('pygame', 'simulator') if name not in sys.modules]
 for _name in _faked:

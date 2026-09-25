@@ -220,6 +220,14 @@ class Simulator:
             self._draw_tracks(rest)
         elif prefix == 'NOWPLAYING':
             self._draw_nowplaying(rest)
+        elif prefix == 'SETTINGS':
+            self._draw_settings(rest)
+        elif prefix == 'NETLIST':
+            self._draw_netlist(rest)
+        elif prefix == 'NETPASS':
+            self._draw_netpass(rest)
+        elif prefix == 'NETSTATE':
+            self._draw_netstate(rest)
         elif prefix == 'DIAL':
             self._draw_dial(rest)
         elif prefix == 'CALLSTATE':
@@ -392,7 +400,7 @@ class Simulator:
                 else:
                     i += 1
 
-    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS']    # must match kyphone_os.HOME_MENU (a test asserts it)
+    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS']   # must match kyphone_os.HOME_MENU (a test asserts it)
 
     def _draw_status_group(self, fg, bg, mid_y):
         """Battery block + percentage + 4-bar signal staircase, right-aligned
@@ -889,6 +897,54 @@ class Simulator:
     def _draw_music(self, data):
         # data = "sel|title·subtitle·right|..."  (the first row may be NOW PLAYING or RESUME)
         self._draw_rows2(data, 'LISTEN', 'NO MUSIC', 'COPY MUSIC FILES INTO THE MUSIC FOLDER ON THE PHONE.')
+
+    def _draw_settings(self, data):
+        # data = "sel|title·subtitle·right|..."  always exactly two rows: Wi-Fi, Bluetooth
+        self._draw_rows2(data, 'SETTINGS', '', '')
+
+    def _draw_netlist(self, data):
+        # data = "kind|sel|title·subtitle·right|..."  kind W=Wi-Fi B=Bluetooth. The RESCAN row (or, while a scan
+        # is running, a single SCANNING row) always makes this list non-empty, so the two empty-state strings
+        # are never shown — they exist only because _draw_rows2 requires them.
+        kind, rest = (data.split('|', 1) + [''])[:2]
+        self._draw_rows2(rest, 'WI-FI' if kind == 'W' else 'BLUETOOTH', '', '')
+
+    def _draw_netpass(self, data):
+        # data = "ssid|masked|hdr"  — `masked` is '*' characters only; the real password never reaches this
+        # screen. hdr 'B' = the header's < is selected (Enter there goes back to the network list).
+        parts  = data.split('|')
+        ssid   = parts[0] if len(parts) > 0 else ''
+        masked = parts[1] if len(parts) > 1 else ''
+        back   = len(parts) > 2 and parts[2] == 'B'
+
+        self._draw_header_bar_back_only('WI-FI PASSWORD', back)
+
+        self._text('NETWORK:', 24, 58, 2)
+        self._text(ssid, 24, 84, 3)
+        self._line(122)
+
+        self._text('PASSWORD:', 24, 134, 2)
+        self._text(masked, 24, 160, 3)
+        if not back:                                          # the cursor shows the field has the focus
+            cursor_x = 24 + self._font(3).size(masked)[0]
+            pygame.draw.rect(self._surface, BLACK, (cursor_x, 160, self._char_w(3), 24))
+
+        self._text_centered('ENTER BACK' if back else 'ENTER CONNECT', self.HEIGHT - 34 - 16, 2)
+
+    def _draw_netstate(self, data):
+        # data = "kind|status|detail"  kind W/B, status WORKING/OK/FAIL
+        parts  = data.split('|')
+        kind   = parts[0] if len(parts) > 0 else 'W'
+        status = parts[1] if len(parts) > 1 else 'WORKING'
+        detail = parts[2] if len(parts) > 2 else ''
+
+        self._text_centered('WI-FI' if kind == 'W' else 'BLUETOOTH', 40, 2)
+        if status == 'FAIL':                                  # the reason alone ("wrong password") needs a heading
+            self._text_centered("COULDN'T CONNECT", 206, 3, bold=True)
+        for k, line in enumerate(self._wrap_lines(detail, 3, self.WIDTH - 56)[:3]):
+            self._text_centered(line, 260 + 34 * k, 3, bold=status != 'FAIL')
+        hint = {'WORKING': 'Q TO CANCEL', 'OK': 'ENTER OK', 'FAIL': 'ENTER TRY AGAIN'}.get(status, '')
+        self._text_centered(hint, self.HEIGHT - 34 - 16, 2)
 
     def _draw_tracks(self, data):
         # data = "sel|album|title·artist·time|..."
