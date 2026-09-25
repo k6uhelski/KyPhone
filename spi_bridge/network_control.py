@@ -95,8 +95,11 @@ def wifi_scan():
             signal = 0
         secured = security not in ('', '--')
         existing = best.get(ssid)
+        in_use = in_use == '*' or (existing is not None and existing.in_use)   # the joined access point may be the weaker one
         if existing is None or signal > existing.signal:
-            best[ssid] = WifiNetwork(ssid, signal, secured, in_use == '*')
+            best[ssid] = WifiNetwork(ssid, signal, secured, in_use)
+        else:
+            existing.in_use = in_use
     return sorted(best.values(), key=lambda n: -n.signal)
 
 

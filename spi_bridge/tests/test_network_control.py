@@ -125,6 +125,13 @@ class WifiScanTest(unittest.TestCase):
         self.assertTrue(by_ssid['Maple'].secured)
         self.assertFalse(by_ssid['Willow_Street_5G'].in_use)
 
+    def test_connected_to_a_weaker_access_point_still_marks_the_network_connected(self):
+        """Found on the real Radxa: joined to one access point while another of the same network was stronger."""
+        for order in (':Maple:100:WPA2\n*:Maple:40:WPA2\n', '*:Maple:40:WPA2\n:Maple:100:WPA2\n'):
+            with patch('network_control.subprocess.run', return_value=_proc(0, order)):
+                networks = nc.wifi_scan()
+            self.assertEqual([(n.ssid, n.signal, n.in_use) for n in networks], [('Maple', 100, True)], order)
+
     def test_open_network_not_secured(self):
         out = ':OpenCafe:60:--\n'
         with patch('network_control.subprocess.run', return_value=_proc(0, out)):
