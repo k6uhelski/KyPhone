@@ -80,12 +80,12 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 **The spec is `docs/02-design/design_handoff_os_0_2/`** — the design doc, `GEOMETRY.md`, the prototype (`KyPhone UI v4.dc.html`) and 600×600 captures. When the prose and the prototype disagree, the prototype wins (it has behaviours the README does not list). **The build log — status, decisions, deviations, rollbacks — is `planning/os-0.2.1-build-plan.md`.**
 
 ### **Versioning**
-**Current version: 0.4.0**
+**Current version: 0.4.1**
 **Design library: 0.2.1** (`docs/02-design/design_handoff_os_0_2/`; recorded as `DESIGN` in `version.py` and checked against the handoff's own title)
 
 One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and shown everywhere from there:
 *   **MINOR** — a new feature you can see or use (a screen, an app) or a new design generation; **PATCH** — fixes and refinements; **MAJOR** — stays 0 until KyPhone is a daily-driver phone (cellular, battery, enclosure), which is 1.0.
-*   **Where it shows:** the lock screen (bottom left, "OS 0.4.0" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
+*   **Where it shows:** the lock screen (bottom left, "OS 0.4.1" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
 *   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
 *   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
 *   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, the settings screens (SETTINGS: the Wi-Fi/Bluetooth picker, the password box, the connect/pair result), plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
@@ -99,7 +99,8 @@ One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and
 | 0.2.1 | windowed lists, message states and retry, formatted numbers, contact create/delete, stop alerts, icon home menu (the OS 0.2.1 design) | branch `os-0.2.1-build`; flashed and deployed 2026-09-18 except the icons |
 | **0.3.0** | **the reader** (EPUBs), **the music player** (LISTEN), the home menu order text/call/book/music/address book, New Message number check, a contact saved from a conversation keeps its number, the Contacts `+` key, a call log, one version number | tagged `v0.3.0`; flashed and deployed 2026-09-20 (see `planning/reader-build-plan.md` and `planning/music-build-plan.md`) |
 | 0.3.1 | fixes found on the real phone: book pages now arrive complete (the sender waits for the Inkplate to take each frame), the Inkplate ends a frame after 150 ms of clock silence instead of 600 ms (about four times faster page turns), every book page turn is a full refresh, and the call screens say Q (not ESC) | flashed and deployed 2026-09-20 |
-| **0.4.0** | **Settings** (Wi-Fi and Bluetooth: scan, connect with a password, pair; the password never reaches the screen), **texting through a cellular modem** (SIM7600G-H; waits for an activated SIM), **Twilio removed**, and the Wi-Fi scan marks the joined network even on a weaker access point (found on the real Radxa) | branch `settings-and-modem`; flashed and deployed 2026-09-24 |
+| 0.4.0 | **Settings** (Wi-Fi and Bluetooth: scan, connect with a password, pair; the password never reaches the screen), **texting through a cellular modem** (SIM7600G-H; waits for an activated SIM), **Twilio removed**, and the Wi-Fi scan marks the joined network even on a weaker access point (found on the real Radxa) | branch `settings-and-modem`; flashed and deployed 2026-09-24 |
+| **0.4.1** | Settings reworked after trying it on the phone: the Wi-Fi list opens at once on the switch and the joined network (Forget This Network) and searches once in the background; Bluetooth shows the switch and known devices (Forget / Re-connect) and only searches under PAIR NEW DEVICE; the keyboard can never be forgotten, and Bluetooth stays on while it is connected | branch `settings-and-modem`; flashed and deployed 2026-09-25 |
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
@@ -189,7 +190,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 
 | Screen | Command |
 | :--- | :--- |
-| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.4.0`) is drawn as "OS 0.4.0" bottom left; a firmware that receives none draws no label |
+| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version` — the version (e.g. `0.4.1`) is drawn as "OS 0.4.1" bottom left; a firmware that receives none draws no label |
 | Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS 5 SETTINGS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
 | Texts | `TEXTS\|sel\|name·preview·unread·time\|…` — sel −1 back, −2 plus, else the row in the window; ≤5 rows; preview starts `You: ` or `! ` (unsent); no rows = empty state |
 | Contacts | `CONTACTSPICK\|sel\|query\|3 / 14\|name·number\|…` — ≤7 rows; no rows = NO MATCH (query set) or NO CONTACTS |
