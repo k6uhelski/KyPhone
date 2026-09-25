@@ -177,6 +177,44 @@ class FirmwareFrames(unittest.TestCase):
         for row in range(3):
             self.assertEqual(self.ink_box(self.frame('HOME2|12:44 PM|-1|0|I|1'), 345, 62 + row * 135 + 40, 385, 62 + row * 135 + 100), 0)
 
+    # ── settings ───────────────────────────────────────────────────────────────
+    def test_settings_and_network_lists_are_111px_rows_with_the_selection_inverted(self):
+        for name, sel, rows in (('settings', 0, 2), ('netlist_wifi', 2, 4), ('netlist_bt', 1, 3)):
+            f = self.frames[name]
+            self.assertEqual([self.ink(f, 4, 44 + r * 111 + 4) for r in range(rows)], [r == sel for r in range(rows)], name)
+            self.assertFalse(self.ink(f, 4, 44 + rows * 111 + 4), name)             # nothing below the last row
+            self.assertFalse(self.has_ink(f, 500, 6, 585, 40), name)                # back only: no + control
+
+    def test_the_network_list_title_follows_the_kind(self):
+        def header(f):
+            return bytes(f[y * W + x] for y in range(8, 38) for x in range(150, 450))
+        self.assertNotEqual(header(self.frames['netlist_wifi']), header(self.frames['netlist_bt']))
+
+    def test_an_empty_scan_shows_its_message_on_the_rescan_row(self):
+        f = self.frames['netlist_empty']
+        self.assertTrue(self.ink(f, 4, 48))                                          # RESCAN, selected
+        self.assertGreater(self.ink_box(f, 28, 110, 400, 124), 0)                    # its second line
+        # (white text on the inverted row shows as un-inked pixels inside the black fill)
+        self.assertLess(self.ink_box(f, 28, 110, 400, 124), (400 - 28) * 14)
+
+    def test_the_password_box_has_a_cursor_until_the_back_arrow_is_selected(self):
+        field, back = self.frames['netpass'], self.frames['netpass_back']
+        mask_end = 24 + 7 * 18
+        self.assertTrue(self.ink(field, mask_end + 9, 172))                          # the block cursor after the mask
+        self.assertFalse(self.ink(back, mask_end + 9, 172))
+        self.assertFalse(self.ink(field, 20, 8))                                     # < plain
+        self.assertTrue(self.ink(back, 20, 8))                                       # < box filled
+        self.assertTrue(self.ink(field, 300, 122) and not self.ink(field, 300, 123)) # the rule between the fields
+
+    def test_only_a_failed_connection_has_the_heading(self):
+        for name, heading in (('netstate_working', False), ('netstate_ok', False), ('netstate_fail', True)):
+            self.assertEqual(self.ink_box(self.frames[name], 0, 200, 600, 236) > 0, heading, name)
+            self.assertGreater(self.ink_box(self.frames[name], 0, 262, 600, 290), 0, name)   # the detail line
+            self.assertGreater(self.ink_box(self.frames[name], 0, 548, 600, 568), 0, name)   # the hint
+
+    def test_home_can_select_settings(self):
+        self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
+
     def test_an_old_home_command_without_the_flag_still_draws(self):
         self.assertGreater(self.ink_count(self.frame('HOME2|12:44 PM|0|3|I')), 300)
 
@@ -318,7 +356,8 @@ class FirmwareMatchesEmulator(unittest.TestCase):
     """Both renderers draw the same rules, fills and borders; only their fonts differ."""
     NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
-             'edit_delete']
+             'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
+             'netlist_scanning', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):
@@ -411,7 +450,8 @@ class FirmwareMemorySafety(unittest.TestCase):
 
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
-                    'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|']
+                    'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):
@@ -434,6 +474,11 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long7\tMUSIC|4|' + '|'.join(('N' * 22 + '\xb7' + 's' * 24 + '\xb7' + '99 trk') for _ in range(5)) + '\n',
             'long8\tTRACKS|0|' + 'H' * 20 + '|' + '|'.join(('N' * 22 + '\xb7' + 's' * 24 + '\xb710:21') for _ in range(5)) + '\n',
             'long9\tNOWPLAYING|P|' + 'W' * 200 + '\n',
+            'long10\tNETPASS|' + 'S' * 60 + '|' + '*' * 180 + '|\n',
+            'long11\tNETSTATE|W|FAIL|' + 'x' * 230 + '\n',
+            'long12\tNETSTATE|B|OK|' + ' '.join(['word'] * 45) + '\n',
+            'long13\tNETLIST|W|4|' + '|'.join(('N' * 22 + '\xb7' + 's' * 17 + '\xb7CONNECTED') for _ in range(6)) + '\n',
+            'long14\tNETLIST|\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
         done = subprocess.run([exe, '-'], input=''.join(lines).encode('latin-1'), capture_output=True, env=env)

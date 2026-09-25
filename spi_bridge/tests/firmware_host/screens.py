@@ -74,6 +74,19 @@ SCREENS = {
     'edit_new': ('CONTACTEDIT|||(555) 019-9002|0|N', '07_new_contact_prefilled.png'),
     'edit_edit': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|3|E', None),
     'edit_delete': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|4|E', '08_edit_contact_delete_selected.png'),
+    'home_settings': ('HOME2|12:44 PM|5|0|I', None),
+    'settings': ('SETTINGS|0|' + r('Wi-Fi', 'Connected: Maple', '') + '|' + r('Bluetooth', 'Not connected', ''), None),
+    'netlist_wifi': ('NETLIST|W|2|' + '|'.join([r('RESCAN', '', ''), r('Maple', 'Secured', 'CONNECTED'),
+                                                r('Willow_Street_5G', 'Secured', ''), r('OpenCafe', 'Open', '')]), None),
+    'netlist_bt': ('NETLIST|B|1|' + '|'.join([r('RESCAN', '', ''), r('Keyboard', 'Paired', 'CONNECTED'),
+                                              r('Headphones', 'New device', '')]), None),
+    'netlist_empty': ('NETLIST|W|0|' + r('RESCAN', 'No networks found', ''), None),
+    'netlist_scanning': ('NETLIST|B|0|' + r('SCANNING...', '', ''), None),
+    'netpass': ('NETPASS|Willow_Street_5G|*******|', None),
+    'netpass_back': ('NETPASS|Willow_Street_5G|*******|B', None),
+    'netstate_working': ('NETSTATE|W|WORKING|Connecting to Willow_Street_5G...', None),
+    'netstate_ok': ('NETSTATE|B|OK|Connected to Headphones.', None),
+    'netstate_fail': ('NETSTATE|W|FAIL|wrong password', None),
 }
 
 

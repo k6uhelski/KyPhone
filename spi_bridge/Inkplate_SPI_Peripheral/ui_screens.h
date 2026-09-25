@@ -22,6 +22,8 @@
 //   MUSIC|sel|title·sub·right|...      TRACKS|sel|album|title·artist·time|...
 //   NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N     (state P playing, U paused, S finished)
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
+//   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B|sel|name·sub·right|...
+//   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -377,6 +379,66 @@ static void ui_music(char* data) {
 }
 static void ui_tracks(char* data) {
     ui_rows2(data, "", "NO TRACKS", "THIS ALBUM HAS NO TRACKS.", true);
+}
+
+// ─── Settings: SETTINGS, NETLIST, NETPASS, NETSTATE ───────────────────────────
+//   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·   the two-line list, always two rows
+//   NETLIST|W/B|sel|name·sub·right|...             a scan: RESCAN (or SCANNING...) then networks / devices
+// Both are the two-line list. The RESCAN row keeps a network list from ever being empty.
+
+static void ui_settings(char* data) {
+    ui_rows2(data, "SETTINGS", "", "", false);
+}
+
+static void ui_netlist(char* data) {
+    const char* title = data[0] == 'B' ? "BLUETOOTH" : "WI-FI";
+    char* rest = strchr(data, '|');
+    ui_rows2(rest ? rest + 1 : data + strlen(data), title, "", "", false);
+}
+
+// NETPASS|network|mask|hdr — the Wi-Fi password box. `mask` is '*' characters only: the typed password never
+// reaches the Inkplate. hdr B = the header's < is selected (the phone keyboard has no Esc; Up then Enter backs out),
+// which also takes the cursor out of the field.
+static void ui_netpass(char* data) {
+    char* f[3];
+    int n = ui_split(data, '|', f, 3);
+    const char* ssid = ui_fld(f, n, 0);
+    const char* mask = ui_fld(f, n, 1);
+    bool back = ui_fld(f, n, 2)[0] == 'B';
+
+    ui_header("WI-FI PASSWORD", back, false, false);
+    ui_put("NETWORK:", 24, 58, 2, BLACK);
+    ui_put(ssid, 24, 84, 3, BLACK);
+    ui_hline(122, 1);
+    ui_put("PASSWORD:", 24, 134, 2, BLACK);
+    ui_put(mask, 24, 160, 3, BLACK);
+    if (!back) {
+        int cx = 24 + ui_tw(mask, 3);
+        if (cx > 600 - 18) cx = 600 - 18;
+        display.fillRect(cx, 160, 18, 24, BLACK);
+    }
+    ui_text_center(back ? "ENTER BACK" : "ENTER CONNECT", 550 + 14, 2, BLACK, false);
+}
+
+// NETSTATE|W/B|WORKING/OK/FAIL|detail — a connect or pair in progress, or how it ended. A failure gets a
+// COULDN'T CONNECT heading, since the detail alone ("wrong password") does not say what failed.
+static void ui_netstate(char* data) {
+    char* f[3];
+    int n = ui_split(data, '|', f, 3);
+    char kind = ui_fld(f, n, 0)[0];
+    const char* status = ui_fld(f, n, 1);
+    const char* detail = ui_fld(f, n, 2);
+    bool fail = strcmp(status, "FAIL") == 0;
+
+    ui_text_center(kind == 'B' ? "BLUETOOTH" : "WI-FI", 40 + 14, 2, BLACK, false);
+    if (fail) ui_text_center("COULDN'T CONNECT", 206 + 21, 3, BLACK, true);
+    static char lines[4][34];
+    int nl = ui_wrap(detail, 30, &lines[0][0], 34, 3);
+    for (int i = 0; i < nl; i++) ui_text_center(lines[i], 260 + 34 * i + 21, 3, BLACK, !fail);
+    const char* hint = strcmp(status, "WORKING") == 0 ? "Q TO CANCEL"
+                     : strcmp(status, "OK") == 0      ? "ENTER OK"
+                     : fail                           ? "ENTER TRY AGAIN" : "";
+    ui_text_center(hint, 550 + 14, 2, BLACK, false);
 }
 
 // ─── NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N ─────────────
@@ -810,6 +872,8 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"STUB|", ui_stub},          {"CONFIRM|", ui_confirm},     {"CONTACTEDIT|", ui_contact_edit},
         {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},   {"MUSIC|", ui_music},
         {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
+        {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
+        {"NETSTATE|", ui_netstate},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);
