@@ -8,7 +8,7 @@ KyPhone is a minimal phone designed to revolt against the attention economy. It 
 
 ## **Current Status — September 2026**
 
-**Current version: 0.4.1** (defined once, in `spi_bridge/version.py`; the lock screen shows it as "OS 0.4.1"). **Design library: 0.2.1** — the reader and music screens are newer than it and are not in it yet.
+**Current version: 0.5.0** (defined once, in `spi_bridge/version.py`; the lock screen shows it as "OS 0.5.0"). **Design library: 0.2.1** — the reader and music screens are newer than it and are not in it yet.
 
 A Python state machine on the Radxa draws every screen on the Inkplate over SPI, and a pygame emulator runs the same screens on a Mac so the UI can be built and tested without hardware. The work is on the `music-build` branch (which includes `os-0.2.1-build` and `reader-build`) until it is merged.
 
