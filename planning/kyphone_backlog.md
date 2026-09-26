@@ -1,35 +1,44 @@
 # KyPhone Project Backlog
-*Updated: March 30, 2026*
+*Updated: September 25, 2026 (OS 0.6.0)*
 
-## In Progress
-- [ ] Improve messaging flow (compose screen, reply, thread UX)
+## Next
+- [ ] Real texting through the SIM7600G-H modem: activate the SIM, plug the dongle into the Radxa, find its AT port (`tools/find_modem_port.py`), set `KYPHONE_MODEM_PORT`, send and receive one real text
+- [ ] Try Add from a computer on the real phone: a book, an album, a contacts file
 
 ## Messaging
-- [ ] Compose screen — type and send a new message (fake send until 10DLC clears)
-- [ ] Reply from MSG_THREAD screen
-- [ ] Contacts — JSON file mapping phone numbers → names
-- [ ] Address book screen — browse and select contacts
-- [ ] Check 10DLC campaign registration (Twilio console → Messaging → Regulatory Compliance)
+- [x] Compose, reply, retry a text that did not send, message states (SENDING / SENT / NOT SENT)
+- [x] Address book: look up, create, edit, delete; numbers matched by their last ten digits
+- [x] Real sending path through a cellular modem (Twilio removed, 0.4.0)
+- [ ] Prove the modem path end to end with a real SIM (see Next)
 
-## Home Screen
-- [ ] Update Inkplate firmware with new 4-button layout (TEXT/CALL/READ/LISTEN + YAP/CHILL)
-- [ ] Notification badge or indicator for unread messages
+## Calls
+- [x] Call screens and a call log (simulated until the modem carries voice)
+- [x] Calls and texts per person: a call-log row opens the person's page; a conversation shows the last call (0.6.0)
+- [ ] Real voice calls through the modem (audio routing on the Radxa)
 
-## CHILL Apps
-- [ ] READ: txt/epub parser + paginator on Radxa, page navigation on screen
-- [ ] LISTEN: local MP3 playback via Radxa, track info + controls on screen
-- [ ] Spotify Web API integration (requires Premium, OAuth on Radxa)
+## Reading and listening
+- [x] READ: EPUB reader with four text sizes, progress, resume
+- [x] LISTEN: albums, tracks, now playing, background play, resume
+- [ ] Reader: a chapter menu
+- [ ] Music: shuffle and repeat
+- [ ] Bluetooth headphones (PulseAudio's Bluetooth module; the service runs as root)
 
-## Architecture
-- [ ] App runtime — modular app interface so new apps don't require core rewrites
-- [ ] CALL placeholder screen
+## Tools
+- [x] Notes (0.6.0)
+- [x] Add books, music and contacts from a computer over home Wi-Fi (0.6.0)
 
-## Hardware (deferred until mobile-ready)
-- [ ] BlackBerry Q10 keyboard — ordered, arriving May
-- [ ] Quectel EC25-AF cellular modem + SuperPLUS mini PCIe to USB adapter
-- [ ] SIM card (Mint Mobile or Tello)
-- [ ] Battery + enclosure
+## Settings
+- [x] Wi-Fi: switch, joined network (forget), networks nearby, password box (0.4.x)
+- [x] Bluetooth: switch, known devices (forget / re-connect), pair new devices; the keyboard can never be forgotten (0.4.x)
+- [x] Screen light and the lock screen's new-activity mark (0.5.0)
+- [ ] Bluetooth devices that need a pairing code
+
+## Hardware
+- [x] Keyboard (ZitaoTech Q10, Bluetooth)
+- [x] Cellular modem in hand (Waveshare SIM7600G-H USB dongle); SIM bought, not yet activated
+- [ ] Battery and enclosure
 
 ## Polish
-- [x] Bitmap icon system (1-bit, Adafruit GFX byte arrays) — done for the home menu in OS 0.2.1: `spi_bridge/tools/make_icons.py`
-- [ ] Font/layout refinements informed by Dieter Rams / early Mac aesthetic
+- [x] Bitmap icon system for the home menu (`spi_bridge/tools/make_icons.py`)
+- [ ] A design handoff that covers the screens laid out by us (READ, LISTEN, SETTINGS, NOTES, the upload screen, stop alerts)
+- [ ] Font and layout refinements
