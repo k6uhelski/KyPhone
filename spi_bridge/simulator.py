@@ -567,10 +567,15 @@ class Simulator:
                     WHITE if info_sel else BLACK, bold=True)
         pygame.draw.rect(self._surface, BLACK, (0, 46, self.WIDTH, 2))
 
-        parsed = []
+        parsed, call_line = [], ''
         for e in entries:
             code, time_str, text = (e.split('\xb7', 2) + ['', '', ''])[:3]
+            if code == 'C':                                   # LAST CALL: ... — a quiet line under the header
+                call_line = text
+                continue
             parsed.append((code, time_str, text))
+        if call_line:
+            self._text_centered(call_line, 72 - 14, 2)
         composer_active = not hdr and not any(c == 'Y3' for c, _, _ in parsed)
 
         # Composer: '> ' + the draft, word-wrapped to 30 columns, at most three
@@ -588,7 +593,7 @@ class Simulator:
 
         # Message area: bottom-anchored column of bubbles, 16px apart. An older
         # bubble (or a long one) runs off the top edge, clipped.
-        area_top, area_bottom = 62, self.HEIGHT - composer_h - 17
+        area_top, area_bottom = (84 if call_line else 62), self.HEIGHT - composer_h - 17
         tail_widths, tail_seg_h = [4, 8, 14, 8, 4], 4
         line_h, pad_x, name_h, meta_h, gap = 35, 12, 27, 25, 16
         blocks = []

@@ -2137,6 +2137,108 @@ class TestNotes(unittest.TestCase):
         self.assertEqual(wire, 'NOTE||caf? "quoted"' + CELL + 'line two')
 
 
+class TestCallsAndTextsPerPerson(unittest.TestCase):
+    """A call is logged with the other party's number, the call log opens that person's page, and a conversation
+    shows the last call with them."""
+    NUM = '(555) 010-0001'
+
+    def setUp(self):
+        self._save = patch.object(kyphone_os, '_save_calls')
+        self._save.start()
+        self.addCleanup(self._save.stop)
+        self._msgs = patch.object(kyphone_os, 'save_messages')
+        self._msgs.start()
+        self.addCleanup(self._msgs.stop)
+
+    def press(self, *keys):
+        wire = None
+        for key in keys:
+            with patch.object(kyphone_os, 'push_screen') as ps:
+                kyphone_os.handle_key(key)
+            wire = _wire(ps) or wire
+        return wire
+
+    def call_from_contact_page(self):
+        reset_state(screen='contact', contact_idx=None, contact_number=ALICE, contact_sel='call',
+                    contact_return='calls_list', calls=[])
+        self.press('KEY_ENTER', 'KEY_ESC')                         # call, then cancel before it connects
+
+    def test_a_call_from_a_contact_page_is_logged_with_the_number(self):
+        self.call_from_contact_page()
+        entry = kyphone_os.state['calls'][0]
+        self.assertEqual((entry['tag'], entry['number']), ('OUT', kyphone_os.format_number(ALICE)))
+
+    def test_a_dialled_number_and_the_incoming_demo_are_logged_with_numbers(self):
+        reset_state(screen='dial', dial_buffer='5550100077', dial_quick_index=-1, calls=[])
+        self.press('KEY_ENTER', 'KEY_ESC')
+        self.assertEqual(kyphone_os.state['calls'][0]['number'], '(555) 010-0077')
+        reset_state(screen='dial', dial_buffer='12', dial_quick_index=-1, calls=[])
+        self.press('KEY_ENTER', 'KEY_ESC')
+        self.assertNotIn('number', kyphone_os.state['calls'][0])   # not a dialable number: no link
+
+    def test_enter_on_a_logged_call_opens_the_persons_page_with_call_selected(self):
+        reset_state(screen='calls_list', calls_index=1, calls_start=0,
+                    calls=[{'name': 'Stranger', 'tag': 'MISS', 'ts': '', 'duration': '', 'number': '(555) 010-0099'}])
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertTrue(wire.startswith('CONTACT|(555) 010-0099|'))
+        self.assertTrue(wire.endswith('|U|C'))                     # not saved; CALL selected
+        self.press('KEY_ENTER')                                    # Enter again calls back
+        self.assertEqual(kyphone_os.state['screen'], 'outgoing')
+        self.assertEqual(kyphone_os.state['call_number'], '(555) 010-0099')
+        self.press('KEY_ESC')                                      # cancel: back to the call log
+        self.assertEqual(kyphone_os.state['screen'], 'calls_list')
+
+    def test_an_older_log_row_without_a_number_still_redials(self):
+        reset_state(screen='calls_list', calls_index=1, calls_start=0,
+                    calls=[{'name': 'Ann', 'tag': 'OUT', 'ts': '', 'duration': ''}])
+        self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['call_name']), ('outgoing', 'Ann'))
+
+    def thread_wire(self, calls):
+        reset_state(screen='thread', thread_id=ALICE, thread_draft='', thread_header_sel=None, thread_msg_sel=None,
+                    messages=[_inbound()], calls=calls)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_thread2()
+        return _wire(ps)
+
+    def test_a_conversation_shows_the_last_call_with_that_number(self):
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        calls = [{'name': 'Bo', 'tag': 'IN', 'ts': '', 'duration': '1:00', 'number': '(555) 010-0002'},
+                 {'name': 'Alice', 'tag': 'MISS', 'ts': yesterday, 'duration': '', 'number': kyphone_os.format_number(ALICE)},
+                 {'name': 'Alice', 'tag': 'OUT', 'ts': '', 'duration': '2:05', 'number': kyphone_os.format_number(ALICE)}]
+        wire = self.thread_wire(calls)
+        self.assertEqual(_entries(wire)[0], ['C', '', 'LAST CALL: MISSED, YESTERDAY'])
+        self.assertEqual(_entries(wire)[1][0], 'R')
+
+    def test_a_connected_call_shows_its_length_and_no_call_means_no_line(self):
+        calls = [{'name': 'Alice', 'tag': 'OUT', 'ts': '', 'duration': '2:05', 'number': kyphone_os.format_number(ALICE)}]
+        self.assertEqual(_entries(self.thread_wire(calls))[0][2], 'LAST CALL: OUT 2:05')
+        self.assertEqual(_entries(self.thread_wire([]))[0][0], 'R')
+        calls = [{'name': 'Alice', 'tag': 'OUT', 'ts': '', 'duration': '2:05'}]   # no number: never matched by name
+        self.assertEqual(_entries(self.thread_wire(calls))[0][0], 'R')
+
+    def test_the_call_line_is_kept_when_the_frame_is_tight(self):
+        calls = [{'name': 'Alice', 'tag': 'MISS', 'ts': '', 'duration': '', 'number': kyphone_os.format_number(ALICE)}]
+        reset_state(screen='thread', thread_id=ALICE, thread_draft='', thread_header_sel=None, thread_msg_sel=None,
+                    messages=[_inbound(body='x ' * 70) for _ in range(3)], calls=calls)
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_thread2()
+        wire = _wire(ps)
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(_entries(wire)[0][0], 'C')
+        self.assertEqual(_entries(wire)[-1][0], 'R')
+
+    def test_the_number_survives_a_restart_and_a_bad_one_is_dropped(self):
+        path = os.path.join(tempfile.mkdtemp(), 'calls.json')
+        with open(path, 'w') as f:
+            json.dump([{'name': 'A', 'tag': 'OUT', 'ts': '', 'duration': '', 'number': '(555) 010-0001'},
+                       {'name': 'B', 'tag': 'OUT', 'ts': '', 'duration': '', 'number': 'nope'}], f)
+        with patch.object(kyphone_os, 'CALLS_FILE', path):
+            kyphone_os.load_calls()
+        self.assertEqual([c.get('number') for c in kyphone_os.state['calls']], ['(555) 010-0001', None])
+
+
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
         reset_state(screen='home', home_index=0)
@@ -2584,6 +2686,8 @@ class TestCallLog(unittest.TestCase):
         self.dial('5551234567')
         self.press('KEY_ESC')
         reset_state(screen='calls_list', calls=self.log(), calls_index=1)   # the first log row
+        self.press('KEY_ENTER')                                              # the person's page, CALL selected
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
         self.press('KEY_ENTER')
         self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['call_name']), ('outgoing', '(555) 123-4567'))
         self.press('KEY_ENTER')

@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOST = os.path.join(HERE, 'firmware_host')
 sys.path.insert(0, HOST)
 sys.path.insert(0, os.path.join(HERE, '..'))
-from screens import SCREENS                  # noqa: E402
+from screens import SCREENS, r                  # noqa: E402
 
 GLCDFONT = os.environ.get('GLCDFONT_C') or os.path.expanduser(
     '~/Documents/Arduino/libraries/Adafruit_GFX_Library/glcdfont.c')
@@ -240,6 +240,13 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.ink(d, 600 - 16 - 92 + 2, 8) and not self.ink(f, 600 - 16 - 92 + 2, 8))   # DELETE
         self.assertTrue(self.ink(f, 300, 43))                                           # the header rule
 
+    def test_the_last_call_line_sits_under_the_header_and_is_not_a_bubble(self):
+        f = self.frames['thread_call']
+        self.assertGreater(self.ink_box(f, 100, 58, 500, 73), 50)                     # LAST CALL: ... text
+        self.assertFalse(self.ink(f, 4, 70))                                            # no bubble or rule there
+        plain = self.frame(SCREENS['thread_call'][0].replace(r('C', '', 'LAST CALL: MISSED, YESTERDAY') + '|', ''))
+        self.assertEqual(self.ink_box(plain, 100, 58, 500, 73), 0)
+
     def test_home_can_select_settings(self):
         self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
 
@@ -386,7 +393,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
              'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
-             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):
@@ -510,6 +517,8 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long14\tNETLIST|\n',
             'long15\tNOTE||' + '\xb7'.join(['y' * 40] * 6) + '\n',
             'long16\tNOTE|B|' + '\xb7' * 30 + '\n',
+            'long18\tTHREAD2|N|d||C\xb7\xb7' + 'L' * 120 + '|R\xb71\xb7' + 'w' * 60 + '\n',
+            'long19\tTHREAD2|N|d||' + '|'.join(['C\xb7\xb7x'] * 8) + '\n',
             'long17\tNOTES|4|' + '|'.join(('T' * 30 + '\xb7Yesterday\xb7') for _ in range(7)) + '\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')

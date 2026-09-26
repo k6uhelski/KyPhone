@@ -329,6 +329,7 @@ state = {
     'dial_buffer':      '',
     'dial_quick_index': -1,         # -1=buffer active, >=0 selects a quick-dial contact
     'call_name':        '',
+    'call_number':      '',         # the other party's number for the call on screen ('' when not known)
     'call_started_at':  None,
 
     'library_books':  [],           # [{path, id, title, author, pct, error}] scanned from BOOKS_DIR when READ opens
@@ -806,7 +807,7 @@ def _thread_command(head, entries):
 
     cmd = build()
     while len(cmd) > MAX_COMMAND_CHARS and len(entries) > 1:
-        drop = next((i for i, e in enumerate(entries[:-1]) if e[0] != 'Y3'), 0)
+        drop = next((i for i, e in enumerate(entries[:-1]) if e[0] not in ('Y3', 'C')), 0)   # never the call line
         del entries[drop]
         cmd = build()
     if len(cmd) > MAX_COMMAND_CHARS and entries:
@@ -840,7 +841,28 @@ def push_thread2():
             code = 'R'
         entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'])])
 
+    last = _last_call_with(thread_id)
+    if last:
+        entries.insert(0, ['C', '', last])                  # the quiet LAST CALL line under the header
     push_screen(_thread_command(["THREAD2", name, sanitize(composer_view(draft)), hdr], entries))
+
+
+_CALL_WORD = {'MISS': 'MISSED', 'IN': 'IN', 'OUT': 'OUT'}
+
+
+def _last_call_with(peer):
+    """'LAST CALL: MISSED, YESTERDAY' for the newest logged call with this number, or '' if there is none. Only calls
+    logged with a number count (a contact is never matched by display name)."""
+    if not peer:
+        return ''
+    with state['lock']:
+        calls = list(state['calls'])
+    for c in calls:
+        if c.get('number') and same_number(c['number'], peer):
+            what = _CALL_WORD[c['tag']] + (' ' + c['duration'] if c.get('duration') else '')
+            when = _call_time(c)
+            return (f'LAST CALL: {what}' + (f', {when}' if when else '')).upper()
+    return ''
 
 
 def push_compose():
@@ -1260,8 +1282,9 @@ def _from_home(keycode):
         # Demo shortcut: simulate an incoming call.
         with state['lock']:
             caller = dispname(CONTACTS[0]) if CONTACTS else 'Unknown Caller'
-            state['screen']    = 'incoming'
-            state['call_name'] = caller
+            state['screen']      = 'incoming'
+            state['call_name']   = caller
+            state['call_number'] = CONTACTS[0].get('number', '') if CONTACTS else ''
         push_call_screen()
     elif keycode == 'KEY_ESC':
         with state['lock']:
@@ -1818,8 +1841,9 @@ def _from_contact(keycode):
         elif sel == 'call':
             label = _contact_label()         # takes the state lock, so not inside the block below
             with state['lock']:
-                state['screen']    = 'outgoing'
-                state['call_name'] = label
+                state['screen']      = 'outgoing'
+                state['call_name']   = label
+                state['call_number'] = number
             push_call_screen()
         elif sel == 'save':
             _open_contact_edit(new=True)
@@ -2030,10 +2054,15 @@ def _from_calls_list(keycode):
                 state['dial_quick_index'] = -1
             push_dial()
         else:
-            with state['lock']:
-                state['screen']    = 'outgoing'
-                state['call_name'] = calls[idx - 1]['name']
-            push_call_screen()
+            entry = calls[idx - 1]
+            if entry.get('number'):                          # the person's page: CALL (selected), TEXT, ...
+                _open_contact_page(contact_index_for(entry['number']), entry['number'], 'calls_list')
+            else:                                            # an older log row with no number: redial by name
+                with state['lock']:
+                    state['screen']      = 'outgoing'
+                    state['call_name']   = entry['name']
+                    state['call_number'] = ''
+                push_call_screen()
     elif keycode in ('KEY_ESC', 'KEY_BACKSPACE'):
         with state['lock']:
             state['screen'] = 'home'
@@ -2061,13 +2090,15 @@ def _from_dial(keycode):
     elif keycode == 'KEY_ENTER':
         if 0 <= qidx < len(names):
             with state['lock']:
-                state['screen']    = 'outgoing'
-                state['call_name'] = names[qidx]
+                state['screen']      = 'outgoing'
+                state['call_name']   = names[qidx]
+                state['call_number'] = CONTACTS[qidx].get('number', '')
             push_call_screen()
         elif buf.strip():
             with state['lock']:
-                state['screen']    = 'outgoing'
-                state['call_name'] = buf
+                state['screen']      = 'outgoing'
+                state['call_name']   = buf
+                state['call_number'] = buf
             push_call_screen()
     elif keycode == 'KEY_BACKSPACE' and qidx == -1:
         with state['lock']:
@@ -2138,8 +2169,12 @@ def _log_call(tag, seconds=None):
         raw = str(state['call_name'])
     if re.fullmatch(r'[0-9()+\-. #*]{7,}', raw) and digits(raw):    # dialed digits: show the contact, or the number formatted
         raw = format_name(raw)
+    with state['lock']:
+        number = str(state['call_number'])
     entry = {'name': sanitize(raw)[:30], 'tag': tag, 'ts': datetime.now().isoformat(),
              'duration': _duration_text(seconds) if seconds is not None else ''}
+    if number_valid(number):
+        entry['number'] = format_number(number)             # ties the call to the person (their page, their texts)
     if tag == 'MISS':
         entry['seen'] = False                                  # a * on the lock screen until the call list is opened
     with state['lock']:
@@ -2175,6 +2210,8 @@ def load_calls():
             good.append({'name': c['name'], 'tag': c['tag'], 'ts': c.get('ts', ''), 'duration': c.get('duration', '')})
             if c['tag'] == 'MISS' and c.get('seen') is False:
                 good[-1]['seen'] = False
+            if isinstance(c.get('number'), str) and number_valid(c['number']):
+                good[-1]['number'] = c['number']
     with state['lock']:
         state['calls'] = good[:CALL_LOG_MAX]
 

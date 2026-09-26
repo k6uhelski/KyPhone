@@ -74,6 +74,8 @@ SCREENS = {
     'edit_new': ('CONTACTEDIT|||(555) 019-9002|0|N', '07_new_contact_prefilled.png'),
     'edit_edit': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|3|E', None),
     'edit_delete': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|4|E', '08_edit_contact_delete_selected.png'),
+    'thread_call': ('THREAD2|Pip Okonkwo|||' + r('C', '', 'LAST CALL: MISSED, YESTERDAY') + '|' +
+                    r('R', '9:02 AM', 'Are we still on for lunch?') + '|' + r('Y1', '9:05 AM', 'Yes, see you at noon'), None),
     'home_notes': ('HOME2|12:44 PM|5|0|I', None),
     'home_settings': ('HOME2|12:44 PM|6|0|I', None),
     'notes': ('NOTES|1|' + '|'.join([r('Groceries', '9:41 AM', ''), r('Ideas for the case', 'Yesterday', ''),

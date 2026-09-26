@@ -15,7 +15,7 @@
 // planning/os-0.2.1-build-plan.md):
 //   HOME2|time|index|unread|style      TEXTS|sel|name·preview·unread·time|...   (style I icons, B both, W words)
 //   CONTACTSPICK|sel|query|pos|name·number|...   CALLS|sel|name·tag·time·dur|...
-//   THREAD2|name|draft|hdr|code·time·text|...    COMPOSE|to|msg|to_active|hdr|plus|send
+//   THREAD2|name|draft|hdr|code·time·text|...    COMPOSE|to|msg|to_active|hdr|plus|send   (code C: the LAST CALL line)
 //   CONTACT|title|sub|kind|sel         CONTACTEDIT|first|last|number|idx|kind
 //   STUB|title|body                    CONFIRM|title|body|go|keep|sel
 //   LIBRARY|sel|title·author·pct|...   (book pages: RTEXT / RFOOT frames, see ui_reader.h)
@@ -663,10 +663,12 @@ static void ui_thread(char* data) {
     Bub b[UI_BUBBLES];
     int nb = 0;
     bool any_selected = false;
+    const char* call_line = "";                 // a C entry: the LAST CALL line under the header (not a bubble)
     for (int i = 3; i < n && nb < UI_BUBBLES; i++) {
         if (f[i][0] == '\0') continue;
         char* sf[3];
         int sn = ui_split(f[i], UI_SUB, sf, 3);
+        if (strcmp(ui_fld(sf, sn, 0), "C") == 0) { call_line = ui_fld(sf, sn, 2); continue; }
         b[nb].code = ui_fld(sf, sn, 0);
         b[nb].tm   = ui_fld(sf, sn, 1);
         b[nb].text = ui_fld(sf, sn, 2);
@@ -688,7 +690,7 @@ static void ui_thread(char* data) {
     // taller bubbles run off the top; that is clipped afterwards by repainting
     // the header strip.
     const int line_h = 35, pad_x = 12, name_h = 27, meta_h = 25, gap = 16;
-    int area_top = 62, area_bottom = 600 - composer_h - 17;
+    int area_top = call_line[0] ? 84 : 62, area_bottom = 600 - composer_h - 17;
     for (int i = 0; i < nb; i++) {
         b[i].nlines = ui_wrap(b[i].text, 20, &ui_bub_lines[i][0][0], UI_BUB_STRIDE, UI_BUB_LINES);
         b[i].bubble_h = 4 + 16 + line_h * b[i].nlines;
@@ -747,6 +749,7 @@ static void ui_thread(char* data) {
     if (hdr == 'I') display.fillRect(600 - 16 - 38, 6, 38, 34, BLACK);
     ui_text("i", 600 - 16 - 38 + 10, 11 + 21, 3, hdr == 'I' ? WHITE : BLACK, true);
     display.fillRect(0, 46, 600, 2, BLACK);
+    if (call_line[0]) ui_text_center(call_line, 72, 2, BLACK, false);
 
     // Composer.
     display.fillRect(0, 600 - composer_h - 2, 600, 2, BLACK);
