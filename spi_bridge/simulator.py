@@ -972,7 +972,7 @@ class Simulator:
         self._draw_rows2(data, 'NOTES', 'NO NOTES', 'PRESS + TO WRITE ONE.', plus=True)
 
     def _draw_note(self, data):
-        # data = "hdr|line·line·..."  hdr '' typing (the cursor follows the last line), B = < selected, D = DELETE.
+        # data = "hdr|line·line·..."  hdr '' typing (the cursor follows the last line), B <, S SAVE, D DELETE selected.
         # The Radxa has already wrapped the note (30 columns) and cut it to the lines that fit.
         hdr, _, text = data.partition('|')
         if hdr == 'B':
@@ -984,6 +984,11 @@ class Simulator:
         if hdr == 'D':
             pygame.draw.rect(self._surface, BLACK, (dx, 6, dw, 34))
         self._text('DELETE', dx + 10, 6 + 17 + 6 - 14, 2, WHITE if hdr == 'D' else BLACK, bold=True)
+        sw = 4 * 12 + 20
+        sx = dx - 10 - sw                                     # SAVE, just left of DELETE
+        if hdr == 'S':
+            pygame.draw.rect(self._surface, BLACK, (sx, 6, sw, 34))
+        self._text('SAVE', sx + 10, 6 + 17 + 6 - 14, 2, WHITE if hdr == 'S' else BLACK, bold=True)
         self._line(43)
         lines = text.split('\xb7')[:14]
         for i, line in enumerate(lines):

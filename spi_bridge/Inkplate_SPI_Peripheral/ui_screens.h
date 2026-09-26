@@ -25,7 +25,7 @@
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
 //   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B/P|sel|name·sub·right|...
 //   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail      LIGHTSET|level (0-8)
-//   NOTES|sel|title·when·|...          NOTE|hdr|line·line·...   (hdr '' typing, B < selected, D DELETE selected)
+//   NOTES|sel|title·when·|...          NOTE|hdr|line·line·...   (hdr '' typing, B <, S SAVE, D DELETE selected)
 //   UPLOAD|address|code|received·...   (ADD FROM A COMPUTER)
 
 #ifndef KYPHONE_UI_SCREENS_H
@@ -457,7 +457,7 @@ static void ui_netstate(char* data) {
 
 // ─── NOTES|sel|title·when·|...  and  NOTE|hdr|line·line·... ─────────────────────
 // The notes list is the two-line list with + in the header (sel -2). The editor: < and DELETE in the header (hdr
-// B / D select them), then the lines the Radxa has already wrapped and cut to fit, the cursor after the last one.
+// B / S / D select <, SAVE, DELETE), then the lines the Radxa has wrapped and cut to fit, the cursor after the last one.
 
 static void ui_notes(char* data) {
     ui_rows2(data, "NOTES", "NO NOTES", "PRESS + TO WRITE ONE.", false, true);
@@ -473,6 +473,9 @@ static void ui_note(char* data) {
     int dw = 6 * 12 + 20, dx = 600 - 16 - dw;
     if (hdr == 'D') display.fillRect(dx, 6, dw, 34, BLACK);
     ui_text("DELETE", dx + 10, 6 + 17 + 6, 2, hdr == 'D' ? WHITE : BLACK, true);
+    int sw = 4 * 12 + 20, sx = dx - 10 - sw;           // SAVE, just left of DELETE
+    if (hdr == 'S') display.fillRect(sx, 6, sw, 34, BLACK);
+    ui_text("SAVE", sx + 10, 6 + 17 + 6, 2, hdr == 'S' ? WHITE : BLACK, true);
     ui_hline(43, 1);
 
     char empty[1] = "";

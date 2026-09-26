@@ -238,6 +238,10 @@ class FirmwareFrames(unittest.TestCase):
         self.assertFalse(self.ink(b, 24 + 4 * 18 + 9, 60 + 38 + 12))                   # no cursor while < is selected
         self.assertTrue(self.ink(b, 20, 8) and not self.ink(f, 20, 8))                 # < selected
         self.assertTrue(self.ink(d, 600 - 16 - 92 + 2, 8) and not self.ink(f, 600 - 16 - 92 + 2, 8))   # DELETE
+        s = self.frames['note_save']
+        save_x = 600 - 16 - 92 - 10 - 68 + 2
+        self.assertTrue(self.ink(s, save_x, 8) and not self.ink(f, save_x, 8))       # SAVE, left of DELETE
+        self.assertFalse(self.ink(s, 600 - 16 - 92 + 2, 8))                          # (DELETE not selected)
         self.assertTrue(self.ink(f, 300, 43))                                           # the header rule
 
     def test_the_last_call_line_sits_under_the_header_and_is_not_a_bubble(self):
@@ -409,7 +413,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
              'netlist_scanning', 'netlist_sections', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
-             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'chapters', 'upload_empty',
+             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_save', 'note_long', 'thread_call', 'chapters', 'upload_empty',
              'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod

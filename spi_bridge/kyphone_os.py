@@ -368,7 +368,7 @@ state = {
     'notes_header_sel': 'back',
     'note_idx':       None,         # the note being edited (an index into notes), or None for a new one
     'note_text':      '',
-    'note_hdr':       None,         # None = typing | 'back' | 'delete' — the editor's header selection
+    'note_hdr':       None,         # None = typing | 'back' | 'save' | 'delete' — the editor's header selection
     'upload_log':     [],           # ADD FROM A COMPUTER: the last few things received, newest last
     'upload_addr':    '',           # what the screen tells the computer to open, e.g. 192.168.1.23:8080
     'upload_code':    '',
@@ -3114,7 +3114,7 @@ def _run_async(fn):
 # NOTES on the home menu: plain text notes typed on the keyboard, kept in data/notes.json, newest first.
 # The list is the two-line list (the first line of the note over when it was last changed) with + in the header.
 # The editor types at the end of the note; Enter starts a new line. The phone keyboard has no Esc, so, as on New
-# Message, Up reaches the header: < saves and goes back, DELETE asks first. A note saves itself on leaving; one left
+# Message, Up reaches the header — < SAVE DELETE, Up lands on SAVE: SAVE (and <) save and go back, DELETE asks first. A note saves itself on leaving; one left
 # empty is not kept. The Radxa wraps the note into lines; a note too long for one frame shows its END behind '...'.
 
 NOTES_FILE  = os.path.join(DATA_DIR, 'notes.json')
@@ -3256,7 +3256,7 @@ def _open_note(idx):
 def push_note():
     with state['lock']:
         text = state['note_text']
-        hdr  = {'back': 'B', 'delete': 'D'}.get(state['note_hdr'], '')
+        hdr  = {'back': 'B', 'save': 'S', 'delete': 'D'}.get(state['note_hdr'], '')
     head = f"NOTE|{hdr}|"
     lines = note_view(sanitize_lines(text), MAX_COMMAND_CHARS - len(head))
     push_screen(head + '\xb7'.join(lines))
@@ -3297,8 +3297,8 @@ def _from_note(keycode):
     with state['lock']:
         hdr  = state['note_hdr']
         text = state['note_text']
-    if keycode == 'KEY_ESC' or (keycode == 'KEY_ENTER' and hdr == 'back'):
-        _close_note()
+    if keycode == 'KEY_ESC' or (keycode == 'KEY_ENTER' and hdr in ('back', 'save')):
+        _close_note()                                        # SAVE and < both save (nothing typed is ever lost)
     elif keycode == 'KEY_ENTER' and hdr == 'delete':
         with state['lock']:
             state['screen']       = 'confirm'
@@ -3307,7 +3307,7 @@ def _from_note(keycode):
         push_confirm()
     elif keycode == 'KEY_UP' and hdr is None:
         with state['lock']:
-            state['note_hdr'] = 'back'
+            state['note_hdr'] = 'save'                        # Up lands on SAVE (Kyle, 2026-09-26)
         push_note()
     elif keycode == 'KEY_DOWN' and hdr is not None:
         with state['lock']:
@@ -3315,7 +3315,9 @@ def _from_note(keycode):
         push_note()
     elif keycode in ('KEY_LEFT', 'KEY_RIGHT') and hdr is not None:
         with state['lock']:
-            state['note_hdr'] = 'back' if keycode == 'KEY_LEFT' else 'delete'
+            order = ['back', 'save', 'delete']
+            i = order.index(hdr) + (-1 if keycode == 'KEY_LEFT' else 1)
+            state['note_hdr'] = order[max(0, min(2, i))]
         push_note()
     elif keycode == 'KEY_ENTER' or keycode.startswith('CHAR:'):
         add = '\n' if keycode == 'KEY_ENTER' else keycode[5:]

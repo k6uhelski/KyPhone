@@ -88,6 +88,7 @@ SCREENS = {
     'note': ('NOTE||Groceries' + O + 'eggs' + O + 'milk' + O + '' + O + 'and bread', None),
     'note_back': ('NOTE|B|Groceries' + O + 'eggs', None),
     'note_delete': ('NOTE|D|Groceries' + O + 'eggs', None),
+    'note_save': ('NOTE|S|Groceries' + O + 'eggs', None),
     'note_long': ('NOTE||...' + O + O.join(['x' * 30] * 7) + O, None),
     'settings': ('SETTINGS|0|' + r('Wi-Fi', 'Connected: Maple', '') + '|' + r('Bluetooth', 'Not connected', ''), None),
     'netlist_wifi': ('NETLIST|W|2|' + '|'.join([r('Wi-Fi', 'Wi-Fi is on', 'ON'), r('Maple', 'Connected', ''),

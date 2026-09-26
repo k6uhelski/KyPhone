@@ -2065,10 +2065,25 @@ class TestNotes(unittest.TestCase):
         self.assertEqual(kyphone_os.state['screen'], 'notes_list')
         self.assertEqual(self.saved(), [])
 
+    def test_save_saves_and_returns_and_the_header_is_back_save_delete(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        self.type('buy stamps')
+        self.assertTrue(self.press('KEY_UP').startswith('NOTE|S|'))
+        self.assertTrue(self.press('KEY_LEFT').startswith('NOTE|B|'))
+        self.assertTrue(self.press('KEY_LEFT').startswith('NOTE|B|'))    # (the left end)
+        self.assertTrue(self.press('KEY_RIGHT').startswith('NOTE|S|'))
+        self.assertTrue(self.press('KEY_RIGHT').startswith('NOTE|D|'))
+        self.assertTrue(self.press('KEY_RIGHT').startswith('NOTE|D|'))   # (the right end)
+        self.press('KEY_LEFT')
+        wire = self.press('KEY_ENTER')                            # SAVE
+        self.assertEqual(kyphone_os.state['screen'], 'notes_list')
+        self.assertEqual(self.saved()[0]['text'], 'buy stamps')
+        self.assertTrue(wire.startswith('NOTES|0|buy stamps'))
+
     def test_the_header_and_typing_after_it(self):
         self.press('KEY_ENTER', 'KEY_ENTER')
         self.type('hi')
-        self.assertTrue(self.press('KEY_UP').startswith('NOTE|B|'))
+        self.assertTrue(self.press('KEY_UP').startswith('NOTE|S|'))      # Up lands on SAVE
         self.assertEqual(self.press('CHAR:!'), 'NOTE||hi!')        # typing goes back to the text
         self.press('KEY_UP')
         self.assertEqual(self.press('KEY_DOWN'), 'NOTE||hi!')
