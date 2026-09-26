@@ -402,16 +402,16 @@ class Ticker(MusicCase):
         super().setUp()
         self.wav('Artist/Long/01 Long.wav', 300)
 
-    def test_now_playing_is_redrawn_every_thirty_seconds_only(self):
+    def test_now_playing_is_redrawn_every_five_seconds_only(self):
         self.play_track(0)
         count = len(self.screens)
-        self.tick(29)
+        self.tick(4)
         self.assertEqual(len(self.screens), count)
         self.tick(1)
         self.assertEqual(len(self.screens), count + 1)
-        self.assertEqual(self.fields()[5], '30')
-        self.tick(30)
-        self.assertEqual(self.fields()[5], '60')
+        self.assertEqual(self.fields()[5], '5')
+        self.tick(5)
+        self.assertEqual(self.fields()[5], '10')
 
     def test_no_redraw_while_paused_or_on_another_screen(self):
         self.play_track(0)

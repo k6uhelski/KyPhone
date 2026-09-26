@@ -2474,6 +2474,20 @@ class TestLightTimeout(unittest.TestCase):
         kyphone_os._light_tick()
         self.assertEqual(self.sent[-1], 0)
 
+    def test_a_light_frame_does_not_wait_for_the_busy_signal(self):
+        """Found on the phone: the Inkplate handles LIGHT too fast for its busy signal to be seen, so waiting for it
+        held up the next screen by 3 s every time the light woke."""
+        fake_spi = MagicMock()
+        with patch.object(kyphone_os, 'spi', fake_spi, create=True), \
+                patch.object(kyphone_os, 'wait_for_ready', return_value=True), \
+                patch.object(kyphone_os, 'wait_for_taken', return_value=True) as taken, \
+                patch.object(kyphone_os.time, 'sleep'):
+            kyphone_os._send_command('LIGHT|3')
+            taken.assert_not_called()
+            kyphone_os._send_command(('HOME2|x', False))
+            taken.assert_called_once()
+        self.assertEqual(fake_spi.xfer2.call_count, 2)
+
     def test_the_sender_puts_a_light_change_ahead_of_a_screen_and_never_drops_the_screen(self):
         sent = []
         with patch.object(kyphone_os, '_send_command', side_effect=sent.append), \

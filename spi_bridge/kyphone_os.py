@@ -224,7 +224,9 @@ NET_SUB_MAX   = 30   # the settings list's status subtitle ("Connected: ...")
 NET_PASS_MAX  = 63   # the longest a WPA passphrase can be
 NOW_TITLE_MAX     = 56       # two 28-character lines
 NOW_LINE_MAX      = 44
-MUSIC_TICK_SECONDS = 30      # while the now-playing screen is up, redraw this often so the time moves
+MUSIC_TICK_SECONDS = 5       # while the now-playing screen is up, redraw this often so the time moves (a partial
+                             # refresh; it was 30 s, which looked stuck — Kyle, 2026-09-26)
+MUSIC_SAVE_SECONDS = 30      # how often the listening position is saved while playing
 _MUSIC_CLOCK      = time.monotonic
 
 # --- Lock Screen Quotes ---
@@ -804,6 +806,11 @@ def _send_command(command):
             print(f"Warning: Inkplate not ready, skipping a {name} frame")
             return
         spi.xfer2(build_payload(text, full))
+        if name == 'LIGHT':
+            # The Inkplate handles LIGHT in well under a millisecond, too fast for its busy signal to be seen, so
+            # waiting for it cost 3 s every time the light woke. Just let the frame's silence pass.
+            time.sleep(0.08)
+            continue
         if not wait_for_taken():
             print(f"Warning: Inkplate never signalled busy after a {name} frame")
 
@@ -3086,7 +3093,7 @@ def _music_tick():
         screen = state['screen']
     if sess.playing:
         _music_save_count += 1
-        if _music_save_count >= MUSIC_TICK_SECONDS:
+        if _music_save_count >= MUSIC_SAVE_SECONDS:
             _music_save_count = 0
             _save_listening()
     if screen == 'nowplaying' and sess.playing:
