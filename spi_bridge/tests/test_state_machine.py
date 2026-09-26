@@ -239,20 +239,17 @@ class TestHomeScreen(unittest.TestCase):
         self.assertEqual(kyphone_os.state['home_index'], last)
 
     @patch.object(kyphone_os, 'push_screen')
-    def test_up_at_0_enters_header(self, _ps):
+    def test_the_status_bar_is_never_selected(self, ps):
+        """Kyle, 2026-09-26: the top bar (clock, battery) must not highlight; Up stops at TEXT."""
         kyphone_os.handle_key('KEY_UP')
-        self.assertEqual(kyphone_os.state['home_index'], -1)
+        kyphone_os.handle_key('KEY_LEFT')
+        self.assertEqual(kyphone_os.state['home_index'], 0)
+        self.assertTrue(all(c[0][0].split('|')[2] != '-1' for c in ps.call_args_list))
 
     @patch.object(kyphone_os, 'push_screen')
-    def test_up_clamped_at_header(self, _ps):
-        reset_state(screen='home', home_index=-1)
-        kyphone_os.handle_key('KEY_UP')
-        self.assertEqual(kyphone_os.state['home_index'], -1)
-
-    @patch.object(kyphone_os, 'push_screen')
-    def test_enter_on_header_goes_to_lock(self, _ps):
-        reset_state(screen='home', home_index=-1, quote_index=5)
-        kyphone_os.handle_key('KEY_ENTER')
+    def test_q_still_locks_from_home(self, _ps):
+        reset_state(screen='home', home_index=0, quote_index=5)
+        kyphone_os.handle_key('CHAR:q')
         self.assertEqual(kyphone_os.state['screen'], 'lock')
         self.assertEqual(kyphone_os.state['quote_index'], 6)
 
@@ -1157,7 +1154,8 @@ class TestDrawableText(SendBase):
         wire = self.thread_wire()
         for ch in wire:
             self.assertTrue(ch == CELL or ' ' <= ch <= '~', repr(ch))
-        self.assertEqual(max(kyphone_os.build_payload(wire)), max(ord(c) for c in wire))
+        text = kyphone_os.build_payload(wire)[3:]                 # (bytes 0-2: the marker, the CRC-8, the start byte)
+        self.assertEqual(max(text), max(ord(c) for c in wire))
         self.assertLessEqual(max(kyphone_os.build_payload(wire)), 255)
 
 

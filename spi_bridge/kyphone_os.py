@@ -1263,19 +1263,15 @@ def _from_home(keycode):
     elif keycode in ('KEY_UP', 'KEY_LEFT'):
         with state['lock']:
             old = state['home_index']
-            state['home_index'] = max(-1, old - 1)  # -1 = header selected
+            state['home_index'] = max(0, old - 1)   # the status bar is not selectable (Kyle, 2026-09-26)
             changed = state['home_index'] != old
         if changed:
             push_home2()
     elif keycode == 'KEY_ENTER':
         with state['lock']:
             idx = state['home_index']
-        if idx == -1:  # header — same as Esc
-            with state['lock']:
-                state['screen'] = 'lock'
-                state['quote_index'] += 1
-            push_lock()
-        elif HOME_MENU[idx] == 'TEXT':
+        idx = max(0, idx)
+        if HOME_MENU[idx] == 'TEXT':
             with state['lock']:
                 state['screen']           = 'texts_list'
                 state['texts_index']      = 0
