@@ -35,6 +35,7 @@ class FakeModem:
         self.no_prompt = False
         self.fail_delete = False
         self.broken = False               # every read/write raises, as when the dongle is unplugged
+        self.sim, self.reg = 'READY', '1'  # AT+CPIN? state ('' = no SIM) and AT+CEREG? registration
         self._out = bytearray()
         self._line = bytearray()
         self._typing = None               # the number being texted while in text-entry mode
@@ -108,8 +109,16 @@ class FakeModem:
                 self._say('OK')
         elif cmd == 'AT+CSQ':
             self._say('+CSQ: 18,99\r\n\r\nOK')
+        elif cmd == 'AT+CPIN?':
+            self._say('+CPIN: %s\r\n\r\nOK' % self.sim if self.sim else '+CME ERROR: 10')
+        elif cmd == 'AT+CEREG?':
+            self._say('+CEREG: 0,%s\r\n\r\nOK' % self.reg)
+        elif cmd == 'AT+COPS?':
+            self._say('+COPS: 0,0,"Test Carrier",7\r\n\r\nOK')
+        elif cmd == 'AT+CSCA?':
+            self._say('+CSCA: "+15550100900",145\r\n\r\nOK')
         elif cmd == 'AT+CREG?':
-            self._say('+CREG: 0,1\r\n\r\nOK')
+            self._say('+CREG: 0,%s\r\n\r\nOK' % self.reg)
         else:
             self._say('OK')
 
@@ -336,6 +345,64 @@ class SerialModemStatusTest(unittest.TestCase):
         modem, fake = make_modem()
         self.assertEqual(modem.signal_quality(), 18)
         self.assertTrue(modem.registered())
+
+
+class ModemCheckTool(unittest.TestCase):
+    """tools/modem_check.py: the first-real-text test, against the scripted fake modem."""
+
+    def run_tool(self, *argv, sim='READY', reg='1', deliver=None):
+        import io
+        from contextlib import redirect_stdout
+        sys.path.insert(0, os.path.join(HERE, '..', 'tools'))
+        import modem_check, find_modem_port
+        holder = {}
+        fake_module = MagicMock()
+
+        def make(port_, baud, timeout=None):
+            holder['fake'] = FakeModem(port_, baud, timeout)
+            holder['fake'].sim, holder['fake'].reg = sim, reg
+            if deliver:
+                holder['fake'].deliver(*deliver)
+            return holder['fake']
+        fake_module.Serial = make
+        sys.modules['serial'] = fake_module
+        out = io.StringIO()
+        with unittest.mock.patch.object(find_modem_port, 'candidates', return_value=['/dev/ttyUSB2']), \
+                unittest.mock.patch.object(find_modem_port, 'probe', return_value=(True, 'OK')), \
+                unittest.mock.patch.object(modem_check.time, 'sleep', lambda s: None), redirect_stdout(out):
+            code = modem_check.main(list(argv))
+        return code, out.getvalue(), holder.get('fake')
+
+    def test_everything_ready(self):
+        code, out, _ = self.run_tool()
+        self.assertEqual(code, 0, out)
+        for words in ('ok 1. the modem answers on /dev/ttyUSB2', 'ok 2. the SIM is in and unlocked',
+                      'ok 3. signal 18 of 31', 'ok 4. registered on the home network', 'carrier: Test Carrier',
+                      'ok 5. SMS centre set', 'KYPHONE_MODEM_PORT=/dev/ttyUSB2'):
+            self.assertIn(words, out)
+
+    def test_no_sim_or_not_activated_says_what_to_do(self):
+        code, out, _ = self.run_tool(sim='')
+        self.assertEqual(code, 1)
+        self.assertIn('X  2. no SIM detected', out)
+        code, out, _ = self.run_tool(reg='3')
+        self.assertIn('the SIM may not be activated yet', out)
+
+    def test_send_and_wait_for_a_reply(self):
+        code, out, fake = self.run_tool('--send', '5550100001', '--wait', '30',
+                                        deliver=('+15550100001', 'got it'))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fake.texts[0][0], '+15550100001')           # formatted as the phone sends it
+        self.assertIn('ok 7. received from +15550100001', out)
+        self.assertIn('got it', out)
+
+    def test_interpreters(self):
+        import modem_check as mc
+        self.assertEqual(mc.interpret_csq(['+CSQ: 99,99'])[0], False)
+        self.assertEqual(mc.interpret_csq(['+CSQ: 25,99']), (True, 'signal 25 of 31 (excellent)'))
+        self.assertEqual(mc.interpret_reg(['+CREG: 0,2', '+CEREG: 0,5']), (True, 'registered (roaming)'))
+        self.assertEqual(mc.interpret_cpin(['+CPIN: SIM PIN'])[0], False)
+        self.assertEqual(mc.interpret_csca(['+CSCA: "",145'])[0], False)
 
 
 if __name__ == '__main__':
