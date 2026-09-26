@@ -109,7 +109,9 @@ class Server(unittest.TestCase):
     def test_the_page_is_served_and_nothing_else(self):
         with urllib.request.urlopen(self.base + '/', timeout=5) as r:
             page = r.read().decode()
-        self.assertIn('KYPHONE', page)
+        self.assertIn('ADD TO KYPHONE', page)
+        self.assertIn("setRequestHeader('X-Code'", page)          # every upload carries the code
+        self.assertIn('webkitGetAsEntry', page)                    # folders can be dropped
         self.assertNotIn('4821', page)                                  # the code is only on the phone
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(self.base + '/data/contacts.json', timeout=5)

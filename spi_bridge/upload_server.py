@@ -121,40 +121,181 @@ def parse_vcards(text):
 
 # ─── The web page ─────────────────────────────────────────────────────────────
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>KyPhone</title><style>
-body{font:16px/1.4 -apple-system,Helvetica,sans-serif;max-width:560px;margin:40px auto;padding:0 16px;color:#111}
-h1{font-size:22px;letter-spacing:.08em}section{border:2px solid #111;padding:16px;margin:16px 0}
-h2{font-size:15px;margin:0 0 8px;letter-spacing:.08em}input[type=text]{font:inherit;padding:6px;width:9em}
-#log{white-space:pre-wrap;font:14px/1.5 Menlo,monospace}.muted{color:#666;font-size:14px}
-</style></head><body>
-<h1>KYPHONE</h1>
-<p>Code shown on the phone: <input id="code" type="text" inputmode="numeric" maxlength="4" autocomplete="off"></p>
-<section><h2>BOOKS</h2><p class="muted">EPUB files.</p><input type="file" id="books" multiple accept=".epub"></section>
-<section><h2>MUSIC</h2><p class="muted">MP3, M4A, FLAC, Ogg, Opus or WAV. Album folder (optional):
-<input id="folder" type="text"></p><input type="file" id="music" multiple
-accept=".mp3,.m4a,.aac,.flac,.ogg,.opus,.wav"></section>
-<section><h2>CONTACTS</h2><p class="muted">A .vcf file (Google Contacts and iCloud both export one).
-People already on the phone are skipped.</p><input type="file" id="contacts" accept=".vcf,text/vcard"></section>
-<div id="log"></div>
+PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Add to KyPhone</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f1;color:#111;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif}
+main{max-width:640px;margin:0 auto;padding:40px 20px 60px}
+h1{font:700 15px/1 Menlo,Monaco,monospace;letter-spacing:.2em;margin:0 0 28px}
+h2{font:600 13px/1 Menlo,Monaco,monospace;letter-spacing:.12em;margin:0 0 12px;color:#444}
+.card{background:#fff;border:2px solid #111;padding:22px;margin-bottom:18px}
+.step{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.code{display:flex;gap:10px}
+.code input{width:56px;height:68px;border:2px solid #111;font:700 34px/1 Menlo,Monaco,monospace;text-align:center;
+  background:#fff;color:#111;outline:none}
+.code input:focus{background:#111;color:#fff}
+.bad .code input{border-color:#b00020;animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.hint{color:#555;font-size:14px;margin:10px 0 0}
+.status{font:600 14px/1.3 Menlo,Monaco,monospace;margin-left:6px}
+.status.ok{color:#1b7a2c}.status.err{color:#b00020}
+#drop{border:2px dashed #111;background:#fff;padding:46px 20px;text-align:center;cursor:pointer;transition:background .15s}
+#drop.over{background:#111;color:#fff}
+#drop.off{opacity:.35;pointer-events:none}
+#drop b{display:block;font-size:20px;margin-bottom:6px}
+#drop span{color:inherit;opacity:.7;font-size:14px}
+.album{margin-top:14px;font-size:14px;color:#444}
+.album input{font:inherit;padding:6px 8px;border:2px solid #111;width:15em}
+ul{list-style:none;margin:0;padding:0}
+li{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #ddd}
+li:last-child{border-bottom:0}
+.kind{font:700 11px/1 Menlo,Monaco,monospace;letter-spacing:.08em;color:#666}
+.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{grid-column:2/4;height:4px;background:#e6e6e2}
+.bar i{display:block;height:100%;width:0;background:#111;transition:width .1s}
+.res{font:600 13px/1 Menlo,Monaco,monospace;white-space:nowrap}
+.res.ok{color:#1b7a2c}.res.err{color:#b00020}
+#summary{font:600 15px/1.4 Menlo,Monaco,monospace;margin-top:14px}
+footer{color:#777;font-size:13px;margin-top:22px}
+</style></head><body><main>
+<h1>ADD TO KYPHONE</h1>
+
+<section class="card" id="codecard">
+  <h2>1 &nbsp;TYPE THE CODE ON THE PHONE</h2>
+  <div class="step"><div class="code" id="code">
+    <input inputmode="numeric" maxlength="1" aria-label="digit 1"><input inputmode="numeric" maxlength="1" aria-label="digit 2">
+    <input inputmode="numeric" maxlength="1" aria-label="digit 3"><input inputmode="numeric" maxlength="1" aria-label="digit 4">
+  </div><span class="status" id="codestatus"></span></div>
+  <p class="hint">On the phone: Settings &rarr; Add from a computer. Keep that screen open while you add things.</p>
+</section>
+
+<section class="card">
+  <h2>2 &nbsp;DROP FILES OR FOLDERS</h2>
+  <div id="drop" class="off" tabindex="0">
+    <b>Drop books, music or contacts here</b>
+    <span>or click to choose files &middot; EPUB books &middot; MP3, M4A, FLAC, Ogg, Opus, WAV music &middot; a .vcf of contacts</span>
+  </div>
+  <input type="file" id="picker" multiple hidden>
+  <div class="album">Songs dropped on their own go into album: <input id="album" placeholder="(no album folder)"></div>
+  <p class="hint">A dropped folder keeps its name as the album. Anything else is skipped and marked here.</p>
+</section>
+
+<section class="card" id="listcard" hidden>
+  <h2>3 &nbsp;ON THE WAY</h2>
+  <ul id="list"></ul>
+  <div id="summary"></div>
+</section>
+<footer>Nothing is read back from the phone; this page only adds. It stops when the phone leaves that screen.</footer>
+</main>
 <script>
-const log = m => document.getElementById('log').textContent += m + '\\n';
-async function send(kind, input) {
-  const code = document.getElementById('code').value.trim();
-  if (!/^\\d{4}$/.test(code)) { log('Type the four-digit code from the phone first.'); input.value = ''; return; }
-  for (const f of input.files) {
-    const q = new URLSearchParams({kind, name: f.name, folder: document.getElementById('folder').value});
-    log(f.name + ' ...');
-    try {
-      const r = await fetch('/upload?' + q, {method: 'PUT', body: f, headers: {'X-Code': code}});
-      log('  ' + (await r.text()));
-      if (r.status === 403 || r.status === 410) break;
-    } catch (e) { log('  the phone stopped answering (was the screen closed?)'); break; }
-  }
-  input.value = '';
+const BOOK = ['epub'], MUSIC = ['mp3','m4a','aac','flac','ogg','opus','wav'], CONTACTS = ['vcf'];
+const boxes = [...document.querySelectorAll('#code input')];
+const drop = document.getElementById('drop'), picker = document.getElementById('picker');
+const list = document.getElementById('list'), summary = document.getElementById('summary');
+let code = sessionStorage.getItem('kyphone-code') || '';
+let queue = [], busy = false, stopped = false, counts = {books: 0, music: 0, contacts: 0, failed: 0, skipped: 0};
+
+function setCode(c) {
+  code = c; boxes.forEach((b, i) => b.value = c[i] || '');
+  const ok = /^\d{4}$/.test(c);
+  drop.classList.toggle('off', !ok);
+  document.getElementById('codecard').classList.remove('bad');
+  const st = document.getElementById('codestatus');
+  st.textContent = ok ? 'READY' : ''; st.className = 'status' + (ok ? ' ok' : '');
+  if (ok) sessionStorage.setItem('kyphone-code', c);
 }
-for (const k of ['books', 'music', 'contacts'])
-  document.getElementById(k).addEventListener('change', e => send(k, e.target));
+boxes.forEach((b, i) => {
+  b.addEventListener('input', () => {
+    b.value = b.value.replace(/\D/g, '').slice(-1);
+    if (b.value && i < 3) boxes[i + 1].focus();
+    setCode(boxes.map(x => x.value).join(''));
+  });
+  b.addEventListener('keydown', e => { if (e.key === 'Backspace' && !b.value && i > 0) boxes[i - 1].focus(); });
+  b.addEventListener('paste', e => { const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 4);
+    if (t) { e.preventDefault(); setCode(t); boxes[Math.min(3, t.length)].focus(); } });
+});
+setCode(code); (code ? drop : boxes[0]).focus();
+
+function kindOf(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return BOOK.includes(ext) ? 'books' : MUSIC.includes(ext) ? 'music' : CONTACTS.includes(ext) ? 'contacts' : null;
+}
+function addRow(file, kind) {
+  const li = document.createElement('li');
+  li.innerHTML = '<span class="kind"></span><span class="name"></span><span class="res"></span><div class="bar"><i></i></div>';
+  li.querySelector('.kind').textContent = {books: 'BK', music: 'MU', contacts: 'CT'}[kind] || '--';
+  li.querySelector('.name').textContent = file.name;
+  document.getElementById('listcard').hidden = false; list.appendChild(li);
+  return li;
+}
+function finish(li, ok, text) {
+  const r = li.querySelector('.res'); r.textContent = (ok ? '✓ ' : '✕ ') + text; r.className = 'res ' + (ok ? 'ok' : 'err');
+  li.querySelector('.bar i').style.width = ok ? '100%' : '0';
+}
+function enqueue(file, folder) {
+  const kind = kindOf(file.name), li = addRow(file, kind);
+  if (!kind) { finish(li, false, 'not a book, song or contacts file'); counts.skipped++; showSummary(); return; }
+  queue.push({file, kind, folder, li}); pump();
+}
+function showSummary() {
+  const bits = [];
+  if (counts.books) bits.push(counts.books + (counts.books > 1 ? ' books' : ' book'));
+  if (counts.music) bits.push(counts.music + (counts.music > 1 ? ' songs' : ' song'));
+  if (counts.contacts) bits.push('contacts');
+  let s = bits.length ? bits.join(', ') + ' added' : '';
+  if (counts.failed) s += (s ? ' · ' : '') + counts.failed + ' failed';
+  if (counts.skipped) s += (s ? ' · ' : '') + counts.skipped + ' skipped';
+  if (!queue.length && !busy && s) s += '. Done.';
+  summary.textContent = s;
+}
+function pump() {
+  if (busy || stopped || !queue.length) { showSummary(); return; }
+  busy = true;
+  const {file, kind, folder, li} = queue.shift();
+  const album = kind === 'music' ? (folder || document.getElementById('album').value.trim()) : '';
+  const q = new URLSearchParams({kind, name: file.name, folder: album});
+  const x = new XMLHttpRequest();
+  x.open('PUT', '/upload?' + q); x.setRequestHeader('X-Code', code);
+  x.upload.onprogress = e => { if (e.lengthComputable) li.querySelector('.bar i').style.width = (100 * e.loaded / e.total) + '%'; };
+  x.onload = () => {
+    const ok = x.status === 200;
+    finish(li, ok, ok ? (kind === 'contacts' ? x.responseText.replace(/^Contacts: /, '') : 'added') : x.responseText);
+    if (ok) counts[kind] = kind === 'contacts' ? 1 : counts[kind] + 1; else counts.failed++;
+    if (x.status === 403) {
+      stopped = true; setCode(''); document.getElementById('codecard').classList.add('bad');
+      const st = document.getElementById('codestatus'); st.textContent = x.responseText.toUpperCase(); st.className = 'status err';
+      boxes[0].focus(); queue.forEach(it => finish(it.li, false, 'not sent')); queue = [];
+    }
+    busy = false; pump();
+  };
+  x.onerror = () => {
+    finish(li, false, 'the phone stopped answering'); counts.failed++; stopped = true;
+    queue.forEach(it => finish(it.li, false, 'not sent')); queue = []; busy = false; showSummary();
+  };
+  x.send(file);
+}
+function readEntry(entry, folder) {
+  if (entry.isFile) { entry.file(f => enqueue(f, folder)); return; }
+  if (!entry.isDirectory) return;
+  const reader = entry.createReader(), album = folder || entry.name;
+  const more = () => reader.readEntries(ents => { if (ents.length) { ents.forEach(e => readEntry(e, album)); more(); } });
+  more();
+}
+function takeDrop(dt) {
+  stopped = false;
+  const items = [...(dt.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (items.length) items.forEach(e => readEntry(e, ''));
+  else [...dt.files].forEach(f => enqueue(f, ''));
+}
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => takeDrop(e.dataTransfer));
+drop.addEventListener('click', () => picker.click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') picker.click(); });
+picker.addEventListener('change', () => { stopped = false; [...picker.files].forEach(f => enqueue(f, '')); picker.value = ''; });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
 </script></body></html>"""
 
 
