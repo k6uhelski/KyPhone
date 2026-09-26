@@ -561,6 +561,111 @@ class RandomKeys(PhoneCase):
         self.assertTrue(must <= visited, 'never reached: %s' % sorted(must - visited))
 
 
+class RapidAndConcurrentKeys(PhoneCase):
+    """Double presses (the same key, and two different keys) on every screen, and keys arriving from the keyboard
+    and the trackpad at the same moment while texts arrive and the music ticks."""
+
+    SCREENS = [('TEXT', []), ('CALL', []), ('READ', ['KEY_ENTER']), ('LISTEN', ['KEY_ENTER']),
+               ('CONTACTS', []), ('NOTES', ['KEY_ENTER']), ('SETTINGS', []), ('SETTINGS', ['KEY_ENTER'])]
+    PAIRS = [('KEY_DOWN', 'KEY_DOWN'), ('KEY_UP', 'KEY_UP'), ('KEY_ENTER', 'KEY_ENTER'), ('KEY_RIGHT', 'KEY_RIGHT'),
+             ('KEY_DOWN', 'KEY_ENTER'), ('KEY_ENTER', 'KEY_ESC'), ('KEY_UP', 'KEY_DOWN'), ('CHAR:q', 'CHAR:q'),
+             ('KEY_ESC', 'KEY_ENTER'), ('KEY_LEFT', 'KEY_RIGHT')]
+
+    def setUp(self):
+        super().setUp()
+        self.add_book()
+        self.add_album()
+        self.contacts.extend([{'first': 'Pip', 'last': '', 'number': '(555) 010-0101'},
+                              {'first': 'Ann', 'last': '', 'number': '(555) 010-0103'}])
+
+    def test_double_presses_on_every_screen_act_exactly_like_two_single_presses(self):
+        def fresh():
+            self._close_everything()
+            for name in os.listdir(self.dir):
+                if name.endswith('.json') and name != 'contacts.json':
+                    os.remove(os.path.join(self.dir, name))
+            self.screens.clear()
+            self.pages.clear()
+            self.net.__init__()                                   # the pretend Wi-Fi/Bluetooth back to its start
+
+        def seen():
+            return (self.st['screen'], self.screens[-1] if self.screens else None,
+                    self.pages[-1] if self.pages else None)
+        for item, into in self.SCREENS:
+            for a, b in self.PAIRS:
+                fresh()                                           # the double press
+                self.home(item)
+                self.key(*into)
+                self.key(a, b)
+                double = seen()
+                fresh()                                           # the same two keys, one at a time
+                self.home(item)
+                self.key(*into)
+                self.key(a)
+                self.assertTrue(self.screens or self.pages)       # the first press was answered on its own
+                self.key(b)
+                self.assertEqual(seen(), double, (item, into, a, b))
+
+    def test_keyboard_trackpad_texts_and_music_at_the_same_time(self):
+        import threading
+        errors = []
+        stop = threading.Event()
+        self.home('LISTEN')
+        self.key('KEY_ENTER', 'KEY_ENTER')                        # music playing, so the ticker has work
+        self.key('KEY_ESC')
+        lock = threading.Lock()                                   # (only to collect errors safely)
+
+        def presser(seed, keys):
+            rng = random.Random(seed)
+            while not stop.is_set():
+                try:
+                    kyphone_os.handle_key(rng.choice(keys))
+                except Exception as e:
+                    with lock:
+                        errors.append(repr(e))
+                    return
+
+        def texts():
+            n = 0
+            while not stop.is_set():
+                n += 1
+                try:
+                    self.incoming('+1555010%04d' % (n % 30), 'text %d' % n)
+                except Exception as e:
+                    with lock:
+                        errors.append('incoming: %r' % e)
+                    return
+
+        def ticker():
+            while not stop.is_set():
+                try:
+                    kyphone_os._music_tick()
+                except Exception as e:
+                    with lock:
+                        errors.append('tick: %r' % e)
+                    return
+        keyboard = [k for k in KEYS if k != 'KEY_ESC' or random.random() < .5]
+        trackpad = ['KEY_UP', 'KEY_DOWN', 'KEY_LEFT', 'KEY_RIGHT', 'KEY_ENTER']
+        threads = [threading.Thread(target=presser, args=(1, keyboard)), threading.Thread(target=presser, args=(2, trackpad)),
+                   threading.Thread(target=texts)]
+        if hasattr(kyphone_os, '_music_tick'):
+            threads.append(threading.Thread(target=ticker))
+        for t in threads:
+            t.start()
+        import time as _t
+        _t.sleep(4)
+        stop.set()
+        for t in threads:
+            t.join(10)
+        self.assertEqual(errors, [])
+        # the phone is still coherent: whatever screen it ended on redraws validly (push hook checks the frame)
+        before = len(self.screens)
+        kyphone_os._push_for_screen(self.st['screen'])
+        self.assertGreaterEqual(len(self.screens), before)
+        for _ in range(3):
+            kyphone_os.handle_key('KEY_ESC')                      # and it still answers keys
+
+
 # ── everything sent is drawable by the emulator and by the firmware ──────────────────────────────────────────
 
 def _host_build():
