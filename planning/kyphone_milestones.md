@@ -1,5 +1,5 @@
 # KyPhone Project Milestones
-*Updated: September 25, 2026 (OS 0.6.0)*
+*Updated: September 26, 2026 (OS 0.6.8, texting live)*
 
 ## ✅ Milestone 1: Stable SPI Bridge
 Reliable one-way SPI from the Radxa to the Inkplate, with a handshake line for flow control. Now 256-byte frames, framed by 150 ms of clock silence, and the sender waits for each frame to be taken.
@@ -17,7 +17,7 @@ READ (EPUB, four sizes, resume) and LISTEN (albums, tracks, now playing, backgro
 Wi-Fi and Bluetooth, screen light, the lock screen's new-activity mark, Notes, calls and texts per person, and adding books, music and contacts from a computer (0.4.0 to 0.6.0).
 
 ## 🔄 Milestone 6: Untethered Hardware
-Keyboard ✅, cellular modem ✅ (SIM to activate), battery and enclosure still to come. Real texts, then real calls, over the modem.
+Keyboard ✅, cellular modem ✅, real texts both ways ✅ (2026-09-26), battery and enclosure still to come. Real calls over the modem next.
 
 ## Milestone 7: Daily Driver
 Reliable enough to carry as the only phone: power management, reliable boot, updates without a cable. This is 1.0.
