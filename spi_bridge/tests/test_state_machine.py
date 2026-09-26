@@ -2407,6 +2407,118 @@ class TestCheckedFrames(unittest.TestCase):
         self.assertEqual(frame[-1], ord('X'))
 
 
+class TestLightTimeout(unittest.TestCase):
+    """The screen light comes on with a key press and goes off 5 seconds after the last one."""
+
+    def setUp(self):
+        self.now = [100.0]
+        self.sent = []
+        for name, value in (('_LIGHT_CLOCK', lambda: self.now[0]), ('_send_light', self.sent.append),
+                            ('push_screen', lambda c: None)):
+            p = patch.object(kyphone_os, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        reset_state(screen='home', home_index=0, light=4, light_lit=False, last_key_at=0.0)
+
+    def test_a_key_switches_it_on_and_five_idle_seconds_switch_it_off(self):
+        kyphone_os.handle_key('KEY_DOWN')
+        self.assertEqual(self.sent, [4])
+        self.now[0] += 4.9
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent, [4])                          # not yet
+        self.now[0] += 0.2
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent, [4, 0])
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent, [4, 0])                       # once
+
+    def test_keys_while_it_is_on_keep_it_on_without_resending(self):
+        kyphone_os.handle_key('KEY_DOWN')
+        for _ in range(4):
+            self.now[0] += 3
+            kyphone_os.handle_key('KEY_UP')
+            kyphone_os._light_tick()
+        self.assertEqual(self.sent, [4])                          # never off, never re-sent
+        self.now[0] += 5
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent, [4, 0])
+
+    def test_with_the_light_set_to_off_nothing_is_sent(self):
+        kyphone_os.state['light'] = 0
+        kyphone_os.handle_key('KEY_DOWN')
+        self.now[0] += 10
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent, [])
+
+    def test_adjusting_the_level_counts_as_lit_and_then_times_out(self):
+        reset_state(screen='light', light=2, light_lit=False, last_key_at=0.0)
+        with patch.object(kyphone_os, 'save_settings'):
+            kyphone_os.handle_key('KEY_RIGHT')                    # wakes (LIGHT|2), then LIGHTSET|3 sets 3
+        self.assertEqual((kyphone_os.state['light'], kyphone_os.state['light_lit']), (3, True))
+        self.now[0] += 6
+        kyphone_os._light_tick()
+        self.assertEqual(self.sent[-1], 0)
+
+    def test_the_sender_puts_a_light_change_ahead_of_a_screen_and_never_drops_the_screen(self):
+        sent = []
+        with patch.object(kyphone_os, '_send_command', side_effect=sent.append), \
+                patch.object(kyphone_os, 'SIM_MODE', False):
+            with kyphone_os._pending_lock:
+                kyphone_os._pending_command = 'HOME2|9:41 AM|1|0|I|0'
+                kyphone_os._pending_light = 5
+                kyphone_os._pending_event.set()
+            kyphone_os.state['running'] = True
+            original_wait = kyphone_os._pending_event.wait
+
+            def wait_once(*a):
+                if sent:
+                    kyphone_os.state['running'] = False
+                return True
+            with patch.object(kyphone_os._pending_event, 'wait', wait_once):
+                kyphone_os._spi_sender_loop()
+        self.assertEqual(sent, ['LIGHT|5', 'HOME2|9:41 AM|1|0|I|0'])
+
+
+class TestFullRefreshWhen(unittest.TestCase):
+    """Kyle, 2026-09-26: full refresh going to the lock screen and opening a feature; partial inside a feature."""
+
+    def setUp(self):
+        kyphone_os._last_screen_pushed = None
+        self.pending = []
+        p = patch.object(kyphone_os, 'SIM_MODE', False)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(setattr, kyphone_os, '_pending_command', None)
+
+    def show(self, screen):
+        kyphone_os.state['screen'] = screen
+        kyphone_os._pending_command = None
+        kyphone_os.push_screen('X|%s' % screen)
+        return kyphone_os._pending_command[1]
+
+    def test_the_rules(self):
+        self.assertEqual([self.show(s) for s in
+                          ['lock', 'lock', 'home', 'home', 'texts_list', 'thread', 'thread', 'texts_list', 'home',
+                           'settings', 'wifi', 'settings', 'home', 'lock']],
+                         [True, False, False, False, True, False, False, False, False,
+                          True, False, False, False, True])
+
+    def test_a_replaced_full_request_carries_over(self):
+        kyphone_os.state['screen'] = 'home'
+        kyphone_os.push_screen('HOME2|x')
+        kyphone_os.state['screen'] = 'notes_list'
+        kyphone_os.push_screen('NOTES|-2')                        # opening a feature: full
+        kyphone_os.state['screen'] = 'note'
+        kyphone_os.push_screen('NOTE||')                          # pressed on before it went out
+        self.assertEqual(kyphone_os._pending_command, ('NOTE||', True))
+
+    def test_the_start_byte_asks_for_it(self):
+        self.assertEqual(kyphone_os.build_payload('HOME2|x', full=True)[2], 0x04)
+        self.assertEqual(kyphone_os.build_payload('HOME2|x')[2], 0x02)
+        frame = kyphone_os.build_payload('HOME2|x', full=True)
+        self.assertEqual(frame[1], kyphone_os.crc8(frame[3:]))     # the check covers the text, as before
+
+
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
         reset_state(screen='home', home_index=0)

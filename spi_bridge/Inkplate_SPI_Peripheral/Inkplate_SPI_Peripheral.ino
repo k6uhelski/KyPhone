@@ -18,7 +18,9 @@ Inkplate display(INKPLATE_1BIT);
 // Handshake
 #define PIN_HANDSHAKE IO_PIN_B0 // P1-0 expander pin
 #define FRAME_SILENCE_US 30000UL  // clock silence that ends a frame (600 ms until 0.3.1, 150 ms until 0.6.3; see loop())
-#define FRAME_CHECKED 0xA5         // first byte of a checked frame: [0xA5, crc8(bytes 3..255), 0x02, text...]
+#define FRAME_CHECKED 0xA5         // first byte of a checked frame: [0xA5, crc8(bytes 3..255), 0x02|0x04, text...]
+#define FRAME_START_FULL 0x04      // ... byte 2 = 0x04: the Radxa asks for a full refresh (a new feature, the lock screen)
+bool full_requested = false;       // set for the one frame being handled
 
 // --- ISR Variables ---
 #define PAYLOAD_BYTES 256
@@ -833,8 +835,8 @@ const uint8_t cat_bitmap[] PROGMEM = {
     0x00, 0x00, 0x00, 0x00
 };
 
-// The front light (Inkplate 4 TEMPERA). The Radxa sends the level (0 off .. 8) in LOCK and LIGHTSET commands; the
-// light is hardware state, so it is set here, not drawn.
+// The front light (Inkplate 4 TEMPERA). The Radxa sends the level (0 off .. 8) as LIGHT|n (on with a key press, off
+// after a few idle seconds) and in LIGHTSET while it is adjusted; the light is hardware state, set here, not drawn.
 void apply_light(int level) {
     if (level <= 0) {
         display.frontlight.setState(false);
@@ -880,7 +882,8 @@ void render_lock(char* data) {
             *pm = '\0';
             char* pl = strchr(pm + 1, '|');
             mark = pm[1] == '*' ? '*' : '\0';
-            if (pl && pl[1] >= '0' && pl[1] <= '9') apply_light(atoi(pl + 1));
+            (void)pl;   // the level is not applied here: the light follows key presses (LIGHT|n), and the lock
+                        // screen redraws every minute, which would switch it back on
         }
     }
     if (version_buf[0] && strcmp(version_buf, KYPHONE_VERSION) != 0) {
@@ -1282,6 +1285,10 @@ void setup() {
 // and for a "@<command>" line sent over USB serial (the preview below), so a screen
 // can be checked on the real panel without the Radxa.
 void handle_command(char* text) {
+    if (strncmp(text, "LIGHT|", 6) == 0) {         // the front light only (on with a key, off when idle): no drawing
+        apply_light(atoi(text + 6));
+        return;
+    }
     if (strncmp(text, "HOME_FAST|", 10) == 0) {
         strncpy(current_screen, "HOME", sizeof(current_screen) - 1);
         display.clearDisplay();
@@ -1366,12 +1373,16 @@ void handle_command(char* text) {
             strncpy(current_screen, "SMS", sizeof(current_screen) - 1);
             render_sms(text);
         }
+        // Full refresh: when the Radxa asks (going to the lock screen, opening a feature), after boot, and — to clear
+        // ghosting while idle — on a lock screen redraw once 10 minutes have passed. Everything else is partial, so a
+        // key press inside a feature never gets the slow flashing refresh.
         unsigned long now_ms = millis();
-        if (!did_boot_full_refresh || now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS) {
+        bool ghost_clear = strncmp(text, "LOCK|", 5) == 0 && now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS;
+        if (full_requested || !did_boot_full_refresh || ghost_clear) {
             display.display();
             last_full_refresh_ms   = now_ms;
             did_boot_full_refresh  = true;
-            Serial.println(">> Full refresh (ghost clear, time-based)");
+            Serial.println(full_requested ? ">> Full refresh (asked for)" : ">> Full refresh (ghost clear, lock screen)");
         } else {
             display.partialUpdate();
         }
@@ -1461,10 +1472,12 @@ void loop() {
                 crc ^= local_buf[i];
                 for (int b = 0; b < 8; b++) crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
             }
-            if (crc != local_buf[1] || local_buf[2] != 0x02) {
+            if (crc != local_buf[1] || (local_buf[2] != 0x02 && local_buf[2] != FRAME_START_FULL)) {
                 Serial.printf(">> CHECKSUM MISMATCH (sent %02X, got %02X). Frame dropped.\n", local_buf[1], crc);
                 goto done_processing;
             }
+            full_requested = (local_buf[2] == FRAME_START_FULL);
+            local_buf[2] = 0x02;                          // from here on it is an ordinary screen command
             offset = 2;
         } else {
             for(int i=0; i<PAYLOAD_BYTES; i++) {
@@ -1512,6 +1525,7 @@ void loop() {
                 Serial.printf("SUCCESS! MSG: %s\n", text);
 
                 handle_command(text);
+                full_requested = false;
             }
         } else {
             Serial.println(">> ERROR: No Header (0x02). Check MOSI wiring.");

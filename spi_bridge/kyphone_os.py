@@ -376,6 +376,8 @@ state = {
     'toc_here':       0,            # the entry of the chapter being read
     'toc_start':      0,
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
+    'light_lit':      False,        # the light is on right now (it goes off LIGHT_IDLE_SECONDS after the last key)
+    'last_key_at':    0.0,
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
     'settings_bt':    None,         # network_control.BtStatus, same
@@ -405,6 +407,7 @@ state = {
 _spi_lock       = threading.Lock()  # serializes the SPI sender thread's own transfers
 _pending_lock   = threading.Lock()
 _pending_command = None
+_pending_light  = None              # a front-light level waiting to go out ahead of any screen (never replaces one)
 _pending_event  = threading.Event()
 
 # --- Hardware Init ---
@@ -649,7 +652,8 @@ def wait_for_taken(timeout_s=3):
     return True
 
 
-FRAME_CHECKED = 0xA5    # first byte of a checked frame: [0xA5, crc8(the 253 text bytes), 0x02, text..., 0 padding]
+FRAME_CHECKED = 0xA5    # first byte of a checked frame: [0xA5, crc8(the 253 text bytes), start, text..., 0 padding]
+FRAME_START, FRAME_START_FULL = 0x02, 0x04      # start byte: 0x04 asks the Inkplate for a full refresh
 
 
 def crc8(data):
@@ -663,10 +667,25 @@ def crc8(data):
     return crc
 
 
-def build_payload(text):
+def build_payload(text, full=False):
     body = [ord(c) for c in text[:PAYLOAD_BYTES - 3]]
     body += [0x00] * (PAYLOAD_BYTES - 3 - len(body))
-    return [FRAME_CHECKED, crc8(body), 0x02] + body
+    return [FRAME_CHECKED, crc8(body), FRAME_START_FULL if full else FRAME_START] + body
+
+
+# Full vs partial refresh (Kyle, 2026-09-26): a full (flashing, ghost-free) refresh when the phone goes to the lock
+# screen and when a feature is opened from the home menu; partial refreshes everywhere inside a feature, which keeps
+# key presses quick. (The Inkplate also clears ghosting on a lock screen redraw every 10 minutes; book pages decide
+# their own refresh in RFOOT.)
+_last_screen_pushed = None
+
+
+def _wants_full_refresh():
+    global _last_screen_pushed
+    with state['lock']:
+        screen = state['screen']
+    before, _last_screen_pushed = _last_screen_pushed, screen
+    return (screen == 'lock' and before != 'lock') or (before == 'home' and screen not in ('home', 'lock'))
 
 
 def push_screen(command):
@@ -677,13 +696,17 @@ def push_screen(command):
     transfer + e-ink refresh can keep up (~1s each), only the latest one
     is kept — a fast burst of input coalesces to the final state instead
     of rendering every intermediate frame."""
-    print(f"  → {command.split('|', 1)[0]} ({len(command)} chars)")   # never the content: it can be a text or a note
+    full = _wants_full_refresh()
+    print(f"  → {command.split('|', 1)[0]} ({len(command)} chars){' full' if full else ''}")   # never the content
     if SIM_MODE:
         simulator.render(command)
         return
     global _pending_command
     with _pending_lock:
-        _pending_command = command
+        # A full refresh asked for by a screen that is replaced before it goes out carries over to the newer one
+        # (opening a feature and pressing Down at once still gets the full refresh).
+        was_full = isinstance(_pending_command, tuple) and _pending_command[1]
+        _pending_command = (command, full or was_full)
     _pending_event.set()
 
 
@@ -702,17 +725,66 @@ def push_page(frames):
 
 
 def _spi_sender_loop():
-    global _pending_command
+    global _pending_command, _pending_light
     while state['running']:
         _pending_event.wait()
         with _pending_lock:
-            command = _pending_command
-            _pending_command = None
+            command, light = _pending_command, _pending_light
+            _pending_command = _pending_light = None
             _pending_event.clear()
+        if light is not None:                       # tiny and draws nothing, so it goes first
+            with _spi_lock:
+                _send_command(f"LIGHT|{light}")
         if command is None:
             continue
         with _spi_lock:
             _send_command(command)
+
+
+# ─── The screen light's timeout ───
+# The light (Settings > Screen light) comes on with a key press and goes off after LIGHT_IDLE_SECONDS without one.
+# Only the Radxa knows when a key is pressed, so it sends LIGHT|n (the Inkplate switches the light, draws nothing).
+LIGHT_IDLE_SECONDS = 5
+
+
+def _send_light(level):
+    if SIM_MODE:
+        return                                      # the emulator has no light
+    global _pending_light
+    with _pending_lock:
+        _pending_light = level
+        _pending_event.set()
+
+
+def _wake_light():
+    """Every key press: remember when, and switch the light on if it is set and currently off."""
+    with state['lock']:
+        state['last_key_at'] = _LIGHT_CLOCK()
+        level, lit = state['light'], state['light_lit']
+        wake = level > 0 and not lit
+        if wake:
+            state['light_lit'] = True
+    if wake:
+        _send_light(level)
+
+
+def _light_tick():
+    """Switch the light off once no key has been pressed for LIGHT_IDLE_SECONDS."""
+    with state['lock']:
+        off = state['light_lit'] and _LIGHT_CLOCK() - state['last_key_at'] >= LIGHT_IDLE_SECONDS
+        if off:
+            state['light_lit'] = False
+    if off:
+        _send_light(0)
+
+
+def light_loop():
+    while state['running']:
+        time.sleep(0.25)
+        _light_tick()
+
+
+_LIGHT_CLOCK = time.monotonic
 
 
 def _send_command(command):
@@ -723,12 +795,14 @@ def _send_command(command):
         if k and _pending_event.is_set():
             print(f"  (page abandoned after {k} of {len(frames)} frames: a newer one is waiting)")
             return
+        text, full = frame if isinstance(frame, tuple) else (frame, False)
+        name = text.split('|', 1)[0]                  # (never the content in the log)
         if not wait_for_ready():
-            print(f"Warning: Inkplate not ready, skipping: {frame[:40]}")
+            print(f"Warning: Inkplate not ready, skipping a {name} frame")
             return
-        spi.xfer2(build_payload(frame))
+        spi.xfer2(build_payload(text, full))
         if not wait_for_taken():
-            print(f"Warning: Inkplate never signalled busy after: {frame[:40]}")
+            print(f"Warning: Inkplate never signalled busy after a {name} frame")
 
 
 # ─── Screen Builders ──────────────────────────────────────────────────────────
@@ -1133,6 +1207,7 @@ TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit', 'netpass
 
 
 def handle_key(keycode):
+    _wake_light()
     with state['lock']:
         screen = state['screen']
     print(f"[handle_key] screen={screen} keycode={'CHAR' if keycode.startswith('CHAR:') else keycode}")   # never the letter
@@ -3503,9 +3578,10 @@ def _import_contacts(cards):
 
 def push_light():
     """SCREEN LIGHT: the level as a bar. The firmware also sets the front light from this command's level, so the
-    light changes with the drawing (the sender keeps only the latest command, so a separate one could be dropped)."""
+    light changes with the drawing while it is being adjusted."""
     with state['lock']:
         level = state['light']
+        state['light_lit'] = level > 0
     push_screen(f"LIGHTSET|{level}")
 
 
@@ -3519,6 +3595,7 @@ def _from_light(keycode):
         return
     with state['lock']:
         state['light'] = max(0, min(LIGHT_LEVELS, state['light'] + step))
+        state['light_lit'] = state['light'] > 0         # the LIGHTSET frame sets the light to this level
     save_settings()
     push_light()
 
@@ -4031,6 +4108,7 @@ def main():
     threading.Thread(target=modem_sms_loop,  daemon=True).start()
     threading.Thread(target=call_timer_loop, daemon=True).start()
     threading.Thread(target=music_tick_loop, daemon=True).start()
+    threading.Thread(target=light_loop,      daemon=True).start()
 
     if not SIM_MODE:
         threading.Thread(target=_spi_sender_loop, daemon=True).start()

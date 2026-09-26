@@ -18,7 +18,7 @@ To change it: edit VERSION below, run `python3 spi_bridge/tools/make_version.py`
 CLAUDE.md and README.md, then flash the firmware and deploy the Python together. Tests fail if any piece disagrees.
 """
 
-VERSION = '0.6.3'
+VERSION = '0.6.4'
 LABEL = 'OS ' + VERSION          # what the lock screen says
 
 # The design library (docs/02-design/design_handoff_os_0_2/) is versioned separately: it names the design generation
