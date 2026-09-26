@@ -154,12 +154,17 @@ def main(argv=None):
             return 1
 
     if args.wait:
+        # Every text that arrives is printed (reading deletes it from the SIM). With --send, keep waiting until
+        # the texted phone replies; otherwise stop after the first batch.
+        replier = ''.join(ch for ch in args.send if ch.isdigit())[-10:] if args.send else None
         print('   7. waiting %d s for a text (reply from the other phone now)...' % args.wait)
         end = time.monotonic() + args.wait
         while time.monotonic() < end:
             try:
-                for msg in m.poll_new():
+                got = m.poll_new()
+                for msg in got:
                     print('ok 7. received from %s at %s: %s' % (msg['sender'], msg['ts'], msg['body']))
+                if got and (replier is None or any(msg['sender'][-10:] == replier for msg in got)):
                     return 0
             except modem.ModemError as e:
                 print('   (poll: %s)' % e)

@@ -16,12 +16,17 @@ Both implement the four calls kyphone_os.py needs:
     signal_quality()     -> 0-31 (the AT+CSQ scale), or None if unknown
     registered()         -> True once the modem has joined the carrier's network
 
-The AT dialogue (text-mode SMS, AT+CMGS/CMGL/CMGD/CSQ/CREG) is standard Hayes/3GPP TS 27.005, and matches
-Waveshare's own SIM7600G-H notes. Two character sets are used on purpose:
-    sending   AT+CSCS="IRA" (plain ASCII, which the modem turns into the GSM alphabet itself, so @ $ _ arrive as
-              typed). A text longer than one SMS (160) goes as several texts, split between words.
-    receiving AT+CSCS="UCS2": every sender and body arrives as ONE line of hex, so a text with line breaks, or a
-              text that is just "OK", can never be mistaken for the modem's own replies; accents survive too.
+The AT dialogue (AT+CMGS/CMGL/CMGD/CSQ/CREG) is standard Hayes/3GPP TS 27.005, and matches Waveshare's own
+SIM7600G-H notes. Sending and receiving use different modes on purpose:
+    sending   text mode with AT+CSCS="IRA" (plain ASCII, which the modem turns into the GSM alphabet itself, so
+              @ $ _ arrive as typed). A text longer than one SMS (160) goes as several texts, split between words.
+    receiving PDU mode (AT+CMGF=0, AT+CMGL=4): each stored text arrives as ONE line of hex that decode_pdu() reads
+              (3GPP TS 23.040), so a text with line breaks, or a text that is just "OK", can never be mistaken for
+              the modem's own replies; accents survive, and a long text sent in parts is joined again. (Text mode
+              in UCS2 was tried first: the real SIM7600 refuses every AT+CMGL filter in UCS2, found 2026-09-26.)
+              Texts are kept on the SIM (AT+CPMS="SM"), which is where the SIM7600 stores them; the modem's own
+              storage is read too, in case another setup left texts there. Each text is deleted by its index
+              once it has been handed over.
 One lock serializes every exchange (the send worker, the poll loop and start-up all use the one port), and any
 serial failure is raised as ModemError so callers only ever handle that. It is checked against the real dongle once a SIM is active — nothing
 here can prove real hardware talks back correctly; that is a phone-session step, not a test.
@@ -43,8 +48,10 @@ SEND_TIMEOUT = 20     # sending a text can take longer (it waits on the network,
 POLL_TIMEOUT = 8     # AT+CMGL can take a moment with several messages waiting
 SMS_CHARS    = 160   # one text in the GSM alphabet
 
-_CMGL_HEADER = re.compile(r'^\+CMGL:\s*(\d+),"[^"]*","([^"]*)",[^,]*,"([^"]*)"')
-_HEX         = re.compile(r'^(?:[0-9A-Fa-f]{4})+$')
+PART_WAIT    = 600   # seconds to wait for the missing parts of a long text before showing what arrived
+
+_CMGL_PDU    = re.compile(r'^\+CMGL:\s*(\d+),')
+_HEX         = re.compile(r'^(?:[0-9A-Fa-f]{2})+$')
 _CSQ_LINE    = re.compile(r'^\+CSQ:\s*(\d+),')
 _CREG_LINE   = re.compile(r'^\+CREG:\s*\d+,\s*(\d+)')
 _MODEM_TS    = re.compile(r'^(\d\d)/(\d\d)/(\d\d),(\d\d):(\d\d):(\d\d)')
@@ -54,15 +61,92 @@ class ModemError(Exception):
     """The modem could not be reached, or it reported failure sending or reading a text."""
 
 
-def _ucs2_decode(s):
-    """A UCS2 hex string ("0048006900") as text; anything that is not hex is returned as it is."""
-    s = s.strip()
-    if not _HEX.match(s):
-        return s
-    try:
-        return bytes.fromhex(s).decode('utf-16-be', errors='replace')
-    except ValueError:
-        return s
+# The GSM 03.38 default alphabet (septet value -> character) and its escape table (after 0x1B).
+_GSM7 = ('@£$¥èéùìòÇ\nØø\rÅå'
+         'Δ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ'
+         ' !"#¤%&\'()*+,-./0123456789:;<=>?'
+         '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§'
+         '¿abcdefghijklmnopqrstuvwxyzäöñüà')
+_GSM7_EXT = {0x0A: '\f', 0x14: '^', 0x28: '{', 0x29: '}', 0x2F: '\\', 0x3C: '[', 0x3D: '~', 0x3E: ']',
+             0x40: '|', 0x65: '€'}
+
+
+def _gsm7_text(data, septets, skip=0):
+    """`septets` characters packed 7 bits each into `data`, starting `skip` septets in (past a header)."""
+    bits = int.from_bytes(data, 'little')
+    out, escaped = [], False
+    for i in range(skip, septets):
+        c = (bits >> (7 * i)) & 0x7F
+        if escaped:
+            out.append(_GSM7_EXT.get(c, ' '))
+            escaped = False
+        elif c == 0x1B:
+            escaped = True
+        else:
+            out.append(_GSM7[c])
+    return ''.join(out)
+
+
+def _swapped(octets):
+    """Semi-octets, low nibble first (how PDUs store digits); F is padding."""
+    return ''.join('%x%x' % (b & 0xF, b >> 4) for b in octets).rstrip('f')
+
+
+def _alphabet(dcs):
+    """The data coding scheme's alphabet: 'gsm', '8bit' or 'ucs2' (TS 23.038)."""
+    if dcs < 0x80:
+        return ('gsm', '8bit', 'ucs2', 'gsm')[(dcs >> 2) & 3]
+    if dcs >> 4 == 0xF:
+        return '8bit' if dcs & 4 else 'gsm'
+    if dcs >> 4 == 0xE:
+        return 'ucs2'
+    return 'gsm'
+
+
+def decode_pdu(hexstr):
+    """One received SMS PDU (SMSC included, as AT+CMGL gives it in PDU mode) as
+    {'sender', 'body', 'ts', 'part': (ref, count, n) or None}, or None if it is not an incoming text
+    (a delivery report, say). Raises ValueError on a PDU too short or malformed to read."""
+    d = bytes.fromhex(hexstr.strip())
+    i = d[0] + 1                                   # skip the SMS centre's address
+    first = d[i]; i += 1
+    if first & 0x03 != 0:                          # not SMS-DELIVER
+        return None
+    digits, toa = d[i], d[i + 1]; i += 2
+    raw = d[i:i + (digits + 1) // 2]; i += (digits + 1) // 2
+    if toa & 0x70 == 0x50:                         # alphanumeric sender ("T-Mobile")
+        sender = _gsm7_text(raw, digits * 4 // 7).rstrip('@')   # a 7-character name leaves a zero septet of padding
+    else:
+        sender = ('+' if toa & 0x70 == 0x10 else '') + _swapped(raw)[:digits]
+    i += 1                                         # protocol identifier
+    dcs = d[i]; i += 1
+    ts = _swapped(d[i:i + 6]); i += 7              # YYMMDDhhmmss, then a timezone we ignore
+    udl = d[i]; i += 1
+    ud = d[i:]
+    alphabet = _alphabet(dcs)
+    needed = (udl * 7 + 7) // 8 if alphabet == 'gsm' else udl
+    if len(ts) != 12 or len(ud) < needed:
+        raise ValueError('short PDU')
+    part, header = None, 0
+    if first & 0x40:                               # a user data header: look for the concatenation element
+        header = ud[0] + 1
+        j = 1
+        while j + 1 < header:
+            iei, length = ud[j], ud[j + 1]
+            v = ud[j + 2:j + 2 + length]
+            if iei == 0x00 and length == 3:
+                part = (v[0], v[1], v[2])
+            elif iei == 0x08 and length == 4:
+                part = (v[0] << 8 | v[1], v[2], v[3])
+            j += 2 + length
+    if alphabet == 'gsm':
+        body = _gsm7_text(ud, udl, skip=(header * 8 + 6) // 7)
+    elif alphabet == 'ucs2':
+        body = ud[header:udl].decode('utf-16-be', errors='replace')
+    else:
+        body = ud[header:udl].decode('latin-1')
+    stamp = '%s/%s/%s,%s:%s:%s' % (ts[0:2], ts[2:4], ts[4:6], ts[6:8], ts[8:10], ts[10:12])
+    return {'sender': sender, 'body': body, 'ts': _parse_modem_ts(stamp), 'part': part}
 
 
 def split_text(text, size=SMS_CHARS):
@@ -135,6 +219,8 @@ class SerialModem:
     def __init__(self, port=None, baud=DEFAULT_BAUD):
         self.port = port or os.environ.get(MODEM_PORT_ENV, DEFAULT_PORT)
         self._lock = threading.RLock()     # one AT exchange at a time: send, poll and start-up share the port
+        self._handed = set()     # PDUs already handed over whose delete failed (so they never repeat)
+        self._parts_seen = {}    # (storage, sender, ref) of a long text still missing parts -> when first seen
         self._buf = ''      # bytes already read from the port but not yet consumed by any command —
                              # a read can come back with more than one response's worth at once, so
                              # this has to live on the instance, not as a local in _read_until/send()
@@ -150,9 +236,8 @@ class SerialModem:
     def _configure(self):
         with self._lock:
             self._cmd('ATE0')              # echo off — every response after this is just the answer
-            self._cmd('AT+CMGF=1')         # text-mode SMS (not the raw PDU/hex format)
-            self._cmd('AT+CPMS="ME","ME","ME"')    # keep texts in the modem's own (larger) storage
-            self._clear_read()             # anything already read from storage is gone
+            self._cmd('AT+CMGF=1')         # text mode for sending (poll_new switches to PDU and back)
+            self._cmd('AT+CPMS="SM","SM","SM"')    # texts live on the SIM, where the SIM7600 stores them
 
     # -- the AT dialogue --
 
@@ -181,14 +266,6 @@ class SerialModem:
         except ModemError:
             pass
         self._buf = ''
-
-    def _clear_read(self):
-        """Delete every text already read (AT+CMGD delflag 1). One sweep, so a text is never left behind even if an
-        earlier clean-up failed; a text that has not been read yet is never touched."""
-        try:
-            self._cmd('AT+CMGD=1,1')
-        except ModemError:
-            pass
 
     def _read_until(self, terminators, timeout):
         """Reads lines until one is exactly a terminator, or an error line (+CME ERROR / +CMS ERROR /
@@ -224,6 +301,7 @@ class SerialModem:
     def send(self, number, text):
         """One text, or several if it is longer than one SMS. Raises ModemError on the first part that fails."""
         with self._lock:
+            self._cmd('AT+CMGF=1')
             self._cmd('AT+CSCS="IRA"')
             for part in split_text(text):
                 self._send_one(number, part)
@@ -251,21 +329,72 @@ class SerialModem:
             raise ModemError('send failed: %s' % last)
 
     def poll_new(self):
-        """Unread texts, read in UCS2 (one hex line per sender and per body), then cleared from storage."""
+        """New texts, oldest first, each deleted from storage once read. A long text sent in parts comes back as one
+        text once every part is in (or after PART_WAIT seconds, with what arrived). A text whose delete failed is
+        remembered, so it is never handed over twice."""
         with self._lock:
-            self._cmd('AT+CSCS="UCS2"')
-            lines = self._cmd('AT+CMGL="REC UNREAD"', timeout=POLL_TIMEOUT)
             messages = []
-            for line in lines:
-                m = _CMGL_HEADER.match(line)
-                if m:
-                    messages.append({'sender': _ucs2_decode(m.group(2)), 'body': '',
-                                     'ts': _parse_modem_ts(m.group(3))})
-                elif messages:
-                    messages[-1]['body'] += _ucs2_decode(line)
-            if messages:
-                self._clear_read()                    # listing marked them read; the sweep deletes them
-            return messages
+            for storage in ('SM', 'ME'):
+                try:
+                    self._cmd('AT+CPMS="%s"' % storage)       # the storage that listing and deleting act on
+                except ModemError:
+                    continue                                   # e.g. no ME storage on this modem
+                messages += self._take_stored(storage)
+            self._cmd('AT+CPMS="SM","SM","SM"')
+            return sorted(messages, key=lambda x: x['ts'])
+
+    def _take_stored(self, storage):
+        try:
+            self._cmd('AT+CMGF=0')
+            lines = self._cmd('AT+CMGL=4', timeout=POLL_TIMEOUT)     # 4 = every stored text, read or not
+        finally:
+            try:
+                self._cmd('AT+CMGF=1')
+            except ModemError:
+                pass
+        stored = []                                   # (index, pdu hex, decoded or None)
+        for header, pdu in zip(lines, lines[1:]):
+            m = _CMGL_PDU.match(header)
+            if not m or not _HEX.match(pdu):
+                continue
+            try:
+                stored.append((int(m.group(1)), pdu, decode_pdu(pdu)))
+            except (ValueError, IndexError):
+                pass                                  # unreadable: left where it is, never deleted unseen
+        now = time.monotonic()
+        present = {(storage, pdu) for _, pdu, _ in stored}
+        self._handed = {h for h in self._handed if h[0] != storage or h in present}
+        waiting = {(storage, x['sender'], x['part'][0]) for _, _, x in stored if x and x['part']}
+        self._parts_seen = {k: t for k, t in self._parts_seen.items() if k[0] != storage or k in waiting}
+        done, groups = [], {}
+        for index, pdu, msg in stored:
+            if msg is None:
+                done.append((index, pdu, None))       # a delivery report or the like: just cleared away
+            elif msg['part'] is None:
+                done.append((index, pdu, msg))
+            else:
+                groups.setdefault((storage, msg['sender'], msg['part'][0]), []).append((index, pdu, msg))
+        for key, parts in groups.items():
+            count = parts[0][2]['part'][1]
+            first_seen = self._parts_seen.setdefault(key, now)
+            if len({p[2]['part'][2] for p in parts}) < count and now - first_seen < PART_WAIT:
+                continue                              # the rest is still on its way
+            parts.sort(key=lambda p: p[2]['part'][2])
+            whole = dict(parts[0][2], body=''.join(p[2]['body'] for p in parts))
+            done.append((parts[0][0], parts[0][1], whole))
+            done += [(index, pdu, None) for index, pdu, _ in parts[1:]]
+            self._parts_seen.pop(key, None)
+        out = []
+        for index, pdu, msg in done:
+            if msg is not None and (storage, pdu) not in self._handed:
+                out.append({'sender': msg['sender'], 'body': msg['body'], 'ts': msg['ts']})
+            self._handed.add((storage, pdu))
+            try:
+                self._cmd('AT+CMGD=%d' % index)
+                self._handed.discard((storage, pdu))
+            except ModemError:
+                pass                                  # still stored; remembered, so not handed over again
+        return out
 
     def signal_quality(self):
         with self._lock:

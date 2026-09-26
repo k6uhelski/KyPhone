@@ -28,8 +28,10 @@ class FakeModem:
     def __init__(self, port, baud, timeout=None):
         self.port = port
         self.commands, self.texts = [], []
-        self.inbox = []                   # {'sender', 'body', 'ts', 'read'}
+        self.inbox = {}                   # index -> {'pdu', 'storage', 'read'}
         self.charset = 'GSM'
+        self.pdu_mode = False
+        self.storage = 'ME'
         self.refuse_send = None           # e.g. '+CMS ERROR: 304' instead of the '>' prompt
         self.reject_after_text = None     # e.g. '+CMS ERROR: 500' after the text was typed
         self.no_prompt = False
@@ -93,19 +95,29 @@ class FakeModem:
             elif not self.no_prompt:
                 self._typing = cmd.split('"')[1]
                 self._out += b'\r\n> '
+        elif cmd == 'AT+CMGF=0' or cmd == 'AT+CMGF=1':
+            self.pdu_mode = cmd.endswith('0')
+            self._say('OK')
+        elif cmd.startswith('AT+CPMS='):
+            self.storage = cmd.split('"')[1]
+            self._say('+CPMS: 0,30,0,30,0,30\r\n\r\nOK')
         elif cmd.startswith('AT+CMGL='):
+            # As the real SIM7600 does (found on the phone, 2026-09-26): texts are on the SIM, and PDU mode lists them.
+            if not self.pdu_mode or cmd != 'AT+CMGL=4':
+                self._say('+CMS ERROR: Unknown error')
+                return
             rows = []
-            for i, msg in enumerate(self.inbox):
-                if not msg['read']:
+            for i, msg in sorted(self.inbox.items()):
+                if msg['storage'] == self.storage:
                     msg['read'] = True
-                    rows.append('+CMGL: %d,"REC UNREAD","%s","","%s"\r\n%s'
-                                % (i, self._hex(msg['sender']), msg['ts'], self._hex(msg['body'])))
+                    rows.append('+CMGL: %d,%d,"",%d\r\n%s' % (i, 1, len(msg['pdu']) // 2 - 8, msg['pdu']))
             self._say('\r\n'.join(rows + ['', 'OK']) if rows else 'OK')
-        elif cmd == 'AT+CMGD=1,1':
-            if self.fail_delete:
-                self._say('ERROR')
+        elif cmd.startswith('AT+CMGD='):
+            index = int(cmd.split('=')[1].split(',')[0])
+            if self.fail_delete or index not in self.inbox or self.inbox[index]['storage'] != self.storage:
+                self._say('+CMS ERROR: 321')
             else:
-                self.inbox = [x for x in self.inbox if not x['read']]
+                del self.inbox[index]
                 self._say('OK')
         elif cmd == 'AT+CSQ':
             self._say('+CSQ: 18,99\r\n\r\nOK')
@@ -122,8 +134,74 @@ class FakeModem:
         else:
             self._say('OK')
 
-    def deliver(self, sender, body, ts='26/09/23,14:03:22-20'):
-        self.inbox.append({'sender': sender, 'body': body, 'ts': ts, 'read': False})
+    def deliver(self, sender, body, ts='26/09/23,14:03:22-20', storage='SM', part=None):
+        self.store(make_pdu(sender, body, ts, part), storage)
+
+    def store(self, pdu, storage='SM'):
+        index = max(self.inbox, default=-1) + 1
+        self.inbox[index] = {'pdu': pdu, 'storage': storage, 'read': False}
+
+
+def _semi(digits):
+    digits += 'F' * (len(digits) % 2)
+    return ''.join(digits[i + 1] + digits[i] for i in range(0, len(digits), 2))
+
+
+def make_pdu(sender, body, ts='26/09/23,14:03:22-20', part=None, report=False):
+    """An SMS-DELIVER PDU as a SIM7600 lists it: GSM 7-bit when the body fits the basic alphabet, else UCS2;
+    `part` = (ref, count, n) adds a concatenation header."""
+    smsc = '0791' + _semi('15550100900')
+    first = (0x02 if report else 0x04) | (0x40 if part else 0)
+    digits = sender.lstrip('+')
+    if sender[:1].isalpha():
+        packed = pack7(sender)
+        oa = '%02X' % (len(packed) * 2) + 'D0' + packed.hex().upper()
+    else:
+        oa = '%02X%s%s' % (len(digits), '91' if sender.startswith('+') else '81', _semi(digits))
+    y, mo, d = ts[0:2], ts[3:5], ts[6:8]
+    h, mi, se = ts[9:11], ts[12:14], ts[15:17]
+    scts = _semi(y + mo + d + h + mi + se) + '8A'
+    if part and part[0] > 255:                                   # 16-bit reference number
+        udh = bytes([6, 8, 4, part[0] >> 8, part[0] & 0xFF, part[1], part[2]])
+    else:
+        udh = bytes([5, 0, 3] + list(part)) if part else b''
+    if all(c in m._GSM7 for c in body):
+        septets = [m._GSM7.index(c) for c in body]
+        skip = (len(udh) * 8 + 6) // 7
+        bits = int.from_bytes(udh, 'little')
+        for k, c in enumerate(septets):
+            bits |= c << (7 * (skip + k))
+        udl = skip + len(septets)
+        ud = bits.to_bytes((udl * 7 + 7) // 8, 'little')
+        dcs = '00'
+    else:
+        ud = udh + body.encode('utf-16-be')
+        udl = len(ud)
+        dcs = '08'
+    return (smsc + '%02X' % first + oa + '00' + dcs + scts + '%02X' % udl + ud.hex()).upper()
+
+
+def _gsm_pdu_with(sender, body):
+    """A GSM 7-bit PDU whose body uses the escape table ({ } [ ] ~ ^ | \\ and the euro sign)."""
+    ext = {v: k for k, v in m._GSM7_EXT.items()}
+    septets = []
+    for c in body:
+        septets += [0x1B, ext[c]] if c in ext else [m._GSM7.index(c)]
+    bits = 0
+    for k, c in enumerate(septets):
+        bits |= c << (7 * k)
+    ud = bits.to_bytes((len(septets) * 7 + 7) // 8, 'little')
+    digits = sender.lstrip('+')
+    return ('0791' + _semi('15550100900') + '04' + '%02X91%s' % (len(digits), _semi(digits)) + '0000'
+            + _semi('260923140322') + '8A' + '%02X' % len(septets) + ud.hex()).upper()
+
+
+def pack7(text):
+    septets = [m._GSM7.index(c) for c in text]
+    bits = 0
+    for k, c in enumerate(septets):
+        bits |= c << (7 * k)
+    return bits.to_bytes((len(septets) * 7 + 7) // 8, 'little')
 
 
 def make_modem(port='/dev/ttyUSB2'):
@@ -180,9 +258,9 @@ class SimModemTest(unittest.TestCase):
 
 
 class SerialModemConfigureTest(unittest.TestCase):
-    def test_startup_turns_echo_off_selects_text_mode_and_clears_read_texts(self):
+    def test_startup_turns_echo_off_selects_text_mode_and_sim_storage(self):
         modem, fake = make_modem()
-        self.assertEqual(fake.commands, ['ATE0', 'AT+CMGF=1', 'AT+CPMS="ME","ME","ME"', 'AT+CMGD=1,1'])
+        self.assertEqual(fake.commands, ['ATE0', 'AT+CMGF=1', 'AT+CPMS="SM","SM","SM"'])
 
     def test_a_bad_port_raises_modem_error_not_a_raw_exception(self):
         fake_module = MagicMock()
@@ -269,9 +347,9 @@ class SerialModemPollTest(unittest.TestCase):
         got = modem.poll_new()
         self.assertEqual([(g['sender'], g['body']) for g in got],
                          [('+15550100002', 'See you\nat 5'), ('+15550100003', 'OK'), ('+15550100004', 'caf\u00e9 @ 7')])
-        self.assertIn('AT+CSCS="UCS2"', fake.commands)
-        self.assertEqual(fake.commands[-1], 'AT+CMGD=1,1')            # then cleared from storage
-        self.assertEqual(fake.inbox, [])
+        self.assertIn('AT+CMGL=4', fake.commands)                      # listed in PDU mode
+        self.assertEqual(fake.inbox, {})                               # then each deleted
+        self.assertTrue(fake.commands.index('AT+CMGF=1', fake.commands.index('AT+CMGL=4')))   # back to text mode
         self.assertEqual(modem.poll_new(), [])                         # nothing repeats
 
     def test_the_timestamp_is_converted_to_iso(self):
@@ -283,7 +361,7 @@ class SerialModemPollTest(unittest.TestCase):
         modem, fake = make_modem()
         fake.commands.clear()
         self.assertEqual(modem.poll_new(), [])
-        self.assertNotIn('AT+CMGD=1,1', fake.commands)
+        self.assertFalse([c for c in fake.commands if c.startswith('AT+CMGD')])
 
     def test_a_failed_clean_up_is_not_fatal_and_the_next_sweep_catches_up(self):
         modem, fake = make_modem()
@@ -294,7 +372,87 @@ class SerialModemPollTest(unittest.TestCase):
         fake.fail_delete = False
         fake.deliver('+15550100003', 'two')
         self.assertEqual([g['body'] for g in modem.poll_new()], ['two'])   # the old one is not repeated
-        self.assertEqual(fake.inbox, [])                              # and the sweep removed both
+        self.assertEqual(modem.poll_new(), [])
+        self.assertEqual(fake.inbox, {})                              # and both are gone now
+
+    def test_a_long_text_in_two_parts_arrives_as_one(self):
+        modem, fake = make_modem()
+        fake.deliver('6700', 'Your plan is active for 30 days. ', part=(7, 2, 1))
+        fake.deliver('+15550100002', 'between')
+        fake.deliver('6700', 'Reply HELP for help.', part=(7, 2, 2))
+        got = modem.poll_new()
+        self.assertEqual(sorted(g['body'] for g in got),
+                         ['Your plan is active for 30 days. Reply HELP for help.', 'between'])
+        self.assertEqual(fake.inbox, {})
+
+    def test_parts_arriving_out_of_order_are_joined_in_order(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'world', part=(300, 2, 2))
+        fake.deliver('+15550100002', 'hello ', part=(300, 2, 1))
+        self.assertEqual([g['body'] for g in modem.poll_new()], ['hello world'])
+
+    def test_a_missing_part_is_waited_for_then_what_arrived_is_shown(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'first half ', part=(9, 2, 1))
+        self.assertEqual(modem.poll_new(), [])
+        self.assertEqual(len(fake.inbox), 1)                          # kept until the rest comes
+        fake.deliver('+15550100002', 'second half', part=(9, 2, 2))
+        self.assertEqual([g['body'] for g in modem.poll_new()], ['first half second half'])
+        fake.deliver('+15550100003', 'lost the rest', part=(4, 3, 1))
+        self.assertEqual(modem.poll_new(), [])
+        with unittest.mock.patch.object(m.time, 'monotonic', return_value=m.time.monotonic() + m.PART_WAIT + 1):
+            self.assertEqual([g['body'] for g in modem.poll_new()], ['lost the rest'])
+        self.assertEqual(fake.inbox, {})
+
+    def test_short_codes_names_and_escaped_characters(self):
+        modem, fake = make_modem()
+        fake.deliver('6700', 'Thank you')
+        fake.deliver('Carrier', 'hi')
+        fake.store(make_pdu('+15550100004', 'placeholder'))
+        fake.inbox[max(fake.inbox)]['pdu'] = _gsm_pdu_with('+15550100004', '{a}[b]\\~^|\u20ac')
+        got = [(g['sender'], g['body']) for g in modem.poll_new()]
+        self.assertIn(('6700', 'Thank you'), got)
+        self.assertIn(('Carrier', 'hi'), got)
+        self.assertIn(('+15550100004', '{a}[b]\\~^|\u20ac'), got)
+
+    def test_emoji_and_accents_survive(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'caf\u00e9 \U0001F600')
+        self.assertEqual(modem.poll_new()[0]['body'], 'caf\u00e9 \U0001F600')
+
+    def test_a_delivery_report_is_cleared_away_not_shown(self):
+        modem, fake = make_modem()
+        fake.store(make_pdu('+15550100002', 'status', report=True))
+        self.assertEqual(modem.poll_new(), [])
+        self.assertEqual(fake.inbox, {})
+
+    def test_an_unreadable_pdu_is_left_alone(self):
+        modem, fake = make_modem()
+        fake.store('0791AB')
+        self.assertEqual(modem.poll_new(), [])
+        self.assertEqual(len(fake.inbox), 1)
+
+    def test_texts_in_the_modems_own_storage_are_read_too(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'on the SIM')
+        fake.deliver('+15550100003', 'on the modem', storage='ME')
+        self.assertEqual(sorted(g['body'] for g in modem.poll_new()), ['on the SIM', 'on the modem'])
+        self.assertEqual(fake.inbox, {})
+        self.assertEqual(fake.commands[-1], 'AT+CPMS="SM","SM","SM"')  # new texts still land on the SIM
+
+    def test_texts_come_back_oldest_first(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'later', ts='26/09/23,14:05:00-20')
+        fake.deliver('+15550100002', 'earlier', ts='26/09/23,14:01:00-20')
+        self.assertEqual([g['body'] for g in modem.poll_new()], ['earlier', 'later'])
+
+    def test_a_send_after_a_poll_is_in_text_mode(self):
+        modem, fake = make_modem()
+        fake.deliver('+15550100002', 'hi')
+        modem.poll_new()
+        modem.send('+15550100001', 'back')
+        self.assertFalse(fake.pdu_mode)
+        self.assertEqual(fake.texts, [('+15550100001', 'back')])
 
     def test_an_unplugged_dongle_raises_modem_error_not_a_raw_exception(self):
         modem, fake = make_modem()
@@ -395,6 +553,12 @@ class ModemCheckTool(unittest.TestCase):
         self.assertEqual(fake.texts[0][0], '+15550100001')           # formatted as the phone sends it
         self.assertIn('ok 7. received from +15550100001', out)
         self.assertIn('got it', out)
+
+    def test_waiting_prints_every_text_and_keeps_going_until_the_reply(self):
+        code, out, fake = self.run_tool('--send', '5550100001', '--wait', '1',
+                                        deliver=('6700', 'carrier notice'))
+        self.assertIn('carrier notice', out)
+        self.assertEqual(code, 1, out)            # the carrier's text is not the reply; nothing else came
 
     def test_interpreters(self):
         import modem_check as mc
