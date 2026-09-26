@@ -17,12 +17,19 @@ Both implement the four calls kyphone_os.py needs:
     registered()         -> True once the modem has joined the carrier's network
 
 The AT dialogue (text-mode SMS, AT+CMGS/CMGL/CMGD/CSQ/CREG) is standard Hayes/3GPP TS 27.005, and matches
-Waveshare's own SIM7600G-H notes. It is checked against the real dongle once a SIM is active — nothing
+Waveshare's own SIM7600G-H notes. Two character sets are used on purpose:
+    sending   AT+CSCS="IRA" (plain ASCII, which the modem turns into the GSM alphabet itself, so @ $ _ arrive as
+              typed). A text longer than one SMS (160) goes as several texts, split between words.
+    receiving AT+CSCS="UCS2": every sender and body arrives as ONE line of hex, so a text with line breaks, or a
+              text that is just "OK", can never be mistaken for the modem's own replies; accents survive too.
+One lock serializes every exchange (the send worker, the poll loop and start-up all use the one port), and any
+serial failure is raised as ModemError so callers only ever handle that. It is checked against the real dongle once a SIM is active — nothing
 here can prove real hardware talks back correctly; that is a phone-session step, not a test.
 """
 
 import os
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -34,8 +41,10 @@ DEFAULT_BAUD   = 115200
 AT_TIMEOUT   = 5     # seconds to wait for a normal AT response (OK/ERROR)
 SEND_TIMEOUT = 20     # sending a text can take longer (it waits on the network, not just the modem)
 POLL_TIMEOUT = 8     # AT+CMGL can take a moment with several messages waiting
+SMS_CHARS    = 160   # one text in the GSM alphabet
 
 _CMGL_HEADER = re.compile(r'^\+CMGL:\s*(\d+),"[^"]*","([^"]*)",[^,]*,"([^"]*)"')
+_HEX         = re.compile(r'^(?:[0-9A-Fa-f]{4})+$')
 _CSQ_LINE    = re.compile(r'^\+CSQ:\s*(\d+),')
 _CREG_LINE   = re.compile(r'^\+CREG:\s*\d+,\s*(\d+)')
 _MODEM_TS    = re.compile(r'^(\d\d)/(\d\d)/(\d\d),(\d\d):(\d\d):(\d\d)')
@@ -43,6 +52,29 @@ _MODEM_TS    = re.compile(r'^(\d\d)/(\d\d)/(\d\d),(\d\d):(\d\d):(\d\d)')
 
 class ModemError(Exception):
     """The modem could not be reached, or it reported failure sending or reading a text."""
+
+
+def _ucs2_decode(s):
+    """A UCS2 hex string ("0048006900") as text; anything that is not hex is returned as it is."""
+    s = s.strip()
+    if not _HEX.match(s):
+        return s
+    try:
+        return bytes.fromhex(s).decode('utf-16-be', errors='replace')
+    except ValueError:
+        return s
+
+
+def split_text(text, size=SMS_CHARS):
+    """A long text as several SMS of at most `size` characters, split between words where possible."""
+    parts, rest = [], text
+    while len(rest) > size:
+        cut = rest.rfind(' ', 0, size + 1)
+        cut = cut if cut > size // 2 else size
+        parts.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    parts.append(rest)
+    return parts
 
 
 def _parse_modem_ts(raw):
@@ -102,6 +134,7 @@ class SerialModem:
 
     def __init__(self, port=None, baud=DEFAULT_BAUD):
         self.port = port or os.environ.get(MODEM_PORT_ENV, DEFAULT_PORT)
+        self._lock = threading.RLock()     # one AT exchange at a time: send, poll and start-up share the port
         self._buf = ''      # bytes already read from the port but not yet consumed by any command —
                              # a read can come back with more than one response's worth at once, so
                              # this has to live on the instance, not as a local in _read_until/send()
@@ -115,18 +148,47 @@ class SerialModem:
         self._configure()
 
     def _configure(self):
-        self._cmd('ATE0')                  # echo off — every response after this is just the answer
-        self._cmd('AT+CMGF=1')             # text-mode SMS (not the raw PDU/hex format)
-        self._cmd('AT+CSCS="GSM"')         # the character set the phone's own printable-ASCII text fits
+        with self._lock:
+            self._cmd('ATE0')              # echo off — every response after this is just the answer
+            self._cmd('AT+CMGF=1')         # text-mode SMS (not the raw PDU/hex format)
+            self._cmd('AT+CPMS="ME","ME","ME"')    # keep texts in the modem's own (larger) storage
+            self._clear_read()             # anything already read from storage is gone
 
     # -- the AT dialogue --
 
     def _write(self, s):
-        self._ser.write((s + '\r').encode('ascii', errors='replace'))
+        self._write_bytes((s + '\r').encode('ascii', errors='replace'))
+
+    def _write_bytes(self, b):
+        try:
+            self._ser.write(b)
+        except Exception as e:             # pyserial's SerialException, OSError: the dongle went away
+            raise ModemError('write failed (%s)' % e.__class__.__name__)
 
     def _read_raw(self):
-        chunk = self._ser.read(max(1, self._ser.in_waiting))
+        try:
+            chunk = self._ser.read(max(1, self._ser.in_waiting))
+        except Exception as e:
+            raise ModemError('read failed (%s)' % e.__class__.__name__)
         return chunk.decode('ascii', errors='replace') if chunk else ''
+
+    def _cancel_text_entry(self):
+        """After a send went wrong: ESC leaves the modem's text-entry mode, then whatever it said is dropped."""
+        try:
+            self._write_bytes(b'\x1b')
+            time.sleep(0.3)
+            self._read_raw()
+        except ModemError:
+            pass
+        self._buf = ''
+
+    def _clear_read(self):
+        """Delete every text already read (AT+CMGD delflag 1). One sweep, so a text is never left behind even if an
+        earlier clean-up failed; a text that has not been read yet is never touched."""
+        try:
+            self._cmd('AT+CMGD=1,1')
+        except ModemError:
+            pass
 
     def _read_until(self, terminators, timeout):
         """Reads lines until one is exactly a terminator, or an error line (+CME ERROR / +CMS ERROR /
@@ -160,46 +222,64 @@ class SerialModem:
     # -- what kyphone_os.py calls --
 
     def send(self, number, text):
+        """One text, or several if it is longer than one SMS. Raises ModemError on the first part that fails."""
+        with self._lock:
+            self._cmd('AT+CSCS="IRA"')
+            for part in split_text(text):
+                self._send_one(number, part)
+
+    def _send_one(self, number, text):
         self._write('AT+CMGS="%s"' % number)
         deadline = time.monotonic() + AT_TIMEOUT
         while '>' not in self._buf:
+            refused = re.search(r'(?:^|\n)\s*(ERROR|\+CMS ERROR[^\r\n]*|\+CME ERROR[^\r\n]*)\s*\r?\n', self._buf)
+            if refused:
+                self._cancel_text_entry()
+                raise ModemError('send refused: %s' % refused.group(1))
             if time.monotonic() >= deadline:
+                self._cancel_text_entry()
                 raise ModemError('modem never prompted for the message text')
             self._buf += self._read_raw()
         self._buf = self._buf.split('>', 1)[1]        # the prompt itself is not a line _read_until sees
-        self._ser.write(text.encode('ascii', errors='replace') + b'\x1a')   # Ctrl-Z: send what was typed
-        ok, lines, last = self._read_until(('OK',), SEND_TIMEOUT)
+        self._write_bytes(text.encode('ascii', errors='replace') + b'\x1a')   # Ctrl-Z: send what was typed
+        try:
+            ok, lines, last = self._read_until(('OK',), SEND_TIMEOUT)
+        except ModemError:
+            self._cancel_text_entry()
+            raise
         if not ok:
             raise ModemError('send failed: %s' % last)
 
     def poll_new(self):
-        lines = self._cmd('AT+CMGL="REC UNREAD"', timeout=POLL_TIMEOUT)
-        messages, indexes = [], []
-        for line in lines:
-            m = _CMGL_HEADER.match(line)
-            if m:
-                indexes.append(int(m.group(1)))
-                messages.append({'sender': m.group(2), 'body': '', 'ts': _parse_modem_ts(m.group(3))})
-            elif messages:
-                messages[-1]['body'] = line          # the line right after a header is that text's body
-        for i in indexes:
-            try:
-                self._cmd('AT+CMGD=%d' % i)          # read once, gone from the modem's own storage
-            except ModemError:
-                pass                                  # not fatal: worst case it's read again next poll
-        return messages
+        """Unread texts, read in UCS2 (one hex line per sender and per body), then cleared from storage."""
+        with self._lock:
+            self._cmd('AT+CSCS="UCS2"')
+            lines = self._cmd('AT+CMGL="REC UNREAD"', timeout=POLL_TIMEOUT)
+            messages = []
+            for line in lines:
+                m = _CMGL_HEADER.match(line)
+                if m:
+                    messages.append({'sender': _ucs2_decode(m.group(2)), 'body': '',
+                                     'ts': _parse_modem_ts(m.group(3))})
+                elif messages:
+                    messages[-1]['body'] += _ucs2_decode(line)
+            if messages:
+                self._clear_read()                    # listing marked them read; the sweep deletes them
+            return messages
 
     def signal_quality(self):
-        for line in self._cmd('AT+CSQ'):
-            m = _CSQ_LINE.match(line)
-            if m:
-                v = int(m.group(1))
-                return v if v != 99 else None         # 99 = "unknown", per the AT spec
+        with self._lock:
+            for line in self._cmd('AT+CSQ'):
+                m = _CSQ_LINE.match(line)
+                if m:
+                    v = int(m.group(1))
+                    return v if v != 99 else None     # 99 = "unknown", per the AT spec
         return None
 
     def registered(self):
-        for line in self._cmd('AT+CREG?'):
-            m = _CREG_LINE.match(line)
-            if m:
-                return int(m.group(1)) in (1, 5)       # 1 home, 5 roaming; 0/2/3/4 = not registered
+        with self._lock:
+            for line in self._cmd('AT+CREG?'):
+                m = _CREG_LINE.match(line)
+                if m:
+                    return int(m.group(1)) in (1, 5)   # 1 home, 5 roaming; 0/2/3/4 = not registered
         return False

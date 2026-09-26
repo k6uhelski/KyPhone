@@ -64,16 +64,45 @@ def _run(args, timeout):
 
 # ─── Wi-Fi ──────────────────────────────────────────────────────────────────
 
+def _terse(line):
+    """The fields of one line of `nmcli -t` output: ':' separates them, and a ':' or '\\' inside a field is
+    written with a backslash before it (so a network called "Cafe:Guest" cannot shift the columns)."""
+    fields, cur, escaped = [], '', False
+    for ch in line:
+        if escaped:
+            cur += ch
+            escaped = False
+        elif ch == '\\':
+            escaped = True
+        elif ch == ':':
+            fields.append(cur)
+            cur = ''
+        else:
+            cur += ch
+    fields.append(cur)
+    return fields
+
+
 def wifi_status():
-    """The currently connected network, if any."""
+    """The network joined right now, by its real name (SSID). nmcli's CONNECTION column is the saved profile's
+    name, which can differ ("HomeNet 1"), so the SSID is read from the in-use row of the cached list (no scan)."""
     ok, out, _ = _run(['nmcli', '-t', '-f', 'DEVICE,TYPE,STATE,CONNECTION', 'dev', 'status'], WIFI_TIMEOUT)
     if not ok:
         return WifiStatus(False)
+    profile = None
     for line in out.splitlines():
-        parts = line.split(':')
+        parts = _terse(line)
         if len(parts) >= 4 and parts[1] == 'wifi' and parts[2] == 'connected':
-            return WifiStatus(True, parts[3])
-    return WifiStatus(False)
+            profile = parts[3]
+            break
+    if profile is None:
+        return WifiStatus(False)
+    ok, out, _ = _run(['nmcli', '-t', '-f', 'IN-USE,SSID', 'dev', 'wifi', 'list', '--rescan', 'no'], WIFI_TIMEOUT)
+    for line in (out.splitlines() if ok else []):
+        parts = _terse(line)
+        if len(parts) >= 2 and parts[0] == '*' and parts[1]:
+            return WifiStatus(True, parts[1])
+    return WifiStatus(True, profile)
 
 
 def wifi_enabled():
@@ -93,9 +122,9 @@ def _wifi_connection_names():
     ok, out, _ = _run(['nmcli', '-t', '-f', 'NAME,TYPE', 'connection', 'show'], WIFI_TIMEOUT)
     names = []
     for line in (out.splitlines() if ok else []):
-        name, _, kind = line.rpartition(':')
-        if kind == '802-11-wireless' and name:
-            names.append(name.replace('\\:', ':'))
+        parts = _terse(line)
+        if len(parts) >= 2 and parts[-1] == '802-11-wireless' and parts[0]:
+            names.append(parts[0])
     return names
 
 
@@ -105,7 +134,7 @@ def wifi_forget(ssid):
     found = False
     for name in _wifi_connection_names():
         ok, out, _ = _run(['nmcli', '-g', '802-11-wireless.ssid', 'connection', 'show', 'id', name], WIFI_TIMEOUT)
-        if ok and out.strip().replace('\\:', ':') == ssid:
+        if ok and _terse(out.strip())[0] == ssid:
             found = True
             ok, _, _ = _run(['nmcli', 'connection', 'delete', 'id', name], WIFI_TIMEOUT)
             if not ok:
@@ -122,7 +151,7 @@ def wifi_scan():
         return []
     best = {}
     for line in out.splitlines():
-        parts = line.split(':')
+        parts = _terse(line)
         if len(parts) < 4:
             continue
         in_use, ssid, signal, security = parts[0], parts[1], parts[2], parts[3]
@@ -202,6 +231,12 @@ def bt_forget(mac):
     """Forget the device: unpair it (`bluetoothctl remove`)."""
     ok, _, _ = _run(['bluetoothctl', 'remove', mac], BT_INFO_TIMEOUT)
     return Result(ok, '' if ok else 'could not forget it')
+
+
+def bt_powered():
+    """Whether the Bluetooth radio is on (one quick `bluetoothctl show`)."""
+    ok, out, _ = _run(['bluetoothctl', 'show'], BT_INFO_TIMEOUT)
+    return ok and 'Powered: yes' in out
 
 
 def bt_status():

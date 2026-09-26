@@ -2347,6 +2347,28 @@ class TestAddFromAComputer(unittest.TestCase):
         save.assert_not_called()
 
 
+class TestNothingPrivateIsLogged(unittest.TestCase):
+    """The service's output goes to the Radxa's journal on disk: no typed letter (a Wi-Fi password, a note, a text)
+    and no screen content may appear in it."""
+
+    def test_typed_letters_and_screen_content_stay_out_of_the_log(self):
+        import io
+        from contextlib import redirect_stdout
+        reset_state(screen='netpass', net_ssid='Maple', net_pass='', net_pass_hdr=False, net_kind='W')
+        out = io.StringIO()
+        with redirect_stdout(out), patch.object(kyphone_os, 'SIM_MODE', False), \
+                patch.object(kyphone_os, '_pending_lock', threading.Lock()):
+            for ch in 'hunter2Z':
+                kyphone_os.handle_key('CHAR:' + ch)
+            kyphone_os.push_screen('THREAD2|Pip|||R\xb79:00\xb7secret meeting at noon')
+        kyphone_os._pending_command = None                    # (nothing is really sent in tests)
+        log = out.getvalue()
+        self.assertNotIn('hunter', log)
+        self.assertNotIn('CHAR:', log)
+        self.assertNotIn('secret', log)
+        self.assertIn('THREAD2', log)                          # the screen's name is still there for debugging
+
+
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
         reset_state(screen='home', home_index=0)
@@ -2910,6 +2932,7 @@ class FakeNet:
             wifi_forget=log('wifi_forget', nc.Result(True)),
             wifi_connect=log('wifi_connect', lambda: f.connect_result),
             bt_status=lambda: nc.BtStatus(f.bt_on, [d.name for d in f.known if d.connected]),
+            bt_powered=lambda: f.bt_on,
             bt_known=log('bt_known', lambda: list(f.known)),
             bt_scan=log('bt_scan', lambda: list(f.known) + list(f.new)),
             bt_set_powered=log('bt_set_powered', lambda: f._switch('bt_on')),
@@ -3045,6 +3068,29 @@ class TestSettingsScreen(SettingsBase):
         self.press('KEY_ESC')
         self.assertEqual(kyphone_os.state['screen'], 'home')
         self.assertEqual(kyphone_os.state['home_index'], kyphone_os.HOME_MENU.index('SETTINGS'))
+
+
+class TestSettingsResponsiveness(SettingsBase):
+    """Found in review: reading Wi-Fi and Bluetooth on the keyboard's thread held up key presses."""
+    def test_after_the_first_time_settings_draws_at_once_and_refreshes_in_the_background(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'), settings_wifi=None)
+        self.press('KEY_ENTER')                                   # first open: read, then draw
+        self.press('KEY_ESC')
+        pending = []
+        with patch.object(kyphone_os, '_run_async', new=pending.append), \
+                patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.handle_key('KEY_ENTER')                    # again: drawn at once from what was known
+            self.assertEqual(ps.call_count, 1)
+            self.assertEqual(len(pending), 1)                     # the read waits for the background
+            pending[0]()                                          # nothing changed: no second refresh
+            self.assertEqual(ps.call_count, 1)
+            self.net.current = 'Birch_5G'
+            kyphone_os.handle_key('KEY_ESC')
+            kyphone_os.handle_key('KEY_ENTER')
+            before = ps.call_count
+            pending[-1]()                                         # something changed: one redraw
+        self.assertEqual(ps.call_count, before + 1)
+        self.assertIn('Connected: Birch_5G', _rows(_wire(ps), 2)[0])
 
 
 class TestWifiList(SettingsBase):
@@ -3525,6 +3571,43 @@ class TestModemReceiveLoop(unittest.TestCase):
         fake = md.SimModem()
         self.run_one_pass(fake)
         self.assertEqual(kyphone_os.state['messages'], [])
+
+    def test_a_reply_in_national_format_joins_the_existing_conversation(self):
+        fake = md.SimModem()
+        fake.deliver('5550100001', 'reply')                  # the network dropped the +1
+        kyphone_os._modem = fake
+        reset_state(running=True, screen='thread', thread_id='+15550100001',
+                    messages=[{'dir': 'out', 'peer': '+15550100001', 'name': 'You', 'body': 'hi', 'read': True,
+                               'ts': '', 'state': 'sent'}])
+        def stop(_):
+            kyphone_os.state['running'] = False
+        with patch.object(kyphone_os.time, 'sleep', stop), patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.modem_sms_loop()
+        self.assertEqual(kyphone_os.state['messages'][-1]['sender'], '+15550100001')
+        self.assertTrue(_wire(ps).startswith('THREAD2|'))     # the open conversation redrew
+
+    def test_an_unexpected_error_does_not_end_the_loop(self):
+        class Flaky(md.SimModem):
+            calls = 0
+
+            def poll_new(self):
+                Flaky.calls += 1
+                if Flaky.calls == 1:
+                    raise OSError(5, 'Input/output error')     # not a ModemError
+                self._inbox, got = [], list(self._inbox)
+                return got
+        fake = Flaky()
+        fake.deliver('+15550100009', 'after the glitch')
+        kyphone_os._modem = fake
+        reset_state(running=True, screen='texts_list', messages=[])
+        naps = []
+        def sleep(_):
+            naps.append(1)
+            if len(naps) == 2:
+                kyphone_os.state['running'] = False
+        with patch.object(kyphone_os.time, 'sleep', sleep), patch.object(kyphone_os, 'push_screen'):
+            kyphone_os.modem_sms_loop()
+        self.assertEqual([m['body'] for m in kyphone_os.state['messages']], ['after the glitch'])
 
     def test_no_modem_configured_returns_at_once(self):
         kyphone_os._modem = None

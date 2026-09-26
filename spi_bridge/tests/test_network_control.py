@@ -101,6 +101,40 @@ class WifiStatusTest(unittest.TestCase):
         self.assertFalse(status.connected)
 
 
+class WifiRealNameTest(unittest.TestCase):
+    """Found in review: nmcli's CONNECTION column is the profile's name, not the network's."""
+    def run_with(self, status_out, list_out):
+        def fake(args, **kw):
+            if 'status' in args:
+                return _proc(0, status_out)
+            if 'list' in args:
+                self.assertIn('--rescan', args)                      # never scans just to read the name
+                return _proc(0, list_out)
+            return _proc(1)
+        with patch('network_control.subprocess.run', side_effect=fake):
+            return nc.wifi_status()
+
+    def test_the_ssid_comes_from_the_in_use_row_not_the_profile_name(self):
+        st = self.run_with('wlan0:wifi:connected:HomeNet 1\n', ':Other:40\n*:HomeNet:90\n')
+        self.assertEqual((st.connected, st.ssid), (True, 'HomeNet'))
+
+    def test_no_in_use_row_falls_back_to_the_profile_name(self):
+        st = self.run_with('wlan0:wifi:connected:HomeNet\n', ':Other:40\n')
+        self.assertEqual(st.ssid, 'HomeNet')
+
+    def test_a_colon_in_a_network_name_does_not_shift_the_columns(self):
+        st = self.run_with('wlan0:wifi:connected:Cafe\\:Guest\n', '*:Cafe\\:Guest:70\n')
+        self.assertEqual(st.ssid, 'Cafe:Guest')
+        with patch('network_control.subprocess.run', return_value=_proc(0, ':Cafe\\:Guest:70:WPA2\n')):
+            nets = nc.wifi_scan()
+        self.assertEqual([(n.ssid, n.signal, n.secured) for n in nets], [('Cafe:Guest', 70, True)])
+
+    def test_bt_powered(self):
+        for out, want in (('Powered: yes\n', True), ('Powered: no\n', False)):
+            with patch('network_control.subprocess.run', return_value=_proc(0, out)):
+                self.assertEqual(nc.bt_powered(), want)
+
+
 class WifiScanTest(unittest.TestCase):
     SAMPLE = (
         '*:Maple:89:WPA2\n'

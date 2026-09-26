@@ -658,7 +658,7 @@ def push_screen(command):
     transfer + e-ink refresh can keep up (~1s each), only the latest one
     is kept — a fast burst of input coalesces to the final state instead
     of rendering every intermediate frame."""
-    print(f"  → {command[:80]}")
+    print(f"  → {command.split('|', 1)[0]} ({len(command)} chars)")   # never the content: it can be a text or a note
     if SIM_MODE:
         simulator.render(command)
         return
@@ -1116,7 +1116,7 @@ TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit', 'netpass
 def handle_key(keycode):
     with state['lock']:
         screen = state['screen']
-    print(f"[handle_key] screen={screen} keycode={keycode}")
+    print(f"[handle_key] screen={screen} keycode={'CHAR' if keycode.startswith('CHAR:') else keycode}")   # never the letter
 
     # 'Q' is a universal back/up shortcut (same as Esc), and WASD mirrors
     # the arrow keys, except where they're needed as real typed characters.
@@ -2317,7 +2317,7 @@ def _transport_send(to_number, body):
     if _modem is None:
         raise RuntimeError('no service')
     _modem.send(normalize_number(to_number), body)
-    print(f"  → sent via modem: {body}")
+    print(f"  → sent via modem ({len(body)} chars)")
 
 
 # ─── Reader (books) ───────────────────────────────────────────────────────────
@@ -3225,20 +3225,43 @@ def _open_settings():
     with state['lock']:
         state['screen']          = 'settings'
         state['settings_index']  = 0
-    _refresh_settings_status()
-    push_settings()
+        known = state['settings_wifi'] is not None
+    if not known:                                             # the very first time: read it once, then draw
+        _refresh_settings_status()
+        push_settings()
+    else:                                                     # after that: draw what was last known at once
+        push_settings()
+        _refresh_settings_later()
 
 
 def _back_to_settings():
     with state['lock']:
         state['screen'] = 'settings'
-    _refresh_settings_status()
     push_settings()
+    _refresh_settings_later()
+
+
+def _refresh_settings_later():
+    """Read Wi-Fi and Bluetooth off the keyboard's thread (each read is ~0.1 s, more if a tool is slow) and redraw
+    only if something changed, so the usual case costs no second e-ink refresh."""
+    def work():
+        before = _settings_rows()
+        _refresh_settings_status()
+        with state['lock']:
+            showing = state['screen'] == 'settings'
+        if showing and _settings_rows() != before:
+            push_settings()
+    _run_async(work)
 
 
 def push_settings():
     with state['lock']:
-        idx     = state['settings_index']
+        idx = state['settings_index']
+    push_screen(_list_command(["SETTINGS", str(idx)], _settings_rows(), shrink_order=(1,)))
+
+
+def _settings_rows():
+    with state['lock']:
         wifi_on = state['settings_wifi_on']
         wifi    = state['settings_wifi']
         bt      = state['settings_bt']
@@ -3251,7 +3274,7 @@ def push_settings():
         ['Activity mark', 'A * on the lock screen', 'ON' if mark else 'OFF'],
         ['Add from a computer', 'Books, music, contacts', ''],
     ]
-    push_screen(_list_command(["SETTINGS", str(idx)], rows, shrink_order=(1,)))
+    return rows
 
 
 def _from_settings(keycode):
@@ -3426,7 +3449,7 @@ def _open_wifi(keep_index=False):
 
 def _open_bluetooth(keep_index=False):
     """The Bluetooth list: the switch and the paired devices. Reads only — nothing scans here."""
-    on    = netctl.bt_status().powered
+    on    = netctl.bt_powered()                   # one quick read; bt_known reads each device once
     known = netctl.bt_known() if on else []
     with state['lock']:
         state['screen']       = 'bluetooth'
@@ -3863,37 +3886,39 @@ def call_timer_loop():
 
 
 def modem_sms_loop():
-    """Polls the real modem for texts that arrived while the phone wasn't looking. Each one the modem
-    hands back is already removed from its own storage (modem.SerialModem.poll_new deletes as it reads),
-    so there is no dedup bookkeeping to do here."""
+    """Polls the real modem for texts that arrived while the phone wasn't looking. The modem clears what it
+    hands back from its own storage (modem.SerialModem.poll_new), so there is no dedup bookkeeping to do here.
+    A text joins the existing conversation with that number however the network wrote it (resolve_peer), and
+    no error ever ends the loop: a glitch is logged and the next poll tries again."""
     if _modem is None:
         return
     print(f"Polling the modem for texts every {SMS_POLL_INTERVAL}s...")
     while state['running']:
         try:
             for msg in _modem.poll_new():
+                peer = resolve_peer(msg['sender'])            # takes the lock itself, so first
                 with state['lock']:
-                    name = format_name(msg['sender'])
+                    name = format_name(peer)
                     state['messages'].append({
-                        'sender': msg['sender'],
+                        'sender': peer,
                         'name':   name,
                         'body':   msg['body'],
                         'read':   False,
                         'ts':     msg['ts'],
                     })
                 save_messages()
-                print(f"\n[NEW SMS] {name}: {msg['body']}")
+                print("\n[NEW SMS]")                           # who and what stay out of the log
                 with state['lock']:
                     current_screen = state['screen']
                     thread_id      = state['thread_id']
-                if current_screen == 'thread' and thread_id == msg['sender']:
+                if current_screen == 'thread' and thread_id == peer:
                     push_thread2()
                 elif current_screen == 'texts_list':
                     push_texts()
                 elif current_screen == 'lock':
                     push_lock()                                 # the new-activity * appears
-        except modem.ModemError as e:
-            print(f"Modem poll error: {e}")
+        except Exception as e:                                # never let one bad poll stop texts arriving
+            print(f"Modem poll error: {e.__class__.__name__}: {e}")
         time.sleep(SMS_POLL_INTERVAL)
 
 
@@ -3918,7 +3943,11 @@ def main():
 
     print(f"\n--- KyPhone OS {VERSION} ---")
     if _modem is not None:
-        print(f"Modem: {_modem.port} (signal {_modem.signal_quality()})")
+        try:
+            signal = _modem.signal_quality()
+        except Exception as e:                                # a slow modem must not stop the phone starting
+            signal = f'unknown: {e.__class__.__name__}'
+        print(f"Modem: {_modem.port} (signal {signal})")
 
     try:
         if SIM_MODE:
