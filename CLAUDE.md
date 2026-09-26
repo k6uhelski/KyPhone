@@ -80,12 +80,12 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 **The spec is `docs/02-design/design_handoff_os_0_2/`** — the design doc, `GEOMETRY.md`, the prototype (`KyPhone UI v4.dc.html`) and 600×600 captures. When the prose and the prototype disagree, the prototype wins (it has behaviours the README does not list). **The build log — status, decisions, deviations, rollbacks — is `planning/os-0.2.1-build-plan.md`.**
 
 ### **Versioning**
-**Current version: 0.6.2**
+**Current version: 0.6.3**
 **Design library: 0.2.1** (`docs/02-design/design_handoff_os_0_2/`; recorded as `DESIGN` in `version.py` and checked against the handoff's own title)
 
 One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and shown everywhere from there:
 *   **MINOR** — a new feature you can see or use (a screen, an app) or a new design generation; **PATCH** — fixes and refinements; **MAJOR** — stays 0 until KyPhone is a daily-driver phone (cellular, battery, enclosure), which is 1.0.
-*   **Where it shows:** the lock screen (bottom left, "OS 0.6.2" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
+*   **Where it shows:** the lock screen (bottom left, "OS 0.6.3" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
 *   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
 *   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
 *   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, the settings screens (SETTINGS: the Wi-Fi/Bluetooth picker, the password box, the connect/pair result), plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
@@ -104,7 +104,8 @@ One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and
 | 0.5.0 | **Screen light** in Settings (the TEMPERA front light, 0-8, kept across restarts) and a quiet **`*` on the lock screen** for an unread text or an unseen missed call (switchable in Settings) | branch `settings-and-modem`; flashed and deployed 2026-09-25 |
 | 0.6.0 | **Notes** (a home menu item), **calls and texts per person** (a call-log row opens the person's page; a conversation shows the last call), **Add from a computer** (books, music and contacts over home Wi-Fi, while the Settings screen is open) | branch `settings-and-modem`; flashed and deployed 2026-09-25 |
 | 0.6.1 | fixes from a code review: nothing typed or read reaches the log; a sturdier modem path (one exchange at a time, UCS2 receive, IRA send, clean-up); Forget network with a renamed profile; Settings no longer holds up key presses; `tools/modem_check.py` for the first real text | branch `settings-and-modem`; flashed and deployed 2026-09-26 |
-| **0.6.2** | the **chapter menu** (`c` in a book), a friendlier **upload page** (drop files or folders, progress, summary) and its hardening (six-digit code, idle stop, address check, security headers) | branch `settings-and-modem`; flashed and deployed 2026-09-26 |
+| 0.6.2 | the **chapter menu** (`c` in a book), a friendlier **upload page** (drop files or folders, progress, summary) and its hardening (six-digit code, idle stop, address check, security headers) | branch `settings-and-modem`; flashed and deployed 2026-09-26 |
+| **0.6.3** | a **faster display link**: SPI at 40 kHz (was 10; measured error-free, bit errors start at 60), a frame ends after 30 ms of clock silence (was 150), and every frame carries a **CRC-8** the firmware checks, so a damaged frame is dropped rather than drawn wrong | branch `settings-and-modem`; flashed and deployed 2026-09-26 |
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
@@ -210,7 +211,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 
 | Screen | Command |
 | :--- | :--- |
-| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version\|mark\|light` — the version (e.g. `0.6.2`) is drawn as "OS 0.6.2" bottom left (none sent = no label); `mark` `*` = new activity (an unread text or a missed call not yet seen on the call list), drawn right of the clock; `light` 0–8 sets the front light (the Radxa sends it with every lock screen, so a restarted Inkplate gets its light back) |
+| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version\|mark\|light` — the version (e.g. `0.6.3`) is drawn as "OS 0.6.3" bottom left (none sent = no label); `mark` `*` = new activity (an unread text or a missed call not yet seen on the call list), drawn right of the clock; `light` 0–8 sets the front light (the Radxa sends it with every lock screen, so a restarted Inkplate gets its light back) |
 | Add from a computer | `UPLOAD\|address\|code\|received·received·…` — ≤3 received lines (file names, or `Contacts: 3 added, …`) |
 | Screen light | `LIGHTSET\|level` — 0 (off) to 8, as a bar; the Inkplate also sets its front light to it (`level*63/8` of the TEMPERA's 0–63) |
 | Home | `HOME2\|time\|index\|unread\|style\|playing` — index −1 header, 0 TEXT 1 CALL 2 READ 3 LISTEN 4 CONTACTS 5 NOTES 6 SETTINGS; `playing` 1 = music is playing (the equalizer mark by the LISTEN row); style `I` icons (default) / `B` icons and words / `W` words |
@@ -246,7 +247,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 *   The receive buffer is `PAYLOAD_BYTES + 1` with a guaranteed terminator: a 253-character command fills all 256 bytes.
 
 ### **Tests and tools**
-Fifteen suites, 889 tests (`test_state_machine.py` 350, `test_reader_state.py` 53, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 84, `test_firmware_host.py` 59, `test_version.py` 8, `test_network_control.py` 43, `test_modem.py` 25, `test_upload_server.py` 24, `test_scenarios.py` 17):
+Fifteen suites, 893 tests (`test_state_machine.py` 354, `test_reader_state.py` 53, `test_reader_epub.py` 47, `test_reader_fonts.py` 11, `test_reader_layout.py` 31, `test_music_library.py` 53, `test_music_player.py` 43, `test_music_state.py` 41, `test_simulator.py` 84, `test_firmware_host.py` 59, `test_version.py` 8, `test_network_control.py` 43, `test_modem.py` 25, `test_upload_server.py` 24, `test_scenarios.py` 17):
 *   **`test_state_machine.py`** — state transitions, wire strings, frame limits, sending/retry, contacts. Hardware mocked at import time; `push_screen` is patched to capture the SPI command.
 *   **`test_simulator.py`** — pixel checks on real emulator frames (headless pygame): rows, rules, buttons, icons pixel-for-pixel, the icons against the designer's capture, the generator's output being up to date, and that `simulator.wrap_words` matches the OS's.
 *   **`test_reader_epub.py`** (synthetic EPUBs built with `zipfile`, via `epub_fixtures.py`), **`test_reader_fonts.py`** (the generated tables agree with the headers, read a second way), **`test_reader_layout.py`** (widths, nothing lost or duplicated, headings, positions across font sizes, frame sizes), **`test_reader_state.py`** (the real `handle_key` against a temp books folder: library, opening, turning, refresh cadence, chapter and book ends, font size, resume, corrupt saved data, the sender loop).
@@ -258,7 +259,7 @@ Fifteen suites, 889 tests (`test_state_machine.py` 350, `test_reader_state.py` 5
 ```
 KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py spi_bridge/tests/test_upload_server.py spi_bridge/tests/test_scenarios.py
 ```
-Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `889 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
+Name the files — **do not point pytest at the whole `tests/` folder**: the hardware diagnostic scripts there run on import. Expect `893 passed`; if the simulator and firmware tests show as skipped, pygame is not installed in that Python. The simulator and firmware suites need `pygame`; use a virtualenv (`pip install pygame pytest`).
 
 **Set `KYPHONE_DATA_DIR` to a scratch folder** (as above) so the tests never touch the real `data/`: importing `kyphone_os` loads, and can rewrite, `contacts.json`. The same variable works for the simulator (`KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim`).
 

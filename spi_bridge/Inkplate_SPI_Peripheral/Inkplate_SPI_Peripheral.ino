@@ -17,7 +17,8 @@ Inkplate display(INKPLATE_1BIT);
 
 // Handshake
 #define PIN_HANDSHAKE IO_PIN_B0 // P1-0 expander pin
-#define FRAME_SILENCE_US 150000UL // clock silence that ends a frame (was 600000; see the framing note in loop())
+#define FRAME_SILENCE_US 30000UL  // clock silence that ends a frame (600 ms until 0.3.1, 150 ms until 0.6.3; see loop())
+#define FRAME_CHECKED 0xA5         // first byte of a checked frame: [0xA5, crc8(bytes 3..255), 0x02, text...]
 
 // --- ISR Variables ---
 #define PAYLOAD_BYTES 256
@@ -1420,8 +1421,8 @@ void loop() {
     }
 
     // Framing: a message ends when the clock has been silent for FRAME_SILENCE_US. The Radxa clocks a whole
-    // 256-byte frame continuously (about 205 ms at 10 kHz, gaps well under a millisecond), so the wait only has
-    // to be longer than that; it used to be 600 ms, which made every frame of a book page cost 0.8 s.
+    // 256-byte frame continuously (about 52 ms at 40 kHz, gaps well under a millisecond), so the silence only has
+    // to be clearly longer than the gaps; it was 600 ms, then 150 ms, and every frame of a book page paid it.
     if (!transfer_complete && snap_bits > 0) {
         if (now_us - snap_sclk > FRAME_SILENCE_US) {
             uint32_t elapsed_us = now_us - snap_first;
@@ -1452,8 +1453,23 @@ void loop() {
         Serial.println(">> MESSAGE CAPTURED!");
 
         int offset = -1;
-        for(int i=0; i<PAYLOAD_BYTES; i++) {
-            if(local_buf[i] == 0x02 || local_buf[i] == 0x03) { offset = i; break; }
+        if (local_buf[0] == FRAME_CHECKED) {
+            // A checked frame (0.6.3 on): the CRC-8 of bytes 3..255 must match byte 1, else a bit was flipped on the
+            // wire and the frame is dropped rather than drawn wrong.
+            uint8_t crc = 0;
+            for (int i = 3; i < PAYLOAD_BYTES; i++) {
+                crc ^= local_buf[i];
+                for (int b = 0; b < 8; b++) crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+            }
+            if (crc != local_buf[1] || local_buf[2] != 0x02) {
+                Serial.printf(">> CHECKSUM MISMATCH (sent %02X, got %02X). Frame dropped.\n", local_buf[1], crc);
+                goto done_processing;
+            }
+            offset = 2;
+        } else {
+            for(int i=0; i<PAYLOAD_BYTES; i++) {
+                if(local_buf[i] == 0x02 || local_buf[i] == 0x03) { offset = i; break; }
+            }
         }
 
         if (offset != -1) {

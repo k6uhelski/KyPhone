@@ -55,7 +55,7 @@ CHIP            = 'gpiochip3'
 HANDSHAKE_LINE  = 21
 SPI_BUS         = 3
 SPI_DEV         = 0
-SPI_SPEED_HZ    = 10000
+SPI_SPEED_HZ    = 40000   # measured 2026-09-26: 230/230 screens exact at 40 kHz, bit errors from 60 kHz
 PAYLOAD_BYTES   = 256
 
 SMS_POLL_INTERVAL    = 2
@@ -631,13 +631,13 @@ def wait_for_ready(timeout_s=10):
     while int(handshake.get_value()) == 0:
         if time.monotonic() - t0 > timeout_s:
             return False
-        time.sleep(0.01)
+        time.sleep(0.002)
     return True
 
 
 def wait_for_taken(timeout_s=3):
     """After a frame has gone out, wait for the Inkplate to say it has taken it: the ready line drops. The firmware
-    ends a frame after 600 ms of clock silence and only then pulls the line low, so until it drops a second frame
+    ends a frame after FRAME_SILENCE_US of clock silence and only then pulls the line low, so until it drops a second frame
     sent straight away runs into the first one (the extra bits are lost). Returns False if it never dropped."""
     if SIM_MODE:
         return True
@@ -645,14 +645,28 @@ def wait_for_taken(timeout_s=3):
     while int(handshake.get_value()) == 1:
         if time.monotonic() - t0 > timeout_s:
             return False
-        time.sleep(0.01)
+        time.sleep(0.002)
     return True
 
 
+FRAME_CHECKED = 0xA5    # first byte of a checked frame: [0xA5, crc8(the 253 text bytes), 0x02, text..., 0 padding]
+
+
+def crc8(data):
+    """CRC-8 (polynomial 0x07, as in ATM/SMBus). The firmware computes the same over the same 253 bytes and drops a
+    frame whose check does not match, so a bit flipped on the wire is never drawn."""
+    crc = 0
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
 def build_payload(text):
-    payload = [0x00, 0x00, 0x02] + [ord(c) for c in text[:PAYLOAD_BYTES - 3]]
-    payload += [0x00] * (PAYLOAD_BYTES - len(payload))
-    return payload
+    body = [ord(c) for c in text[:PAYLOAD_BYTES - 3]]
+    body += [0x00] * (PAYLOAD_BYTES - 3 - len(body))
+    return [FRAME_CHECKED, crc8(body), 0x02] + body
 
 
 def push_screen(command):

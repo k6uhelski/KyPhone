@@ -2380,6 +2380,35 @@ class TestNothingPrivateIsLogged(unittest.TestCase):
         self.assertIn('THREAD2', log)                          # the screen's name is still there for debugging
 
 
+class TestCheckedFrames(unittest.TestCase):
+    """Every frame carries a CRC-8 the firmware checks, so a bit flipped on the wire is dropped, never drawn wrong."""
+
+    def test_crc8_is_the_standard_smbus_crc(self):
+        self.assertEqual(kyphone_os.crc8(b'123456789'), 0xF4)       # the published check value for CRC-8 (poly 0x07)
+        self.assertEqual(kyphone_os.crc8(b''), 0)
+
+    def test_a_frame_is_marker_checksum_start_then_the_text_padded_to_256(self):
+        frame = kyphone_os.build_payload('HOME2|9:41 AM|0|0|I|0')
+        self.assertEqual(len(frame), kyphone_os.PAYLOAD_BYTES)
+        self.assertEqual((frame[0], frame[2]), (0xA5, 0x02))
+        self.assertEqual(bytes(frame[3:24]), b'HOME2|9:41 AM|0|0|I|0')
+        self.assertEqual(frame[1], kyphone_os.crc8(frame[3:]))
+        self.assertTrue(all(b == 0 for b in frame[24:]))
+
+    def test_one_flipped_bit_anywhere_changes_the_checksum(self):
+        frame = kyphone_os.build_payload('THREAD2|Pip|||R\xb79:00\xb7see you at noon')
+        for byte in range(3, kyphone_os.PAYLOAD_BYTES, 17):
+            for bit in range(8):
+                body = list(frame[3:])
+                body[byte - 3] ^= 1 << bit
+                self.assertNotEqual(kyphone_os.crc8(body), frame[1], (byte, bit))
+
+    def test_a_full_length_command_still_fits(self):
+        frame = kyphone_os.build_payload('X' * kyphone_os.MAX_COMMAND_CHARS)
+        self.assertEqual(len(frame), kyphone_os.PAYLOAD_BYTES)
+        self.assertEqual(frame[-1], ord('X'))
+
+
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
         reset_state(screen='home', home_index=0)
