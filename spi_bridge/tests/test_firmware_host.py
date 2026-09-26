@@ -221,6 +221,25 @@ class FirmwareFrames(unittest.TestCase):
             self.assertEqual([self.ink(f, 60 + i * 60 + 25, 325) for i in range(8)], [i < level for i in range(8)], wire)
             self.assertTrue(self.ink(f, 60 + 7 * 60 + 1, 301), wire)                 # every box has its outline
 
+    def test_the_notes_list_has_a_plus_and_two_line_rows(self):
+        f = self.frames['notes']
+        self.assertEqual([self.ink(f, 4, 44 + r * 111 + 4) for r in range(3)], [False, True, False])
+        self.assertTrue(self.has_ink(f, 546, 6, 584, 40))                            # the + control
+        self.assertFalse(self.ink(f, 548, 8))                                         # not selected
+        e = self.frames['notes_empty']
+        self.assertTrue(self.ink(e, 548, 8))                                          # an empty list: + selected
+        self.assertGreater(self.ink_count(e), 300)                                    # NO NOTES
+
+    def test_the_note_editor_draws_lines_the_cursor_and_its_header(self):
+        f, b, d = self.frames['note'], self.frames['note_back'], self.frames['note_delete']
+        cursor_x = 24 + len('and bread') * 18 + 9
+        self.assertTrue(self.ink(f, cursor_x, 60 + 38 * 4 + 12))                       # the cursor after the last line
+        self.assertEqual(self.ink_box(f, 24, 60 + 38 * 3, 300, 60 + 38 * 3 + 24), 0)   # the blank line stays blank
+        self.assertFalse(self.ink(b, 24 + 4 * 18 + 9, 60 + 38 + 12))                   # no cursor while < is selected
+        self.assertTrue(self.ink(b, 20, 8) and not self.ink(f, 20, 8))                 # < selected
+        self.assertTrue(self.ink(d, 600 - 16 - 92 + 2, 8) and not self.ink(f, 600 - 16 - 92 + 2, 8))   # DELETE
+        self.assertTrue(self.ink(f, 300, 43))                                           # the header rule
+
     def test_home_can_select_settings(self):
         self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
 
@@ -366,7 +385,8 @@ class FirmwareMatchesEmulator(unittest.TestCase):
     NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
-             'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
+             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):
@@ -460,7 +480,7 @@ class FirmwareMemorySafety(unittest.TestCase):
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
-                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|']
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):
@@ -488,6 +508,9 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long12\tNETSTATE|B|OK|' + ' '.join(['word'] * 45) + '\n',
             'long13\tNETLIST|W|4|' + '|'.join(('N' * 22 + '\xb7' + 's' * 17 + '\xb7CONNECTED') for _ in range(6)) + '\n',
             'long14\tNETLIST|\n',
+            'long15\tNOTE||' + '\xb7'.join(['y' * 40] * 6) + '\n',
+            'long16\tNOTE|B|' + '\xb7' * 30 + '\n',
+            'long17\tNOTES|4|' + '|'.join(('T' * 30 + '\xb7Yesterday\xb7') for _ in range(7)) + '\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
         done = subprocess.run([exe, '-'], input=''.join(lines).encode('latin-1'), capture_output=True, env=env)

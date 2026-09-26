@@ -353,10 +353,10 @@ class HomeIconsMatchTheDesign(unittest.TestCase):
         import make_icons
         from home_icons import MENU_ORDER
         self.assertEqual(MENU_ORDER, make_icons.ORDER)
-        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS'])
+        self.assertEqual(MENU_ORDER, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS'])
         with open(os.path.join(os.path.dirname(__file__), '..', 'Inkplate_SPI_Peripheral', 'ui_screens.h')) as f:
             src = f.read()
-        self.assertIn('{"TEXT", "CALL", "READ", "LISTEN", "CONTACTS", "SETTINGS"}', src)
+        self.assertIn('{"TEXT", "CALL", "READ", "LISTEN", "CONTACTS", "NOTES", "SETTINGS"}', src)
 
     def test_every_icon_is_56_rows_of_56_bits_with_ink(self):
         from home_icons import ICONS

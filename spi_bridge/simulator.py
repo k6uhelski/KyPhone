@@ -230,6 +230,10 @@ class Simulator:
             self._draw_netstate(rest)
         elif prefix == 'LIGHTSET':
             self._draw_lightset(rest)
+        elif prefix == 'NOTES':
+            self._draw_notes(rest)
+        elif prefix == 'NOTE':
+            self._draw_note(rest)
         elif prefix == 'DIAL':
             self._draw_dial(rest)
         elif prefix == 'CALLSTATE':
@@ -407,7 +411,7 @@ class Simulator:
                 else:
                     i += 1
 
-    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS']   # must match kyphone_os.HOME_MENU (a test asserts it)
+    HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS']   # must match kyphone_os.HOME_MENU (a test asserts it)
 
     def _draw_status_group(self, fg, bg, mid_y):
         """Battery block + percentage + 4-bar signal staircase, right-aligned
@@ -863,7 +867,7 @@ class Simulator:
         if kind == 'E':                              # nothing to delete on a new contact
             self._button('DELETE', 24, self.HEIGHT - 15 - self.BUTTON_H, 2, False, idx == 4)
 
-    def _draw_rows2(self, data, header, empty_title, empty_hint, header_in_data=False):
+    def _draw_rows2(self, data, header, empty_title, empty_hint, header_in_data=False, plus=False):
         """The shared two-line list: bold title, small subtitle under it, a right-hand note and a chevron. Used by the
         library (READ), the music list (LISTEN) and an album's tracks. data = "sel|[header|]title·sub·right|..."
         with sel -1 = back, else the row within the 5-row window."""
@@ -877,7 +881,10 @@ class Simulator:
             header, rest = (rest[0] if rest else ''), rest[1:]
         entries = [e for e in rest if e]
 
-        self._draw_header_bar_back_only(header, idx == -1)
+        if plus:                                              # NOTES: a + in the header too (sel -2)
+            self._draw_header_bar(header, idx == -1, idx == -2)
+        else:
+            self._draw_header_bar_back_only(header, idx == -1)
         if not entries:
             self._draw_empty_state(empty_title, empty_hint, 44, self.HEIGHT)
             return
@@ -937,6 +944,32 @@ class Simulator:
             pygame.draw.rect(self._surface, BLACK, (cursor_x, 160, self._char_w(3), 24))
 
         self._text_centered('ENTER BACK' if back else 'ENTER CONNECT', self.HEIGHT - 34 - 16, 2)
+
+    def _draw_notes(self, data):
+        # data = "sel|title·when·|..."  sel -1 back, -2 plus, else the row in the window; no rows = NO NOTES
+        self._draw_rows2(data, 'NOTES', 'NO NOTES', 'PRESS + TO WRITE ONE.', plus=True)
+
+    def _draw_note(self, data):
+        # data = "hdr|line·line·..."  hdr '' typing (the cursor follows the last line), B = < selected, D = DELETE.
+        # The Radxa has already wrapped the note (30 columns) and cut it to the lines that fit.
+        hdr, _, text = data.partition('|')
+        if hdr == 'B':
+            pygame.draw.rect(self._surface, BLACK, (16, 6, 38, 34))
+        self._text('<', 26, 11, 3, WHITE if hdr == 'B' else BLACK, bold=True)
+        self._text('NOTE', (self.WIDTH - 4 * self._char_w(3)) // 2, 10, 3, bold=True)
+        dw = 6 * 12 + 20
+        dx = self.WIDTH - 16 - dw
+        if hdr == 'D':
+            pygame.draw.rect(self._surface, BLACK, (dx, 6, dw, 34))
+        self._text('DELETE', dx + 10, 6 + 17 + 6 - 14, 2, WHITE if hdr == 'D' else BLACK, bold=True)
+        self._line(43)
+        lines = text.split('\xb7')[:14]
+        for i, line in enumerate(lines):
+            self._text(line, 24, 60 + 38 * i, 3)
+        if not hdr:
+            last = lines[-1] if lines else ''
+            y = 60 + 38 * (max(1, len(lines)) - 1)
+            pygame.draw.rect(self._surface, BLACK, (24 + self._font(3).size(last)[0], y, self._char_w(3), 24))
 
     def _draw_lightset(self, data):
         # data = "level"  0 (off) .. 8. The panel also sets its front light to this level.

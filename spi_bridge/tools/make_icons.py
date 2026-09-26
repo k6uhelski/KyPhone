@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Generate the home-menu icon bitmaps from their SVG paths (no imaging library needed).
 
-Five of the six icons are pixelarticons (MIT, (c) Gerrit Halfmann; see spi_bridge/assets/pixelarticons-LICENSE.txt),
+Five of the seven icons are pixelarticons (MIT, (c) Gerrit Halfmann; see spi_bridge/assets/pixelarticons-LICENSE.txt),
 taken verbatim from the OS 0.2.1 design prototype. They are 24x24 pixel art drawn with `crispEdges` at 56x56,
 so each 56x56 target pixel is on if its CENTRE falls inside the path — exactly what a browser does, which
 makes the result match the designer's captures. Every path here is made of axis-aligned rectangles, so a
 small non-zero-winding rasteriser is all that is needed.
 
-SETTINGS is not part of that design library (the screen was proposed by us, see CLAUDE.md) — its icon is an
-original three-slider glyph drawn in the same rectilinear style, not a pixelarticons path. Replace it if a real
+SETTINGS and NOTES are not part of that design library (the screen was proposed by us, see CLAUDE.md) — its icon is an
+original three-slider glyph drawn in the same rectilinear style, not a pixelarticons path (NOTES likewise: an
+original page-and-lines glyph). Replace it if a real
 design handoff for Settings ever exists.
 
 Writes two files from this one source:
@@ -34,8 +35,10 @@ ICONS = {
     'LISTEN':   "M4 12h4v2H4zm-2 2h2v4H2zm2 4h4v2H4zM8 6h2v12H8zm10 0h2v12h-2zm-6 8h2v4h-2zm2-2h4v2h-4zm0 6h4v2h-4zM10 4h8v2h-8z",
     # Three sliders (an original glyph — see the module docstring; not from the design handoff).
     'SETTINGS': "M2 4h20v2H2zM6 1h4v8H6zM2 11h20v2H2zM14 8h4v8H14zM2 18h20v2H2zM9 15h4v8H9z",
+    # A page with a folded corner and three lines (an original glyph, drawn in the same rectilinear style).
+    'NOTES':    "M4 2h12v2H4zm12 0h2v2h-2zm2 2h2v2h-2zM2 4h2v16H2zm18 2h2v14h-2zM4 20h16v2H4zM6 8h8v2H6zm0 4h12v2H6zm0 4h10v2H6z",
 }
-ORDER = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS']      # the home menu order
+ORDER = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS']      # the home menu order
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_H = os.path.join(HERE, '..', 'Inkplate_SPI_Peripheral', 'ui_icons.h')

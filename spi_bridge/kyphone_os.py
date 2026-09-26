@@ -271,7 +271,7 @@ ALERTS = {
 # --- State ---
 # The order is Kyle's (2026-09-19): texts, calls, books, music, address book. The design
 # handoff had CONTACTS third; only the first three rows are on screen on first view.
-HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS']
+HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS']
 
 # How the home menu looks: pixel icons (the design's default), icons with their
 # words, or words only. Set KYPHONE_HOME_STYLE=icons|both|words; the renderer draws
@@ -295,7 +295,7 @@ state = {
     'compose_header_sel': None,     # None=typing | 'x'
     'compose_plus_sel': False,      # '+' next to an empty TO field selected
     'compose_send_sel': False,      # SEND button selected
-    'confirm_kind':     'discard_message',   # 'discard_message' | 'delete_contact' | 'forget_wifi' | 'bt_device'
+    'confirm_kind':     'discard_message',   # 'discard_message' | 'delete_contact' | 'forget_wifi' | 'bt_device' | 'delete_note'
     'confirm_sel':      'keep',     # 'keep' (the safe, right-hand default) | 'go' (the destructive one)
     'stub_key':         '',
     'stub_return':      'home',     # screen to return to on Esc/Enter
@@ -355,6 +355,13 @@ state = {
 
     'settings_index': 0,            # -1=header | 0=Wi-Fi | 1=Bluetooth
     'settings_wifi_on': True,       # the Wi-Fi switch, read when SETTINGS opens
+    'notes':          [],           # [{text, ts}], newest first — data/notes.json
+    'notes_index':    0,            # -1 = the header (notes_header_sel: back / plus)
+    'notes_start':    0,
+    'notes_header_sel': 'back',
+    'note_idx':       None,         # the note being edited (an index into notes), or None for a new one
+    'note_text':      '',
+    'note_hdr':       None,         # None = typing | 'back' | 'delete' — the editor's header selection
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
@@ -893,6 +900,9 @@ def push_confirm():
         eidx = state['edit_idx']
     if kind in ('forget_wifi', 'bt_device'):
         title, body, go, keep = _net_confirm_text(kind)
+    elif kind == 'delete_note':
+        title, body = 'NOTE', 'DELETE THIS NOTE? IT CANNOT BE BROUGHT BACK.'
+        go, keep = 'DELETE', 'KEEP NOTE'
     elif kind == 'delete_contact':
         name = sanitize(dispname(CONTACTS[eidx])).upper() if eidx is not None and 0 <= eidx < len(CONTACTS) else ''
         title = 'DELETE CONTACT'
@@ -1058,6 +1068,7 @@ def _push_for_screen(screen_name):
         'in_call': push_call_screen,
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
+        'notes_list': push_notes, 'note': push_note,
         'settings': push_settings, 'light': push_light, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
         'netpass': push_netpass, 'netstate': push_netstate,
     }
@@ -1070,7 +1081,7 @@ def _push_for_screen(screen_name):
 
 # Screens where printable characters are real typed input, so Q/WASD must
 # stay literal there instead of acting as back/arrow shortcuts.
-TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit', 'netpass')
+TYPING_SCREENS = ('thread', 'compose', 'contacts_pick', 'contact_edit', 'netpass', 'note')
 
 
 def handle_key(keycode):
@@ -1160,6 +1171,12 @@ def handle_key(keycode):
     elif screen == 'light':
         _from_light(keycode)
 
+    elif screen == 'notes_list':
+        _from_notes(keycode)
+
+    elif screen == 'note':
+        _from_note(keycode)
+
     elif screen == 'netpass':
         _from_netpass(keycode)
 
@@ -1235,6 +1252,8 @@ def _from_home(keycode):
             _open_library()
         elif HOME_MENU[idx] == 'LISTEN':
             _open_music()
+        elif HOME_MENU[idx] == 'NOTES':
+            _open_notes()
         elif HOME_MENU[idx] == 'SETTINGS':
             _open_settings()
     elif keycode == 'CHAR:i':
@@ -1606,7 +1625,8 @@ def _cancel_confirm():
     """Esc, or Enter on the safe button: back to where the question came from."""
     with state['lock']:
         kind   = state['confirm_kind']
-        target = {'discard_message': 'compose', 'forget_wifi': 'wifi', 'bt_device': 'bluetooth'}.get(kind, 'contact_edit')
+        target = {'discard_message': 'compose', 'forget_wifi': 'wifi', 'bt_device': 'bluetooth',
+                  'delete_note': 'note'}.get(kind, 'contact_edit')
         state['screen']      = target
         state['confirm_sel'] = 'keep'
     _push_for_screen(target)
@@ -1658,6 +1678,8 @@ def _from_confirm(keycode):
             _cancel_confirm()
         elif kind in ('forget_wifi', 'bt_device'):
             _net_confirm_go(kind)
+        elif kind == 'delete_note':
+            _delete_note()
         elif kind == 'delete_contact':
             _delete_contact()
         else:
@@ -2871,6 +2893,241 @@ def _run_async(fn):
     threading.Thread(target=fn, daemon=True).start()
 
 
+# ─── Notes ────────────────────────────────────────────────────────────────────
+# NOTES on the home menu: plain text notes typed on the keyboard, kept in data/notes.json, newest first.
+# The list is the two-line list (the first line of the note over when it was last changed) with + in the header.
+# The editor types at the end of the note; Enter starts a new line. The phone keyboard has no Esc, so, as on New
+# Message, Up reaches the header: < saves and goes back, DELETE asks first. A note saves itself on leaving; one left
+# empty is not kept. The Radxa wraps the note into lines; a note too long for one frame shows its END behind '...'.
+
+NOTES_FILE  = os.path.join(DATA_DIR, 'notes.json')
+NOTES_ROWS  = 5        # rows on the notes list (the two-line list)
+NOTE_MAX    = 4000     # characters in one note
+NOTE_COLS   = 30       # 18px glyphs across the 552px text area, as in the composer
+NOTE_LINES  = 14       # lines the editor can show
+NOTE_TITLE_MAX = 22    # a note's name on the list (the bold 24px row title, clear of the chevron)
+
+
+def load_notes():
+    """The saved notes; anything malformed is dropped."""
+    try:
+        with open(NOTES_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = []
+    good = [{'text': n['text'][:NOTE_MAX], 'ts': n.get('ts', '') if isinstance(n.get('ts', ''), str) else ''}
+            for n in (data if isinstance(data, list) else [])
+            if isinstance(n, dict) and isinstance(n.get('text'), str) and n['text'].strip()]
+    with state['lock']:
+        state['notes'] = good
+
+
+def save_notes():
+    with state['lock']:
+        data = [dict(n) for n in state['notes']]
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = NOTES_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp, NOTES_FILE)
+    except OSError as e:
+        print(f"Warning: could not save notes: {e}")
+
+
+def note_title(text):
+    """A note's name on the list: its first line that has anything on it."""
+    for line in text.split('\n'):
+        if line.strip():
+            return line.strip()
+    return ''
+
+
+def _short_title(title):
+    return title if len(title) <= NOTE_TITLE_MAX else title[:NOTE_TITLE_MAX - 3].rstrip() + '...'
+
+
+def note_view(text, budget):
+    """The lines the editor shows: the note wrapped at NOTE_COLS with room for the cursor after the last character,
+    as many of the LAST lines as fit NOTE_LINES and `budget` characters; if the start is cut, the first line
+    shown is '...'."""
+    lines = []
+    paragraphs = text.split('\n')
+    for i, para in enumerate(paragraphs):
+        wrapped = wrap_words(para + ('#' if i == len(paragraphs) - 1 else ''), NOTE_COLS)   # '#' = the cursor cell
+        lines += wrapped
+    lines[-1] = lines[-1][:-1]                                  # drop the cursor stand-in
+    shown, used = [], 0
+    for line in reversed(lines):
+        cost = len(line) + 1
+        if len(shown) >= NOTE_LINES or used + cost > budget:
+            break
+        shown.insert(0, line)
+        used += cost
+    if len(shown) < len(lines):
+        while shown and (len(shown) >= NOTE_LINES or used + 4 > budget):
+            used -= len(shown.pop(0)) + 1
+        shown.insert(0, '...')
+    return shown
+
+
+def _open_notes(select=0):
+    with state['lock']:
+        n = len(state['notes'])
+        state['screen']            = 'notes_list'
+        state['notes_index']       = select if n else -1
+        state['notes_start']       = 0
+        state['notes_header_sel']  = 'back' if n else 'plus'     # an empty list opens on + (there is no row)
+    push_notes()
+
+
+def push_notes():
+    with state['lock']:
+        notes = list(state['notes'])
+        idx   = state['notes_index']
+        hsel  = state['notes_header_sel']
+        start = window_start(state['notes_start'], max(0, idx), NOTES_ROWS, len(notes))
+        state['notes_start'] = start
+    if idx < 0:
+        sel = '-2' if hsel == 'plus' else '-1'
+    else:
+        sel = str(idx - start)
+    rows = [[_short_title(sanitize(note_title(n['text']))), format_msg_time(n.get('ts')), '']
+            for n in notes[start:start + NOTES_ROWS]]
+    push_screen(_list_command(["NOTES", sel], rows, shrink_order=(0,)))
+
+
+def _from_notes(keycode):
+    with state['lock']:
+        idx  = state['notes_index']
+        hsel = state['notes_header_sel']
+        n    = len(state['notes'])
+    if keycode == 'KEY_ESC' or (keycode == 'KEY_ENTER' and idx < 0 and hsel == 'back'):
+        with state['lock']:
+            state['screen']     = 'home'
+            state['home_index'] = HOME_MENU.index('NOTES')
+        push_home2()
+    elif keycode == 'CHAR:+' or (keycode == 'KEY_ENTER' and idx < 0 and hsel == 'plus'):
+        _open_note(None)
+    elif keycode == 'KEY_ENTER':
+        _open_note(idx)
+    elif keycode == 'KEY_UP':
+        with state['lock']:
+            state['notes_index'] = max(-1, idx - 1)
+        push_notes()
+    elif keycode == 'KEY_DOWN':
+        with state['lock']:
+            if idx < n - 1:
+                state['notes_index'] = idx + 1
+        push_notes()
+    elif keycode in ('KEY_LEFT', 'KEY_RIGHT') and idx < 0:
+        with state['lock']:
+            state['notes_header_sel'] = 'plus' if keycode == 'KEY_RIGHT' else 'back'
+        push_notes()
+
+
+def _open_note(idx):
+    """idx: a note on the list, or None for a new one."""
+    with state['lock']:
+        state['screen']   = 'note'
+        state['note_idx'] = idx
+        state['note_text'] = state['notes'][idx]['text'] if idx is not None else ''
+        state['note_hdr']  = None
+    push_note()
+
+
+def push_note():
+    with state['lock']:
+        text = state['note_text']
+        hdr  = {'back': 'B', 'delete': 'D'}.get(state['note_hdr'], '')
+    head = f"NOTE|{hdr}|"
+    lines = note_view(sanitize_lines(text), MAX_COMMAND_CHARS - len(head))
+    push_screen(head + '\xb7'.join(lines))
+
+
+def sanitize_lines(text):
+    """Keep the line breaks (they become separate lines on the panel), clean everything else."""
+    return '\n'.join(sanitize(part) for part in text.split('\n'))
+
+
+def _close_note():
+    """Save what was typed (an empty note is not kept) and go back to the list, on this note."""
+    with state['lock']:
+        idx  = state['note_idx']
+        text = state['note_text'].rstrip()
+        notes = state['notes']
+        if idx is not None and 0 <= idx < len(notes):
+            changed = notes[idx]['text'] != text
+            if not text.strip():
+                del notes[idx]
+            elif changed:
+                del notes[idx]
+                notes.insert(0, {'text': text, 'ts': datetime.now().isoformat()})
+            select = 0 if changed else idx
+            dirty  = changed or not text.strip()
+        else:
+            dirty = bool(text.strip())
+            if dirty:
+                notes.insert(0, {'text': text, 'ts': datetime.now().isoformat()})
+            select = 0
+        select = min(select, max(0, len(notes) - 1))
+    if dirty:
+        save_notes()
+    _open_notes(select)
+
+
+def _from_note(keycode):
+    with state['lock']:
+        hdr  = state['note_hdr']
+        text = state['note_text']
+    if keycode == 'KEY_ESC' or (keycode == 'KEY_ENTER' and hdr == 'back'):
+        _close_note()
+    elif keycode == 'KEY_ENTER' and hdr == 'delete':
+        with state['lock']:
+            state['screen']       = 'confirm'
+            state['confirm_kind'] = 'delete_note'
+            state['confirm_sel']  = 'keep'
+        push_confirm()
+    elif keycode == 'KEY_UP' and hdr is None:
+        with state['lock']:
+            state['note_hdr'] = 'back'
+        push_note()
+    elif keycode == 'KEY_DOWN' and hdr is not None:
+        with state['lock']:
+            state['note_hdr'] = None
+        push_note()
+    elif keycode in ('KEY_LEFT', 'KEY_RIGHT') and hdr is not None:
+        with state['lock']:
+            state['note_hdr'] = 'back' if keycode == 'KEY_LEFT' else 'delete'
+        push_note()
+    elif keycode == 'KEY_ENTER' or keycode.startswith('CHAR:'):
+        add = '\n' if keycode == 'KEY_ENTER' else keycode[5:]
+        if len(text) + len(add) > NOTE_MAX:
+            return                                              # full: the key is not taken
+        with state['lock']:
+            state['note_text'] = text + add
+            state['note_hdr']  = None
+        push_note()
+    elif keycode == 'KEY_BACKSPACE':
+        with state['lock']:
+            state['note_text'] = text[:-1]
+            state['note_hdr']  = None
+        push_note()
+
+
+def _delete_note():
+    with state['lock']:
+        idx = state['note_idx']
+        notes = state['notes']
+        existed = idx is not None and 0 <= idx < len(notes)
+        if existed:
+            del notes[idx]
+        state['confirm_sel'] = 'keep'
+    if existed:
+        save_notes()
+    _open_notes(0)
+
+
 # ─── Settings (Wi-Fi / Bluetooth) ──────────────────────────────────────────────
 # Kyle's layout (2026-09-25). SETTINGS lists Wi-Fi and Bluetooth, each with its
 # status. network_control.py talks to the small computer's own nmcli / bluetoothctl.
@@ -3504,6 +3761,7 @@ def main():
     load_messages()
     load_calls()
     load_settings()
+    load_notes()
     _init_modem()
 
     threading.Thread(target=clock_loop,      daemon=True).start()

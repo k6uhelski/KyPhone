@@ -1924,9 +1924,9 @@ class TestHomeMenuOrder(unittest.TestCase):
     ROW = staticmethod(lambda name: kyphone_os.HOME_MENU.index(name))
 
     def test_the_order_is_texts_calls_books_music_address_book_settings(self):
-        # Kyle's order (2026-09-19; SETTINGS added 2026-09-22). The design handoff had CONTACTS
-        # third; that reordering is deliberate.
-        self.assertEqual(kyphone_os.HOME_MENU, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS'])
+        # Kyle's order (2026-09-19; SETTINGS added 2026-09-22, NOTES 2026-09-25). The design handoff had
+        # CONTACTS third; that reordering is deliberate.
+        self.assertEqual(kyphone_os.HOME_MENU, ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS'])
 
     def test_each_row_opens_its_screen(self):
         self.enter_row(self.ROW('TEXT'));  self.assertEqual(kyphone_os.state['screen'], 'texts_list')
@@ -1972,10 +1972,170 @@ class TestHomeMenuOrder(unittest.TestCase):
         reset_state(screen='home', home_index=0)
         with patch.object(kyphone_os, 'push_screen'):
             seen = []
-            for _ in range(7):
+            for _ in range(8):
                 kyphone_os.handle_key('KEY_DOWN')
                 seen.append(kyphone_os.HOME_MENU[kyphone_os.state['home_index']])
-        self.assertEqual(seen, ['CALL', 'READ', 'LISTEN', 'CONTACTS', 'SETTINGS', 'SETTINGS', 'SETTINGS'])
+        self.assertEqual(seen, ['CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS', 'SETTINGS', 'SETTINGS'])
+
+class TestNotes(unittest.TestCase):
+    def setUp(self):
+        self.path = os.path.join(tempfile.mkdtemp(), 'notes.json')
+        self._file = patch.object(kyphone_os, 'NOTES_FILE', self.path)
+        self._file.start()
+        self.addCleanup(self._file.stop)
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('NOTES'), notes=[])
+
+    def press(self, *keys):
+        wire = None
+        for key in keys:
+            with patch.object(kyphone_os, 'push_screen') as ps:
+                kyphone_os.handle_key(key)
+            wire = _wire(ps) or wire
+        return wire
+
+    def type(self, text):
+        wire = None
+        for ch in text:
+            wire = self.press('KEY_ENTER' if ch == '\n' else 'CHAR:' + ch)
+        return wire
+
+    def saved(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_an_empty_list_opens_on_plus(self):
+        self.assertEqual(self.press('KEY_ENTER'), 'NOTES|-2')
+        self.assertEqual(kyphone_os.state['screen'], 'notes_list')
+
+    def test_write_a_note_and_it_is_saved_and_listed_newest_first(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')                       # NOTES, then + (selected on an empty list)
+        self.assertEqual(kyphone_os.state['screen'], 'note')
+        wire = self.type('Groceries\neggs')
+        self.assertEqual(wire, 'NOTE||Groceries' + CELL + 'eggs')
+        wire = self.press('KEY_UP', 'KEY_ENTER')                   # < in the header: save and back
+        self.assertEqual(kyphone_os.state['screen'], 'notes_list')
+        self.assertEqual([n['text'] for n in self.saved()], ['Groceries\neggs'])
+        self.assertTrue(wire.startswith('NOTES|0|Groceries' + CELL))
+        self.press('CHAR:+')
+        self.type('Second')
+        wire = self.press('KEY_ESC')
+        self.assertEqual([n['text'] for n in self.saved()], ['Second', 'Groceries\neggs'])
+        self.assertEqual([r.split(CELL)[0] for r in _rows(wire, 2)], ['Second', 'Groceries'])
+
+    def test_q_and_wasd_are_letters_in_the_editor(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        self.assertEqual(self.type('qwasd'), 'NOTE||qwasd')
+        self.assertEqual(kyphone_os.state['screen'], 'note')
+
+    def test_an_empty_note_is_not_kept(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        self.type('  ')
+        self.press('KEY_UP', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['notes'], [])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_editing_moves_a_note_to_the_top_and_opening_without_change_does_not(self):
+        kyphone_os.state['notes'] = [{'text': 'A', 'ts': '2026-09-20T09:00:00'}, {'text': 'B', 'ts': '2026-09-19T09:00:00'}]
+        self.press('KEY_ENTER', 'KEY_DOWN', 'KEY_ENTER')           # open B
+        self.assertEqual(kyphone_os.state['note_text'], 'B')
+        self.press('KEY_ESC')                                     # unchanged: nothing saved, still second
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(kyphone_os.state['notes_index'], 1)
+        self.press('KEY_ENTER')
+        self.type('!')
+        self.press('KEY_ESC')
+        self.assertEqual([n['text'] for n in self.saved()], ['B!', 'A'])
+        self.assertEqual(kyphone_os.state['notes_index'], 0)
+
+    def test_backspace_and_a_note_emptied_is_removed(self):
+        kyphone_os.state['notes'] = [{'text': 'ab', 'ts': ''}]
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        self.assertEqual(self.press('KEY_BACKSPACE'), 'NOTE||a')
+        self.press('KEY_BACKSPACE', 'KEY_ESC')
+        self.assertEqual(self.saved(), [])
+
+    def test_delete_asks_first_and_keep_goes_back_to_the_note(self):
+        kyphone_os.state['notes'] = [{'text': 'secret plan', 'ts': ''}]
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        wire = self.press('KEY_UP', 'KEY_RIGHT')
+        self.assertTrue(wire.startswith('NOTE|D|'))
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'CONFIRM|NOTE|DELETE THIS NOTE? IT CANNOT BE BROUGHT BACK.|DELETE|KEEP NOTE|K')
+        self.press('KEY_ENTER')                                   # KEEP NOTE
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['note_text']), ('note', 'secret plan'))
+        self.press('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_LEFT', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'notes_list')
+        self.assertEqual(self.saved(), [])
+
+    def test_the_header_and_typing_after_it(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        self.type('hi')
+        self.assertTrue(self.press('KEY_UP').startswith('NOTE|B|'))
+        self.assertEqual(self.press('CHAR:!'), 'NOTE||hi!')        # typing goes back to the text
+        self.press('KEY_UP')
+        self.assertEqual(self.press('KEY_DOWN'), 'NOTE||hi!')
+
+    def test_a_long_note_shows_its_end_behind_dots_and_every_frame_fits(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        kyphone_os.state['note_text'] = ' '.join(f'word{i}' for i in range(400)) + '\n\nlast line'
+        wire = self.press('CHAR:.')
+        lines = wire.split('|', 2)[2].split(CELL)
+        self.assertEqual(lines[0], '...')
+        self.assertEqual(lines[-1], 'last line.')
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+        self.assertLessEqual(len(lines), kyphone_os.NOTE_LINES)
+        self.assertTrue(all(len(l) <= kyphone_os.NOTE_COLS for l in lines))
+
+    def test_a_full_line_leaves_room_for_the_cursor(self):
+        view = kyphone_os.note_view('x' * 30, 250)
+        self.assertEqual(view, ['x' * 30, ''])                   # a full line: the cursor starts the next one
+        self.assertEqual(kyphone_os.note_view('ab cd', 250), ['ab cd'])
+        self.assertEqual(kyphone_os.note_view('', 250), [''])
+
+    def test_the_note_is_capped(self):
+        self.press('KEY_ENTER', 'KEY_ENTER')
+        kyphone_os.state['note_text'] = 'x' * kyphone_os.NOTE_MAX
+        self.assertIsNone(self.press('CHAR:y'))                   # full: the key is not taken
+        self.assertEqual(len(kyphone_os.state['note_text']), kyphone_os.NOTE_MAX)
+
+    def test_the_list_windows_and_the_header(self):
+        kyphone_os.state['notes'] = [{'text': f'N{i}', 'ts': ''} for i in range(8)]
+        self.press('KEY_ENTER')
+        wire = self.press(*['KEY_DOWN'] * 7)
+        self.assertEqual(wire.split('|')[1], '4')                 # the last row of the window
+        self.assertEqual(len(_rows(wire, 2)), kyphone_os.NOTES_ROWS)
+        self.press(*['KEY_UP'] * 8)
+        self.assertEqual(self.press('KEY_RIGHT'), 'NOTES|-2|' + '|'.join(f'N{i}' + CELL + CELL for i in range(5)))
+        self.press('KEY_ENTER')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['note_idx']), ('note', None))
+
+    def test_a_long_first_line_is_shortened_on_the_list(self):
+        kyphone_os.state['notes'] = [{'text': 'Ideas for the case: walnut, brass buttons', 'ts': ''}]
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(_rows(wire, 2)[0].split(CELL)[0], 'Ideas for the case:...')
+        self.assertLessEqual(len(_rows(wire, 2)[0].split(CELL)[0]), kyphone_os.NOTE_TITLE_MAX)
+
+    def test_esc_on_the_list_goes_home_on_notes(self):
+        self.press('KEY_ENTER', 'KEY_ESC')
+        self.assertEqual((kyphone_os.state['screen'], kyphone_os.state['home_index']),
+                         ('home', kyphone_os.HOME_MENU.index('NOTES')))
+
+    def test_saved_notes_load_and_bad_ones_are_dropped(self):
+        with open(self.path, 'w') as f:
+            json.dump([{'text': 'good', 'ts': 'x'}, {'text': '   '}, {'nope': 1}, 'x', {'text': 5}], f)
+        kyphone_os.load_notes()
+        self.assertEqual(kyphone_os.state['notes'], [{'text': 'good', 'ts': 'x'}])
+        with open(self.path, 'w') as f:
+            f.write('not json')
+        kyphone_os.load_notes()
+        self.assertEqual(kyphone_os.state['notes'], [])
+
+    def test_undrawable_text_is_cleaned_on_the_wire_and_newlines_stay_lines(self):
+        kyphone_os.state['notes'] = [{'text': 'caf\u00e9 \u201cquoted\u201d\nline two', 'ts': ''}]
+        self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(wire, 'NOTE||caf? "quoted"' + CELL + 'line two')
+
 
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):

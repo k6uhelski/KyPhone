@@ -24,6 +24,7 @@
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
 //   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B/P|sel|name·sub·right|...
 //   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail      LIGHTSET|level (0-8)
+//   NOTES|sel|title·when·|...          NOTE|hdr|line·line·...   (hdr '' typing, B < selected, D DELETE selected)
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -235,8 +236,8 @@ static void ui_home(char* data) {
 
     // TEXT, CALL, READ, LISTEN, CONTACTS, SETTINGS — the first three are on screen
     // on first view. Must match kyphone_os.HOME_MENU (and tools/make_icons.py ORDER).
-    static const char* labels[] = {"TEXT", "CALL", "READ", "LISTEN", "CONTACTS", "SETTINGS"};
-    const int n_rows = 6, row_h = 135, view_top = header_h + 2, view_h = 600 - view_top;
+    static const char* labels[] = {"TEXT", "CALL", "READ", "LISTEN", "CONTACTS", "NOTES", "SETTINGS"};
+    const int n_rows = 7, row_h = 135, view_top = header_h + 2, view_h = 600 - view_top;
     int shift = ((home_index > 0 ? home_index : 0) + 1) * row_h - view_h;
     if (shift < 0) shift = 0;
 
@@ -332,13 +333,14 @@ static void ui_texts(char* data) {
 // Laid out like the texts list: bold title, small subtitle under it, a note and a chevron at the right.
 // sel: -1 back, else the row within the 5-row window.
 
-static void ui_rows2(char* data, const char* header, const char* empty_title, const char* empty_hint, bool header_in_data) {
+static void ui_rows2(char* data, const char* header, const char* empty_title, const char* empty_hint, bool header_in_data,
+                     bool show_plus = false) {
     char* f[9];
     int n = ui_split(data, '|', f, 9);
     int sel = ui_fld_int(f, n, 0, 0);
     int first = 1;
     if (header_in_data) { header = ui_fld(f, n, 1); first = 2; }
-    ui_header(header, sel == -1, false, false);
+    ui_header(header, sel == -1, sel == -2, show_plus);
 
     int rows = 0;
     for (int i = first; i < n && rows < 5; i++) if (f[i][0] != '\0') rows++;
@@ -439,6 +441,37 @@ static void ui_netstate(char* data) {
                      : strcmp(status, "OK") == 0      ? "ENTER OK"
                      : fail                           ? "ENTER TRY AGAIN" : "";
     ui_text_center(hint, 550 + 14, 2, BLACK, false);
+}
+
+// ─── NOTES|sel|title·when·|...  and  NOTE|hdr|line·line·... ─────────────────────
+// The notes list is the two-line list with + in the header (sel -2). The editor: < and DELETE in the header (hdr
+// B / D select them), then the lines the Radxa has already wrapped and cut to fit, the cursor after the last one.
+
+static void ui_notes(char* data) {
+    ui_rows2(data, "NOTES", "NO NOTES", "PRESS + TO WRITE ONE.", false, true);
+}
+
+static void ui_note(char* data) {
+    char* f[2];
+    int n = ui_split(data, '|', f, 2);
+    char hdr = ui_fld(f, n, 0)[0];
+    if (hdr == 'B') display.fillRect(16, 6, 38, 34, BLACK);
+    ui_text("<", 26, 11 + 21, 3, hdr == 'B' ? WHITE : BLACK, true);
+    ui_text_center("NOTE", 31, 3, BLACK, true);
+    int dw = 6 * 12 + 20, dx = 600 - 16 - dw;
+    if (hdr == 'D') display.fillRect(dx, 6, dw, 34, BLACK);
+    ui_text("DELETE", dx + 10, 6 + 17 + 6, 2, hdr == 'D' ? WHITE : BLACK, true);
+    ui_hline(43, 1);
+
+    char empty[1] = "";
+    char* lines[14];
+    int nl = ui_split(n > 1 ? f[1] : empty, UI_SUB, lines, 14);
+    for (int i = 0; i < nl; i++) ui_put(lines[i], 24, 60 + 38 * i, 3, BLACK);
+    if (hdr == '\0') {
+        int cx = 24 + ui_tw(lines[nl - 1], 3);
+        if (cx > 600 - 18) cx = 600 - 18;
+        display.fillRect(cx, 60 + 38 * (nl - 1), 18, 24, BLACK);
+    }
 }
 
 // ─── LIGHTSET|level ───────────────────────────────────────────────────────────
@@ -894,7 +927,8 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},   {"MUSIC|", ui_music},
         {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
         {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
-        {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},
+        {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},   {"NOTES|", ui_notes},
+        {"NOTE|", ui_note},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);
