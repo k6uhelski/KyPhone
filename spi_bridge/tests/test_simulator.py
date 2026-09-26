@@ -823,6 +823,33 @@ class NetpassPixels(unittest.TestCase):
 
 
 @unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
+class LockMarkAndLightPixels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = sim_module.Simulator(lambda k: None)
+        cls.sim.init()
+
+    def ink_in(self, wire, x0, y0, x1, y1):
+        self.sim._surface.fill(WHITE)
+        self.sim._draw(wire)
+        s = self.sim._surface
+        return sum(1 for x in range(x0, x1) for y in range(y0, y1) if tuple(s.get_at((x, y)))[:3] == BLACK)
+
+    def test_the_new_activity_star_sits_right_of_the_clock_only_when_sent(self):
+        box = (300 + 4 * 48 // 2 + 8, 159, 300 + 4 * 48 // 2 + 8 + 30, 159 + 30)     # right of '9:41' at size 8
+        base = 'LOCK|9:41|FRIDAY, SEPTEMBER 25|A quote.|- A PERSON|0.4.1'
+        self.assertEqual(self.ink_in(base + '||0', *box), 0)
+        self.assertGreater(self.ink_in(base + '|*|0', *box), 0)
+        self.assertEqual(self.ink_in(base, *box), 0)                       # an older command still draws
+
+    def test_the_light_bar_fills_one_box_per_level(self):
+        for level in (0, 3, 8):
+            filled = [self.ink_in(f'LIGHTSET|{level}', 60 + i * 60 + 20, 320, 60 + i * 60 + 30, 330) == 100
+                      for i in range(8)]
+            self.assertEqual(filled, [i < level for i in range(8)], level)
+
+
+@unittest.skipUnless(_REAL, 'needs real pygame (python -m venv, pip install pygame)')
 class NetstatePixels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

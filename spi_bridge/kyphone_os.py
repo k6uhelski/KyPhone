@@ -196,6 +196,8 @@ def contact_index_for(number):
 # --- Persistence Paths ---
 MESSAGES_FILE = os.path.join(DATA_DIR, 'messages.json')     # DATA_DIR is defined with the contacts path above
 CALLS_FILE    = os.path.join(DATA_DIR, 'calls.json')        # the call log
+SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')     # the phone's own settings (screen light, activity mark)
+LIGHT_LEVELS  = 8                                            # screen light steps; 0 = off
 
 # --- Reader (books) ---
 BOOKS_DIR         = os.path.join(DATA_DIR, 'books')          # drop .epub files here
@@ -353,6 +355,8 @@ state = {
 
     'settings_index': 0,            # -1=header | 0=Wi-Fi | 1=Bluetooth
     'settings_wifi_on': True,       # the Wi-Fi switch, read when SETTINGS opens
+    'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
+    'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
     'settings_bt':    None,         # network_control.BtStatus, same
 
@@ -701,8 +705,22 @@ def push_lock():
     date_str = now.strftime("%A, %B %-d").upper()
     quote = QUOTES[state['quote_index'] % len(QUOTES)]
     # Truncate quote to fit within PAYLOAD_BYTES (prefix + separators ≈ 30 chars overhead)
-    max_quote = PAYLOAD_BYTES - 3 - len("LOCK|") - len(time_str) - len(date_str) - len("- THICH NHAT HANH") - len(VERSION) - 5
-    push_screen(f"LOCK|{time_str}|{date_str}|{quote[:max_quote]}|- THICH NHAT HANH|{VERSION}")
+    mark  = '*' if _new_activity() else ''
+    with state['lock']:
+        light = state['light']
+    tail  = f"|{VERSION}|{mark}|{light}"
+    max_quote = PAYLOAD_BYTES - 3 - len("LOCK|") - len(time_str) - len(date_str) - len("- THICH NHAT HANH") - len(tail) - 4
+    push_screen(f"LOCK|{time_str}|{date_str}|{quote[:max_quote]}|- THICH NHAT HANH{tail}")
+
+
+def _new_activity():
+    """The lock screen's *: an unread text, or a missed call not yet seen on the call list (unless switched off)."""
+    with state['lock']:
+        if not state['activity_mark']:
+            return False
+        unread = any(not m.get('read', True) and not is_outgoing(m) for m in state['messages'])
+        missed = any(c['tag'] == 'MISS' and not c.get('seen', True) for c in state['calls'])
+    return unread or missed
 
 
 def push_home2():
@@ -1040,7 +1058,7 @@ def _push_for_screen(screen_name):
         'in_call': push_call_screen,
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
-        'settings': push_settings, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
+        'settings': push_settings, 'light': push_light, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
         'netpass': push_netpass, 'netstate': push_netstate,
     }
     pusher = pushers.get(screen_name)
@@ -1139,6 +1157,9 @@ def handle_key(keycode):
     elif screen in ('wifi', 'bluetooth', 'btpair'):
         _from_net(keycode)
 
+    elif screen == 'light':
+        _from_light(keycode)
+
     elif screen == 'netpass':
         _from_netpass(keycode)
 
@@ -1195,6 +1216,11 @@ def _from_home(keycode):
                 state['screen']      = 'calls_list'
                 state['calls_index'] = 0
                 state['calls_start'] = 0
+                unseen = [c for c in state['calls'] if c.get('seen') is False]
+                for c in unseen:
+                    c['seen'] = True                            # opening the call list counts as seeing them
+            if unseen:
+                _save_calls()
             push_calls()
         elif HOME_MENU[idx] == 'CONTACTS':
             with state['lock']:
@@ -2092,6 +2118,8 @@ def _log_call(tag, seconds=None):
         raw = format_name(raw)
     entry = {'name': sanitize(raw)[:30], 'tag': tag, 'ts': datetime.now().isoformat(),
              'duration': _duration_text(seconds) if seconds is not None else ''}
+    if tag == 'MISS':
+        entry['seen'] = False                                  # a * on the lock screen until the call list is opened
     with state['lock']:
         state['calls'].insert(0, entry)
         del state['calls'][CALL_LOG_MAX:]
@@ -2123,8 +2151,39 @@ def load_calls():
         if (isinstance(c, dict) and isinstance(c.get('name'), str) and c.get('tag') in ('OUT', 'IN', 'MISS')
                 and isinstance(c.get('duration', ''), str) and isinstance(c.get('ts', ''), str)):
             good.append({'name': c['name'], 'tag': c['tag'], 'ts': c.get('ts', ''), 'duration': c.get('duration', '')})
+            if c['tag'] == 'MISS' and c.get('seen') is False:
+                good[-1]['seen'] = False
     with state['lock']:
         state['calls'] = good[:CALL_LOG_MAX]
+
+
+def load_settings():
+    """The phone's own settings; anything missing or malformed keeps its default."""
+    try:
+        with open(SETTINGS_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    light = data.get('light')
+    with state['lock']:
+        if isinstance(light, int) and not isinstance(light, bool) and 0 <= light <= LIGHT_LEVELS:
+            state['light'] = light
+        if isinstance(data.get('activity_mark'), bool):
+            state['activity_mark'] = data['activity_mark']
+
+
+def save_settings():
+    with state['lock']:
+        data = {'light': state['light'], 'activity_mark': state['activity_mark']}
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = SETTINGS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp, SETTINGS_FILE)
+    except OSError as e:
+        print(f"Warning: could not save settings: {e}")
 
 
 # ─── Persistence ──────────────────────────────────────────────────────────────
@@ -2879,9 +2938,13 @@ def push_settings():
         wifi_on = state['settings_wifi_on']
         wifi    = state['settings_wifi']
         bt      = state['settings_bt']
+        light   = state['light']
+        mark    = state['activity_mark']
     rows = [
         ['Wi-Fi', _wifi_status_text(wifi_on, wifi), ''],
         ['Bluetooth', _bt_status_text(bt), ''],
+        ['Screen light', f'Level {light} of {LIGHT_LEVELS}' if light else 'Off', ''],
+        ['Activity mark', 'A * on the lock screen', 'ON' if mark else 'OFF'],
     ]
     push_screen(_list_command(["SETTINGS", str(idx)], rows, shrink_order=(1,)))
 
@@ -2895,17 +2958,51 @@ def _from_settings(keycode):
         push_settings()
     elif keycode == 'KEY_DOWN':
         with state['lock']:
-            state['settings_index'] = min(1, idx + 1)
+            state['settings_index'] = min(SETTINGS_ROWS - 1, idx + 1)
         push_settings()
     elif keycode == 'KEY_ENTER' and idx == 0:
         _open_wifi()
     elif keycode == 'KEY_ENTER' and idx == 1:
         _open_bluetooth()
+    elif keycode == 'KEY_ENTER' and idx == 2:
+        with state['lock']:
+            state['screen'] = 'light'
+        push_light()
+    elif keycode == 'KEY_ENTER' and idx == 3:
+        with state['lock']:
+            state['activity_mark'] = not state['activity_mark']
+        save_settings()
+        push_settings()
     elif keycode in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):   # Enter on the header, or Esc
         with state['lock']:
             state['screen']     = 'home'
             state['home_index'] = HOME_MENU.index('SETTINGS')
         push_home2()
+
+
+SETTINGS_ROWS = 4       # Wi-Fi, Bluetooth, Screen light, Activity mark
+
+
+def push_light():
+    """SCREEN LIGHT: the level as a bar. The firmware also sets the front light from this command's level, so the
+    light changes with the drawing (the sender keeps only the latest command, so a separate one could be dropped)."""
+    with state['lock']:
+        level = state['light']
+    push_screen(f"LIGHTSET|{level}")
+
+
+def _from_light(keycode):
+    """<- / down: dimmer, -> / up: brighter; Enter or Esc: done. A step past either end redraws, so it is answered."""
+    if keycode in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):
+        _back_to_settings()
+        return
+    step = {'KEY_LEFT': -1, 'KEY_DOWN': -1, 'KEY_RIGHT': 1, 'KEY_UP': 1}.get(keycode)
+    if step is None:
+        return
+    with state['lock']:
+        state['light'] = max(0, min(LIGHT_LEVELS, state['light'] + step))
+    save_settings()
+    push_light()
 
 
 def _open_wifi(keep_index=False):
@@ -3394,6 +3491,8 @@ def modem_sms_loop():
                     push_thread2()
                 elif current_screen == 'texts_list':
                     push_texts()
+                elif current_screen == 'lock':
+                    push_lock()                                 # the new-activity * appears
         except modem.ModemError as e:
             print(f"Modem poll error: {e}")
         time.sleep(SMS_POLL_INTERVAL)
@@ -3404,6 +3503,7 @@ def modem_sms_loop():
 def main():
     load_messages()
     load_calls()
+    load_settings()
     _init_modem()
 
     threading.Thread(target=clock_loop,      daemon=True).start()

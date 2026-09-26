@@ -228,6 +228,8 @@ class Simulator:
             self._draw_netpass(rest)
         elif prefix == 'NETSTATE':
             self._draw_netstate(rest)
+        elif prefix == 'LIGHTSET':
+            self._draw_lightset(rest)
         elif prefix == 'DIAL':
             self._draw_dial(rest)
         elif prefix == 'CALLSTATE':
@@ -247,13 +249,15 @@ class Simulator:
     # ── OS 0.1 Screen Renderers ───────────────────────────────────────
 
     def _draw_lock(self, data):
-        # data = "time_str|date_str|quote|attribution|version"
+        # data = "time_str|date_str|quote|attribution|version|mark|light"  mark '*' = new activity; light is for the
+        # panel's front light only (nothing to draw)
         parts = data.split('|')
         time_str = parts[0] if len(parts) > 0 else ''
         date_str = parts[1] if len(parts) > 1 else ''
         quote    = parts[2] if len(parts) > 2 else ''
         attr     = parts[3] if len(parts) > 3 else ''
         version  = parts[4] if len(parts) > 4 else ''
+        mark     = parts[5] if len(parts) > 5 else ''
 
         # OS version, as the Radxa reports it (see version.py) — bottom left, textSize 2 (18px design token)
         if version:
@@ -276,6 +280,9 @@ class Simulator:
 
         # Clock — textSize 8, centered, top:159
         self._text_centered(time_str, 159, 8, clock=True)
+        if mark == '*':                                       # new activity: a small * just right of the clock
+            clock_w = len(time_str) * self._char_w(8)
+            self._text('*', (self.WIDTH + clock_w) // 2 + 8, 159, 4)
 
         # Date — textSize 3, centered, top:243
         self._text_centered(date_str, 243, 3)
@@ -930,6 +937,23 @@ class Simulator:
             pygame.draw.rect(self._surface, BLACK, (cursor_x, 160, self._char_w(3), 24))
 
         self._text_centered('ENTER BACK' if back else 'ENTER CONNECT', self.HEIGHT - 34 - 16, 2)
+
+    def _draw_lightset(self, data):
+        # data = "level"  0 (off) .. 8. The panel also sets its front light to this level.
+        try:
+            level = max(0, min(8, int(data.split('|')[0])))
+        except ValueError:
+            level = 0
+        self._draw_header_bar_back_only('SCREEN LIGHT', False)
+        self._text_centered('OFF' if level == 0 else f'{level} / 8', 190, 6, bold=True)
+        for i in range(8):
+            x = 60 + i * 60
+            if i < level:
+                pygame.draw.rect(self._surface, BLACK, (x, 300, 54, 60))
+            for b in range(3):
+                pygame.draw.rect(self._surface, BLACK, (x + b, 300 + b, 54 - 2 * b, 60 - 2 * b), 1)
+        self._text_centered('< DIMMER    BRIGHTER >', 436, 2)
+        self._text_centered('ENTER DONE', self.HEIGHT - 34 - 16, 2)
 
     def _draw_netstate(self, data):
         # data = "kind|status|detail"  kind W/B, status WORKING/OK/FAIL

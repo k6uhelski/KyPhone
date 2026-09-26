@@ -23,7 +23,7 @@
 //   NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N     (state P playing, U paused, S finished)
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
 //   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B/P|sel|name·sub·right|...
-//   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail
+//   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail      LIGHTSET|level (0-8)
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -439,6 +439,27 @@ static void ui_netstate(char* data) {
                      : strcmp(status, "OK") == 0      ? "ENTER OK"
                      : fail                           ? "ENTER TRY AGAIN" : "";
     ui_text_center(hint, 550 + 14, 2, BLACK, false);
+}
+
+// ─── LIGHTSET|level ───────────────────────────────────────────────────────────
+// SCREEN LIGHT: the level (0 off .. 8) in large type and as eight boxes. Drawing only — the .ino sets the front
+// light itself from the same command before it is drawn.
+static void ui_lightset(char* data) {
+    int level = atoi(data);
+    if (level < 0) level = 0;
+    if (level > 8) level = 8;
+    ui_header("SCREEN LIGHT", false, false, false);
+    char big[8];
+    if (level == 0) snprintf(big, sizeof(big), "OFF");
+    else            snprintf(big, sizeof(big), "%d / 8", level);
+    ui_text_center(big, 190 + 42, 6, BLACK, true);
+    for (int i = 0; i < 8; i++) {
+        int x = 60 + i * 60;
+        if (i < level) display.fillRect(x, 300, 54, 60, BLACK);
+        ui_rect(x, 300, 54, 60, 3, BLACK);
+    }
+    ui_text_center("< DIMMER    BRIGHTER >", 436 + 14, 2, BLACK, false);
+    ui_text_center("ENTER DONE", 550 + 14, 2, BLACK, false);
 }
 
 // ─── NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N ─────────────
@@ -873,7 +894,7 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"CONTACT|", ui_contact},    {"LIBRARY|", ui_library},   {"MUSIC|", ui_music},
         {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
         {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
-        {"NETSTATE|", ui_netstate},
+        {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

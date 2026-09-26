@@ -56,7 +56,8 @@ class Everywhere(unittest.TestCase):
         src = read('spi_bridge', 'kyphone_os.py')
         self.assertIn('VERSION = version.VERSION', src)
         self.assertIn('KyPhone OS {VERSION}', src)
-        self.assertRegex(src, r'LOCK\|\{time_str\}\|\{date_str\}\|\{quote\[:max_quote\]\}\|- THICH NHAT HANH\|\{VERSION\}')
+        self.assertIn('tail  = f"|{VERSION}|{mark}|{light}"', src)
+        self.assertRegex(src, r'LOCK\|\{time_str\}\|\{date_str\}\|\{quote\[:max_quote\]\}\|- THICH NHAT HANH\{tail\}')
 
     def test_no_drawing_code_has_a_version_typed_in(self):
         for path in (('spi_bridge', 'simulator.py'), ('spi_bridge', 'Inkplate_SPI_Peripheral', 'Inkplate_SPI_Peripheral.ino'),

@@ -79,12 +79,102 @@ class TestLockScreenVersion(unittest.TestCase):
     def test_the_lock_command_carries_the_version_and_fits_with_every_quote(self):
         import version
         for i in range(len(kyphone_os.QUOTES)):
-            reset_state(screen='lock', quote_index=i)
+            reset_state(screen='lock', quote_index=i, messages=[], calls=[], light=8, activity_mark=True)
+            kyphone_os.state['messages'] = [_inbound(read=False)]                 # the longest tail: '*' and 8
             with patch.object(kyphone_os, 'push_screen') as ps:
                 kyphone_os.push_lock()
             wire = _wire(ps)
-            self.assertTrue(wire.endswith('|- THICH NHAT HANH|' + version.VERSION), wire[-40:])
+            self.assertTrue(wire.endswith('|- THICH NHAT HANH|' + version.VERSION + '|*|8'), wire[-40:])
             self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS, i)
+
+
+class TestActivityMark(unittest.TestCase):
+    def lock_tail(self):
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_lock()
+        return _wire(ps).split('|')[-2:]                                          # [mark, light]
+
+    def setUp(self):
+        reset_state(screen='lock', messages=[], calls=[], light=0, activity_mark=True)
+
+    def test_nothing_new_no_mark(self):
+        kyphone_os.state['messages'] = [_inbound(read=True)]
+        self.assertEqual(self.lock_tail(), ['', '0'])
+
+    def test_an_unread_text_shows_the_mark(self):
+        kyphone_os.state['messages'] = [_inbound(read=False)]
+        self.assertEqual(self.lock_tail()[0], '*')
+
+    def test_my_own_unsent_text_is_not_new_activity(self):
+        kyphone_os.state['messages'] = [{'dir': 'out', 'peer': ALICE, 'name': 'You', 'body': 'x', 'read': False,
+                                         'ts': datetime.now().isoformat(), 'state': 'not_sent'}]
+        self.assertEqual(self.lock_tail()[0], '')
+
+    def test_a_missed_call_shows_the_mark_until_the_call_list_is_opened(self):
+        kyphone_os.state['call_name'] = 'Ann'
+        with patch.object(kyphone_os, '_save_calls') as save:
+            kyphone_os._log_call('MISS')
+            self.assertEqual(self.lock_tail()[0], '*')
+            kyphone_os.state['screen'] = 'home'
+            kyphone_os.state['home_index'] = kyphone_os.HOME_MENU.index('CALL')
+            with patch.object(kyphone_os, 'push_screen'):
+                kyphone_os.handle_key('KEY_ENTER')                                # open the call list
+            self.assertGreaterEqual(save.call_count, 2)                            # the seen flag is saved
+        self.assertEqual(self.lock_tail()[0], '')
+
+    def test_answered_calls_never_show_the_mark(self):
+        kyphone_os.state['call_name'] = 'Ann'
+        with patch.object(kyphone_os, '_save_calls'):
+            kyphone_os._log_call('IN', 30)
+        self.assertEqual(self.lock_tail()[0], '')
+
+    def test_switched_off_there_is_no_mark(self):
+        kyphone_os.state['messages'] = [_inbound(read=False)]
+        kyphone_os.state['activity_mark'] = False
+        self.assertEqual(self.lock_tail()[0], '')
+
+    def test_an_unseen_missed_call_survives_a_restart_and_old_logs_count_as_seen(self):
+        path = os.path.join(tempfile.mkdtemp(), 'calls.json')
+        with open(path, 'w') as f:
+            json.dump([{'name': 'Ann', 'tag': 'MISS', 'ts': '', 'duration': '', 'seen': False},
+                       {'name': 'Bo', 'tag': 'MISS', 'ts': '', 'duration': ''}], f)
+        with patch.object(kyphone_os, 'CALLS_FILE', path):
+            kyphone_os.load_calls()
+        self.assertEqual([c.get('seen', True) for c in kyphone_os.state['calls']], [False, True])
+
+    def test_a_text_arriving_on_the_lock_screen_redraws_it(self):
+        fake = md.SimModem()
+        fake.deliver('+15550100009', 'hi')
+        kyphone_os._modem = fake
+        self.addCleanup(setattr, kyphone_os, '_modem', None)
+        reset_state(screen='lock', running=True, messages=[], calls=[])
+        def stop(_):
+            kyphone_os.state['running'] = False
+        with patch.object(kyphone_os, 'save_messages'), patch.object(kyphone_os.time, 'sleep', stop), \
+                patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.modem_sms_loop()
+        self.assertTrue(_wire(ps).startswith('LOCK|'))
+        self.assertEqual(_wire(ps).split('|')[-2], '*')
+
+
+class TestSavedSettings(unittest.TestCase):
+    def test_round_trip_and_bad_values_keep_defaults(self):
+        path = os.path.join(tempfile.mkdtemp(), 'settings.json')
+        with patch.object(kyphone_os, 'SETTINGS_FILE', path):
+            reset_state(light=5, activity_mark=False)
+            kyphone_os.save_settings()
+            reset_state(light=0, activity_mark=True)
+            kyphone_os.load_settings()
+            self.assertEqual((kyphone_os.state['light'], kyphone_os.state['activity_mark']), (5, False))
+            for bad in ({'light': 99, 'activity_mark': 'yes'}, {'light': True}, [], 'x'):
+                with open(path, 'w') as f:
+                    json.dump(bad, f)
+                reset_state(light=2, activity_mark=True)
+                kyphone_os.load_settings()
+                self.assertEqual((kyphone_os.state['light'], kyphone_os.state['activity_mark']), (2, True), bad)
+            os.remove(path)
+            kyphone_os.load_settings()                                             # no file: nothing changes
+            self.assertEqual(kyphone_os.state['light'], 2)
 
     def test_the_os_uses_the_one_version(self):
         import version
@@ -2523,14 +2613,58 @@ class TestSettingsScreen(SettingsBase):
     def test_up_down_and_header(self):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
         self.press('KEY_ENTER')
-        self.press('KEY_DOWN')
-        self.press('KEY_DOWN')                                 # clamped: only two rows
-        self.assertEqual(kyphone_os.state['settings_index'], 1)
-        self.press('KEY_UP')
-        self.press('KEY_UP')
+        for _ in range(5):
+            self.press('KEY_DOWN')                             # clamped: four rows
+        self.assertEqual(kyphone_os.state['settings_index'], 3)
+        for _ in range(4):
+            self.press('KEY_UP')
         self.assertEqual(kyphone_os.state['settings_index'], -1)
         self.press('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'home')
+
+    def test_screen_light_and_activity_mark_rows(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'), light=3, activity_mark=True)
+        rows = _rows(self.press('KEY_ENTER'), 2)
+        self.assertEqual(rows[2], 'Screen light' + CELL + 'Level 3 of 8' + CELL)
+        self.assertEqual(rows[3], 'Activity mark' + CELL + 'A * on the lock screen' + CELL + 'ON')
+
+    def test_the_activity_mark_switch(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'), activity_mark=True)
+        self.press('KEY_ENTER')
+        for _ in range(3):
+            self.press('KEY_DOWN')
+        with patch.object(kyphone_os, 'save_settings') as save:
+            wire = self.press('KEY_ENTER')
+        save.assert_called_once()
+        self.assertFalse(kyphone_os.state['activity_mark'])
+        self.assertTrue(_rows(wire, 2)[3].endswith(CELL + 'OFF'))
+
+    def test_the_screen_light_screen(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'), light=0)
+        self.press('KEY_ENTER')
+        self.press('KEY_DOWN')
+        self.press('KEY_DOWN')
+        with patch.object(kyphone_os, 'save_settings') as save:
+            self.assertEqual(self.press('KEY_ENTER'), 'LIGHTSET|0')
+            self.assertEqual(self.press('KEY_RIGHT'), 'LIGHTSET|1')
+            self.assertEqual(self.press('KEY_UP'), 'LIGHTSET|2')
+            self.assertEqual(self.press('KEY_LEFT'), 'LIGHTSET|1')
+            self.assertEqual(self.press('KEY_DOWN'), 'LIGHTSET|0')
+            self.assertEqual(self.press('KEY_DOWN'), 'LIGHTSET|0')      # at the end: redrawn, so it is answered
+            for _ in range(12):
+                wire = self.press('KEY_RIGHT')
+            self.assertEqual(wire, 'LIGHTSET|8')
+            self.assertGreater(save.call_count, 5)                     # saved as it changes
+        self.assertEqual(self.press('CHAR:d'), 'LIGHTSET|8')          # D is an arrow here too
+        wire = self.press('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+        self.assertIn('Level 8 of 8', _rows(wire, 2)[2])
+
+    def test_the_lock_command_carries_the_light(self):
+        reset_state(screen='lock', light=6, messages=[], calls=[])
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            kyphone_os.push_lock()
+        self.assertEqual(_wire(ps).split('|')[-1], '6')
 
     def test_esc_returns_home_on_settings(self):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))

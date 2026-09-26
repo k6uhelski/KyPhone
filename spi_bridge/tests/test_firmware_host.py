@@ -214,6 +214,13 @@ class FirmwareFrames(unittest.TestCase):
             self.assertGreater(self.ink_box(self.frames[name], 0, 262, 600, 290), 0, name)   # the detail line
             self.assertGreater(self.ink_box(self.frames[name], 0, 548, 600, 568), 0, name)   # the hint
 
+    def test_the_light_bar_fills_one_box_per_level_and_bad_levels_are_clamped(self):
+        for wire, level in (('LIGHTSET|0', 0), ('LIGHTSET|5', 5), ('LIGHTSET|8', 8), ('LIGHTSET|99', 8),
+                            ('LIGHTSET|-3', 0), ('LIGHTSET|x', 0), ('LIGHTSET|', 0)):
+            f = self.frame(wire)
+            self.assertEqual([self.ink(f, 60 + i * 60 + 25, 325) for i in range(8)], [i < level for i in range(8)], wire)
+            self.assertTrue(self.ink(f, 60 + 7 * 60 + 1, 301), wire)                 # every box has its outline
+
     def test_home_can_select_settings(self):
         self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
 
@@ -359,7 +366,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
     NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
-             'netlist_scanning', 'netlist_off', 'netlist_pair', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):
@@ -453,7 +460,7 @@ class FirmwareMemorySafety(unittest.TestCase):
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
-                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|']
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):

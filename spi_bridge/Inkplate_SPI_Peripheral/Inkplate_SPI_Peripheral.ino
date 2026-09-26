@@ -832,8 +832,20 @@ const uint8_t cat_bitmap[] PROGMEM = {
     0x00, 0x00, 0x00, 0x00
 };
 
+// The front light (Inkplate 4 TEMPERA). The Radxa sends the level (0 off .. 8) in LOCK and LIGHTSET commands; the
+// light is hardware state, so it is set here, not drawn.
+void apply_light(int level) {
+    if (level <= 0) {
+        display.frontlight.setState(false);
+        return;
+    }
+    if (level > 8) level = 8;
+    display.frontlight.setState(true);
+    display.frontlight.setBrightness((uint8_t)(level * 63 / 8));
+}
+
 void render_lock(char* data) {
-    // data = "time_str|date_str|quote|attribution|version"
+    // data = "time_str|date_str|quote|attribution|version|mark|light"
     char time_str[16] = "", date_str[32] = "", quote_buf[200] = "", attr_buf[40] = "", version_buf[16] = "";
     char* p1 = strchr(data, '|');
     if (p1) {
@@ -857,9 +869,18 @@ void render_lock(char* data) {
 
     // The attribution field carries the Radxa's version after its own '|' (older Radxa software sends none).
     char* pv = strchr(attr_buf, '|');
+    char mark = '\0';
     if (pv) {
         snprintf(version_buf, sizeof(version_buf), "%s", pv + 1);
         *pv = '\0';
+        // After the version: the new-activity mark ("*" or empty), then the screen light level (newer Radxa software).
+        char* pm = strchr(version_buf, '|');
+        if (pm) {
+            *pm = '\0';
+            char* pl = strchr(pm + 1, '|');
+            mark = pm[1] == '*' ? '*' : '\0';
+            if (pl && pl[1] >= '0' && pl[1] <= '9') apply_light(atoi(pl + 1));
+        }
     }
     if (version_buf[0] && strcmp(version_buf, KYPHONE_VERSION) != 0) {
         Serial.printf(">> WARNING: the Radxa runs OS %s but this firmware is %s - flash and deploy them together\n",
@@ -885,6 +906,11 @@ void render_lock(char* data) {
     int clock_w = strlen(time_str) * 48;
     display.setCursor((600 - clock_w) / 2, 159);
     display.print(time_str);
+    if (mark == '*') {                                          // new activity: a small * just right of the clock
+        display.setTextSize(4);
+        display.setCursor((600 + clock_w) / 2 + 8, 159);
+        display.print("*");
+    }
 
     // Date — textSize 3, centered, top:243
     display.setTextSize(3);
@@ -1299,6 +1325,7 @@ void handle_command(char* text) {
             reclaim_spi_pins_for_gpio();
         }
     } else {
+        if (strncmp(text, "LIGHTSET|", 9) == 0) apply_light(atoi(text + 9));   // the light changes with the drawing
         display.clearDisplay();
         if (ui_dispatch(text, current_screen, sizeof(current_screen))) {
             // OS 0.2.1 screen: drawn by ui_screens.h

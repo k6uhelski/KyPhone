@@ -87,6 +87,8 @@ SCREENS = {
                                                     r('SEARCHING...', '', '')]), None),
     'netlist_off': ('NETLIST|B|0|' + r('Bluetooth', 'Bluetooth is off', 'OFF'), None),
     'netlist_pair': ('NETLIST|P|0|' + r('Speaker', 'New device', '') + '|' + r('SEARCH AGAIN', '', ''), None),
+    'lightset_off': ('LIGHTSET|0', None),
+    'lightset_mid': ('LIGHTSET|5', None),
     'netpass': ('NETPASS|Willow_Street_5G|*******|', None),
     'netpass_back': ('NETPASS|Willow_Street_5G|*******|B', None),
     'netstate_working': ('NETSTATE|W|WORKING|Connecting to Willow_Street_5G...', None),
