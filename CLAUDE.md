@@ -45,10 +45,13 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 
 *   Master waits for Handshake HIGH, then sends 256-byte SPI transfer.
 *   Slave counts SCLK rising edges via IRAM-pinned ISR into a 256-byte `rx_buf`.
-*   If SCLK is silent for > 150 ms (`FRAME_SILENCE_US` in the firmware; it was 600 ms until 0.3.1, which made every frame of a book page cost 0.8 s) and exactly 2048 bits were received, `transfer_complete` is set; the Inkplate then pulls Handshake LOW while it processes the frame and raises it again when done.
+*   The Radxa clocks at **40 kHz** (`SPI_SPEED_HZ`; 10 kHz until 0.6.3). Measured with `tools/link_speed_test.py` (2026-09-26): 330/330 test screens exact at 40 kHz, 40/40 at 50 kHz, flipped bits and lost frames from 60 kHz, nothing at 160 kHz (the ISR misses edges).
+*   If SCLK is silent for > 30 ms (`FRAME_SILENCE_US`; 600 ms until 0.3.1, 150 ms until 0.6.3) and exactly 2048 bits were received, `transfer_complete` is set; the Inkplate then pulls Handshake LOW while it processes the frame and raises it again when done.
 *   After each display refresh, `reclaim_pin15_for_gpio()` re-asserts IO_MUX ownership of Pin 15 (the Inkplate library silently reclaims it during `display.display()`).
 
-**Risk:** A single noise pulse on SCLK shifts the bitstream. Mitigated by exact-bit-count check; no CRC yet.
+**Checked frames (0.6.3):** every frame is `[0xA5, CRC-8 of bytes 3..255, 0x02, text…, 0 padding]`; the firmware recomputes the CRC-8 (polynomial 0x07) and drops a frame that does not match (`>> CHECKSUM MISMATCH` on the serial log), so a flipped bit is not drawn. A 1-byte check misses about 1 damaged frame in 256; at 40 kHz no damaged frames were seen at all. Frames starting 0x00 0x00 0x02 (older Radxa software) are still accepted unchecked. A single noise pulse on SCLK still shifts the bitstream; the exact-bit-count check rejects that.
+
+**Timing (0.6.3, measured):** a screen cycle — transfer 58 ms, 30 ms of silence, the panel's partial refresh — is about **0.6 s** (about 1 s before).
 
 ### **Key firmware constants**
 ```cpp
@@ -324,7 +327,7 @@ How we work on this project.
 4.  **The design is measured, not eyeballed.** Layout numbers come from `GEOMETRY.md` and from measuring the designer's 600×600 captures; every screen is compared side by side with its capture, and pixel tests pin the geometry.
 5.  **Rollback safety.** Take a full flash dump of the Inkplate and a copy of the Radxa's code and data before changing either; the old renderers live in git history rather than beside the new ones.
 6.  **Privacy by architecture.** Phone numbers and credentials never touch git. The public repo contains zero PII; test data is fictional.
-7.  **Exact-count framing, no silent corruption.** The SCLK-timeout approach only accepts a transfer if exactly 2048 bits arrived. Partial or noisy frames are discarded. No CRC yet — if one is added, it goes here, not in the renderer.
+7.  **Exact-count framing, no silent corruption.** The SCLK-timeout approach only accepts a transfer if exactly 2048 bits arrived, and (0.6.3) its CRC-8 must match. Partial, noisy or damaged frames are discarded — in the transport, never in the renderer.
 
 ### **Known constraints / gotchas**
 Non-obvious facts that will bite future maintainers if undocumented.
