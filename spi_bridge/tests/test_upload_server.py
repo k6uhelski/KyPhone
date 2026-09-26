@@ -16,6 +16,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+import unittest.mock
 from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,9 +51,9 @@ class SafeNames(unittest.TestCase):
         open(os.path.join(d, 'a (2).mp3'), 'w').close()
         self.assertEqual(us.unique_path(d, 'a.mp3'), os.path.join(d, 'a (3).mp3'))
 
-    def test_the_code_is_four_digits(self):
+    def test_the_code_is_six_digits(self):
         for _ in range(50):
-            self.assertRegex(us.new_code(), r'^\d{4}$')
+            self.assertRegex(us.new_code(), r'^\d{6}$')
 
 
 class VCards(unittest.TestCase):
@@ -115,6 +116,40 @@ class Server(unittest.TestCase):
         self.assertNotIn('4821', page)                                  # the code is only on the phone
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(self.base + '/data/contacts.json', timeout=5)
+
+    def test_every_reply_carries_the_security_headers(self):
+        with urllib.request.urlopen(self.base + '/', timeout=5) as r:
+            headers = r.headers
+        self.assertEqual(headers['X-Frame-Options'], 'DENY')
+        self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+        self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
+        self.assertIn("connect-src 'self'", headers['Content-Security-Policy'])
+
+    def test_a_request_addressed_to_another_name_is_refused(self):
+        server = us.UploadServer(self.books, self.music, self.events.append, lambda c: '', code='4821',
+                                 host='127.0.0.1', port=0, address='127.0.0.1').start()
+        self.addCleanup(server.stop)
+        ok = urllib.request.urlopen(f'http://127.0.0.1:{server.port}/', timeout=5)
+        self.assertEqual(ok.status, 200)                              # the phone's own address: fine
+        req = urllib.request.Request(f'http://127.0.0.1:{server.port}/upload?kind=books&name=a.epub', data=b'x',
+                                     method='PUT', headers={'X-Code': '4821', 'Host': 'evil.example:%d' % server.port})
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 421)
+        self.assertFalse(os.path.exists(self.books))
+
+    def test_it_stops_by_itself_when_left_idle(self):
+        import time
+        with unittest.mock.patch.object(us, 'IDLE_SECONDS', 0.4):
+            server = us.UploadServer(self.books, self.music, self.events.append, lambda c: '',
+                                     self.stopped.append, code='4821', host='127.0.0.1', port=0).start()
+            self.addCleanup(server.stop)
+            for _ in range(40):
+                if not server.running:
+                    break
+                time.sleep(0.05)
+        self.assertFalse(server.running)
+        self.assertEqual(self.stopped, ['idle'])
 
     def test_a_book_arrives_and_is_announced(self):
         self.assertEqual(self.put('books', 'Moby Dick.epub', b'PK\x03\x04book'), (200, 'added Moby Dick.epub'))

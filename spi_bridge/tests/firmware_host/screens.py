@@ -76,8 +76,8 @@ SCREENS = {
     'edit_delete': ('CONTACTEDIT|Pip|Okonkwo|(917) 555-0101|4|E', '08_edit_contact_delete_selected.png'),
     'thread_call': ('THREAD2|Pip Okonkwo|||' + r('C', '', 'LAST CALL: MISSED, YESTERDAY') + '|' +
                     r('R', '9:02 AM', 'Are we still on for lunch?') + '|' + r('Y1', '9:05 AM', 'Yes, see you at noon'), None),
-    'upload_empty': ('UPLOAD|192.168.1.23:8080|4821|', None),
-    'upload_got': ('UPLOAD|192.168.1.23:8080|4821|Moby Dick.epub' + O + '01 So What.mp3' + O + 'Contacts: 3 added', None),
+    'upload_empty': ('UPLOAD|192.168.1.23:8080|482193|', None),
+    'upload_got': ('UPLOAD|192.168.1.23:8080|482193|Moby Dick.epub' + O + '01 So What.mp3' + O + 'Contacts: 3 added', None),
     'chapters': ('CHAPTERS|1|' + '|'.join([r('The Beginning', '0%', ''), r('A Very Long Middle...', '12%', 'HERE'),
                                            r('The End', '88%', '')]), None),
     'home_notes': ('HOME2|12:44 PM|5|0|I', None),

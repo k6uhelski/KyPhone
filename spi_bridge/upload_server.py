@@ -7,7 +7,12 @@ contacts file (.vcf), and they land in data/books/, data/music/ and data/contact
 Standard library only (http.server), importable without hardware, so the whole thing is tested on the Mac.
 
 Safety, since anyone on the Wi-Fi can reach the page while it is open:
-    * every upload must carry the code shown on the phone; after MAX_BAD_CODES wrong codes the server stops itself
+    * every upload must carry the six-digit code shown on the phone; after MAX_BAD_CODES wrong codes the server
+      stops itself (so a guess succeeds at most 10 times in 1,000,000)
+    * it stops by itself after IDLE_SECONDS with no upload, even if the phone's screen is left open
+    * only requests addressed to the phone's own address are answered (a web page elsewhere cannot reach it by
+      pointing a made-up name at the phone: "DNS rebinding"), and the page forbids framing and outside scripts
+    * it is plain HTTP on the home network: the Wi-Fi's own encryption (WPA2/3) is what protects it in transit
     * only the listed file types are taken; a file name is reduced to plain characters and can never leave its
       folder (no paths, no leading dots); an existing file is never overwritten ("Song (2).mp3" instead)
     * each file has a size limit and there must be room on the disk for it; it is written to a temporary name and
@@ -21,11 +26,21 @@ import secrets
 import shutil
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8080
 MAX_BAD_CODES = 10
+IDLE_SECONDS = 600         # stop after 10 minutes with no upload
+CODE_DIGITS = 6
+SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                               "connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+}
 BOOK_TYPES = ('.epub',)
 MUSIC_TYPES = ('.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wav')
 MAX_BOOK_BYTES = 100 * 1024 * 1024
@@ -36,7 +51,7 @@ CHUNK = 64 * 1024
 
 
 def new_code():
-    return f'{secrets.randbelow(10000):04d}'
+    return f'{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}'
 
 
 def lan_address():
@@ -132,7 +147,7 @@ h2{font:600 13px/1 Menlo,Monaco,monospace;letter-spacing:.12em;margin:0 0 12px;c
 .card{background:#fff;border:2px solid #111;padding:22px;margin-bottom:18px}
 .step{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .code{display:flex;gap:10px}
-.code input{width:56px;height:68px;border:2px solid #111;font:700 34px/1 Menlo,Monaco,monospace;text-align:center;
+.code input{width:52px;height:66px;border:2px solid #111;font:700 34px/1 Menlo,Monaco,monospace;text-align:center;
   background:#fff;color:#111;outline:none}
 .code input:focus{background:#111;color:#fff}
 .bad .code input{border-color:#b00020;animation:shake .3s}
@@ -166,6 +181,7 @@ footer{color:#777;font-size:13px;margin-top:22px}
   <div class="step"><div class="code" id="code">
     <input inputmode="numeric" maxlength="1" aria-label="digit 1"><input inputmode="numeric" maxlength="1" aria-label="digit 2">
     <input inputmode="numeric" maxlength="1" aria-label="digit 3"><input inputmode="numeric" maxlength="1" aria-label="digit 4">
+    <input inputmode="numeric" maxlength="1" aria-label="digit 5"><input inputmode="numeric" maxlength="1" aria-label="digit 6">
   </div><span class="status" id="codestatus"></span></div>
   <p class="hint">On the phone: Settings &rarr; Add from a computer. Keep that screen open while you add things.</p>
 </section>
@@ -186,7 +202,8 @@ footer{color:#777;font-size:13px;margin-top:22px}
   <ul id="list"></ul>
   <div id="summary"></div>
 </section>
-<footer>Nothing is read back from the phone; this page only adds. It stops when the phone leaves that screen.</footer>
+<footer>Nothing is read back from the phone; this page only adds. It stops when the phone leaves that screen,
+after 10 minutes without use, or after 10 wrong codes.</footer>
 </main>
 <script>
 const BOOK = ['epub'], MUSIC = ['mp3','m4a','aac','flac','ogg','opus','wav'], CONTACTS = ['vcf'];
@@ -198,7 +215,7 @@ let queue = [], busy = false, stopped = false, counts = {books: 0, music: 0, con
 
 function setCode(c) {
   code = c; boxes.forEach((b, i) => b.value = c[i] || '');
-  const ok = /^\d{4}$/.test(c);
+  const ok = /^\d{6}$/.test(c);
   drop.classList.toggle('off', !ok);
   document.getElementById('codecard').classList.remove('bad');
   const st = document.getElementById('codestatus');
@@ -208,12 +225,12 @@ function setCode(c) {
 boxes.forEach((b, i) => {
   b.addEventListener('input', () => {
     b.value = b.value.replace(/\D/g, '').slice(-1);
-    if (b.value && i < 3) boxes[i + 1].focus();
+    if (b.value && i < 5) boxes[i + 1].focus();
     setCode(boxes.map(x => x.value).join(''));
   });
   b.addEventListener('keydown', e => { if (e.key === 'Backspace' && !b.value && i > 0) boxes[i - 1].focus(); });
-  b.addEventListener('paste', e => { const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 4);
-    if (t) { e.preventDefault(); setCode(t); boxes[Math.min(3, t.length)].focus(); } });
+  b.addEventListener('paste', e => { const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+    if (t) { e.preventDefault(); setCode(t); boxes[Math.min(5, t.length)].focus(); } });
 });
 setCode(code); (code ? drop : boxes[0]).focus();
 
@@ -302,15 +319,19 @@ window.addEventListener('drop', e => e.preventDefault());
 class UploadServer:
     """One upload session. `on_event(text)` is told about each file received (for the phone's screen);
     `on_contacts(cards)` merges parsed vCards and returns a one-line summary; `on_stopped(reason)` is called if
-    the server stops itself (too many wrong codes)."""
+    the server stops itself ('too many wrong codes' or 'idle'). `address`, if given, is the only Host a request may
+    be addressed to (the phone's own IP)."""
 
     def __init__(self, books_dir, music_dir, on_event, on_contacts, on_stopped=None, code=None,
-                 host='0.0.0.0', port=PORT):
+                 host='0.0.0.0', port=PORT, address=None):
         self.books_dir, self.music_dir = books_dir, music_dir
         self.on_event, self.on_contacts, self.on_stopped = on_event, on_contacts, on_stopped
         self.code = code or new_code()
         self.host, self.port = host, port
+        self.address = address
         self.bad_codes = 0
+        self._last_activity = time.monotonic()
+        self._uploading = 0
         self._httpd = None
         self._thread = None
         self._lock = threading.Lock()
@@ -332,10 +353,20 @@ class UploadServer:
                 self.send_header('Content-Type', ctype)
                 self.send_header('Content-Length', str(len(body)))
                 self.send_header('Cache-Control', 'no-store')
+                for name, value in SECURITY_HEADERS.items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(body)
 
+            def addressed_to_us(self):
+                """The Host header must name the phone's own address and port (blocks DNS rebinding)."""
+                if server.address is None:
+                    return True
+                return self.headers.get('Host', '') == '%s:%d' % (server.address, server.port)
+
             def do_GET(self):
+                if not self.addressed_to_us():
+                    return self.reply(421, 'wrong address')
                 if urlparse(self.path).path in ('/', '/index.html'):
                     self.reply(200, PAGE, 'text/html; charset=utf-8')
                 else:
@@ -343,6 +374,9 @@ class UploadServer:
 
             def do_PUT(self):
                 url = urlparse(self.path)
+                if not self.addressed_to_us():
+                    self.close_connection = True
+                    return self.reply(421, 'wrong address')
                 if url.path != '/upload':
                     return self.reply(404, 'not found')
                 if not server._check_code(self.headers.get('X-Code', '')):
@@ -353,8 +387,12 @@ class UploadServer:
                 except ValueError:
                     return self.reply(411, 'no length')
                 q = {k: v[0] for k, v in parse_qs(url.query).items()}
-                status, text = server._receive(q.get('kind', ''), q.get('name', ''), q.get('folder', ''),
-                                               length, self.rfile)
+                server._touch(+1)
+                try:
+                    status, text = server._receive(q.get('kind', ''), q.get('name', ''), q.get('folder', ''),
+                                                   length, self.rfile)
+                finally:
+                    server._touch(-1)
                 self.reply(status, text)
 
         self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
@@ -362,7 +400,26 @@ class UploadServer:
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
+        self._last_activity = time.monotonic()
+        threading.Thread(target=self._watch_idle, args=(self._httpd,), daemon=True).start()
         return self
+
+    def _touch(self, delta):
+        with self._lock:
+            self._uploading += delta
+            self._last_activity = time.monotonic()
+
+    def _watch_idle(self, httpd):
+        """Stop after IDLE_SECONDS with no upload in progress or finished (checked a few times a minute)."""
+        while self._httpd is httpd:
+            time.sleep(min(5.0, IDLE_SECONDS / 4))
+            with self._lock:
+                idle = self._uploading == 0 and time.monotonic() - self._last_activity >= IDLE_SECONDS
+            if idle and self._httpd is httpd:
+                self.stop()
+                if self.on_stopped:
+                    self.on_stopped('idle')
+                return
 
     def stop(self):
         httpd, self._httpd = self._httpd, None

@@ -252,6 +252,7 @@ STUB_INFO = {}       # (READ and LISTEN were the last two; both are real screens
 ALERTS = {
     'NO_NETWORK':   ('SETTINGS', 'THE PHONE IS NOT ON A NETWORK. JOIN ONE UNDER WI-FI, THEN TRY AGAIN.'),
     'UPLOAD_FAILED': ('SETTINGS', 'THE UPLOAD PAGE COULD NOT START ({why}). TRY AGAIN IN A MOMENT.'),
+    'UPLOAD_IDLE':  ('SETTINGS', 'THE UPLOAD PAGE STOPPED AFTER 10 MINUTES WITHOUT USE. OPEN IT AGAIN FOR A NEW CODE.'),
     'UPLOAD_STOPPED': ('SETTINGS', 'THE UPLOAD PAGE STOPPED: TOO MANY WRONG CODES WERE TRIED. OPEN IT AGAIN FOR A NEW CODE.'),
     'BT_KEEP_ON':   ('BLUETOOTH', 'BLUETOOTH STAYS ON WHILE THE KEYBOARD IS CONNECTED BY IT. SWITCHED OFF, THE PHONE WOULD HAVE NO WAY TO TYPE, SO NOTHING COULD SWITCH IT BACK ON.'),
     'BT_KEEP_KEYBOARD': ('BLUETOOTH', "THE KEYBOARD CANNOT BE FORGOTTEN. IT IS THE PHONE'S WAY TO TYPE, AND PAIRING IT AGAIN WOULD NEED A KEYBOARD."),
@@ -3411,7 +3412,8 @@ def _open_upload():
     if not ip:
         _show_alert('NO_NETWORK', 'settings')
         return
-    server = upload_server.UploadServer(BOOKS_DIR, MUSIC_DIR, _upload_event, _import_contacts, _upload_stopped)
+    server = upload_server.UploadServer(BOOKS_DIR, MUSIC_DIR, _upload_event, _import_contacts, _upload_stopped,
+                                        address=ip)
     try:
         server.start()
     except OSError as e:
@@ -3448,7 +3450,7 @@ def _upload_stopped(reason):
     with state['lock']:
         showing = state['screen'] == 'upload'
     if showing:
-        _show_alert('UPLOAD_STOPPED', 'settings')
+        _show_alert('UPLOAD_IDLE' if reason == 'idle' else 'UPLOAD_STOPPED', 'settings')
 
 
 def _stop_upload():

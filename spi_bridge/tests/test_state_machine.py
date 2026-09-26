@@ -2242,7 +2242,8 @@ class TestCallsAndTextsPerPerson(unittest.TestCase):
 class FakeUploadServer:
     instances = []
 
-    def __init__(self, books, music, on_event, on_contacts, on_stopped, fail=False):
+    def __init__(self, books, music, on_event, on_contacts, on_stopped, fail=False, address=None):
+        self.address = address
         self.on_event, self.on_contacts, self.on_stopped = on_event, on_contacts, on_stopped
         self.code, self.port, self.running, self.fail = '4821', 8080, False, fail
         FakeUploadServer.instances.append(self)
@@ -2274,7 +2275,7 @@ class TestAddFromAComputer(unittest.TestCase):
         reset_state(screen='settings', settings_index=4)
         with patch.object(kyphone_os.upload_server, 'lan_address', return_value=ip), \
                 patch.object(kyphone_os.upload_server, 'UploadServer',
-                             side_effect=lambda *a: FakeUploadServer(*a, fail=fail)):
+                             side_effect=lambda *a, **k: FakeUploadServer(*a, fail=fail, **k)):
             return self.press('KEY_ENTER')
 
     def test_the_settings_row(self):
@@ -2317,6 +2318,16 @@ class TestAddFromAComputer(unittest.TestCase):
         wire = self.open(fail=True)
         self.assertTrue(wire.startswith('STUB|SETTINGS|THE UPLOAD PAGE COULD NOT START (ADDRESS ALREADY IN USE)'))
         self.assertEqual(kyphone_os.state['stub_return'], 'settings')
+
+    def test_the_server_only_answers_to_the_phones_own_address(self):
+        self.open()
+        self.assertEqual(FakeUploadServer.instances[0].address, '192.168.1.23')
+
+    def test_an_idle_stop_says_so(self):
+        self.open()
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            FakeUploadServer.instances[0].on_stopped('idle')
+        self.assertTrue(_wire(ps).startswith('STUB|SETTINGS|THE UPLOAD PAGE STOPPED AFTER 10 MINUTES WITHOUT USE'))
 
     def test_too_many_wrong_codes_raise_an_alert(self):
         self.open()
