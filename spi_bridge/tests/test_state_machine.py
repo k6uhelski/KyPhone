@@ -3244,15 +3244,30 @@ class TestSettingsResponsiveness(SettingsBase):
 
 
 class TestWifiList(SettingsBase):
-    def test_the_switch_then_the_joined_network_then_the_rest_a_to_z(self):
+    def test_the_switch_the_joined_network_then_other_networks_a_to_z_opening_on_the_joined_one(self):
         wire = self.open_settings(0)
         self.assertEqual(kyphone_os.state['screen'], 'wifi')
-        self.assertTrue(wire.startswith('NETLIST|W|0|'))
-        self.assertEqual(self.titles(wire), ['Wi-Fi', 'Maple', 'Birch_5G', 'OpenCafe', 'willow'])
+        self.assertTrue(wire.startswith('NETLIST|W|1|'))           # it opens on the joined network
+        self.assertEqual(self.titles(wire), ['Wi-Fi', 'Maple', '#OTHER NETWORKS', 'Birch_5G', 'OpenCafe'])
         rows = _rows(wire, 3)
         self.assertEqual(rows[0], 'Wi-Fi' + CELL + 'Wi-Fi is on' + CELL + 'ON')
         self.assertEqual(rows[1], 'Maple' + CELL + 'Connected' + CELL)
-        self.assertIn(CELL + 'Open' + CELL, rows[3])
+        self.assertEqual(rows[2], '#OTHER NETWORKS' + CELL + CELL)
+        self.assertIn(CELL + 'Open' + CELL, rows[4])
+
+    def test_the_arrows_skip_the_section_label(self):
+        self.open_settings(0)
+        wire = self.press('KEY_DOWN')                              # from Maple straight to Birch_5G
+        self.assertEqual(self.selected(wire), 'Birch_5G')
+        wire = self.press('KEY_UP')
+        self.assertEqual(self.selected(wire), 'Maple')
+
+    def test_a_network_really_named_with_a_hash_is_not_a_label(self):
+        self.net.nearby.append(nc.WifiNetwork('#hashnet', 20, False, False))
+        wire = self.open_settings(0)
+        for _ in range(3):
+            wire = self.press('KEY_DOWN')
+        self.assertIn(' #hashnet' + CELL, wire)
 
     def test_the_list_is_drawn_before_the_search_answers(self):
         pending = []
@@ -3260,11 +3275,11 @@ class TestWifiList(SettingsBase):
         self.press('KEY_ENTER')
         with patch.object(kyphone_os, '_run_async', new=pending.append):
             wire = self.press('KEY_ENTER')
-        self.assertEqual(self.titles(wire), ['Wi-Fi', 'Maple', 'SEARCHING...'])
+        self.assertEqual(_rows(wire, 3)[2], '#OTHER NETWORKS' + CELL + CELL + 'SEARCHING...')
         self.assertEqual(self.net.called('wifi_scan'), [])     # the search has not even run yet
         with patch.object(kyphone_os, 'push_screen') as ps:
             pending[0]()                                       # the search answers: one redraw
-        self.assertEqual(self.titles(_wire(ps))[-1], 'willow')        # (the window shows the first five rows)
+        self.assertEqual(self.titles(_wire(ps))[-1], 'OpenCafe')      # (the window shows the first five rows)
         self.assertEqual(ps.call_count, 1)
 
     def test_search_again_is_the_last_row_and_runs_another_search(self):
@@ -3278,7 +3293,7 @@ class TestWifiList(SettingsBase):
     def test_an_empty_search_says_so(self):
         self.net.current, self.net.nearby = None, []
         wire = self.open_settings(0)
-        self.assertEqual(_rows(wire, 3)[1], 'SEARCH AGAIN' + CELL + 'No networks found' + CELL)
+        self.assertEqual(_rows(wire, 3)[1:], ['#OTHER NETWORKS' + CELL + CELL + 'NONE FOUND', 'SEARCH AGAIN' + CELL + CELL])
 
     def test_switched_off_the_list_is_only_the_switch_and_nothing_searches(self):
         self.net.wifi_on = False
@@ -3288,7 +3303,8 @@ class TestWifiList(SettingsBase):
 
     def test_the_switch_turns_wifi_off_and_on(self):
         self.open_settings(0)
-        wire = self.press('KEY_ENTER')                         # on the switch row
+        self.press('KEY_UP')                                   # up to the switch
+        wire = self.press('KEY_ENTER')
         self.assertEqual(self.net.called('wifi_set_enabled'), [(False,)])
         self.assertEqual(_rows(wire, 3), ['Wi-Fi' + CELL + 'Wi-Fi is off' + CELL + 'OFF'])
         wire = self.press('KEY_ENTER')
@@ -3297,8 +3313,7 @@ class TestWifiList(SettingsBase):
 
     def test_the_joined_network_offers_forget_this_network_on_the_safe_default(self):
         self.open_settings(0)
-        self.press('KEY_DOWN')
-        wire = self.press('KEY_ENTER')
+        wire = self.press('KEY_ENTER')                         # it opened on Maple
         self.assertEqual(kyphone_os.state['screen'], 'confirm')
         self.assertTrue(wire.startswith('CONFIRM|WI-FI|FORGET MAPLE?'))
         self.assertTrue(wire.endswith('|FORGET|KEEP|K'))
@@ -3307,14 +3322,13 @@ class TestWifiList(SettingsBase):
 
     def test_forget_this_network(self):
         self.open_settings(0)
-        self.press('KEY_DOWN')
         self.press('KEY_ENTER')
         self.press('KEY_LEFT')
         self.net.current = None                               # (what nmcli would report afterwards)
         wire = self.press('KEY_ENTER')
         self.assertEqual(self.net.called('wifi_forget'), [('Maple',)])
         self.assertEqual(kyphone_os.state['screen'], 'wifi')
-        self.assertEqual(self.titles(wire)[1], 'Birch_5G')
+        self.assertEqual(self.titles(wire)[1:3], ['#OTHER NETWORKS', 'Birch_5G'])
 
     def test_a_secured_network_asks_for_its_password(self):
         wire = self.open_settings(0)
@@ -3337,6 +3351,7 @@ class TestWifiList(SettingsBase):
         self.assertEqual(kyphone_os.state['screen'], 'settings')
         self.open_settings(0)
         self.press('KEY_UP')
+        self.press('KEY_UP')                                   # Maple -> the switch -> the header
         self.press('KEY_ENTER')
         self.assertEqual(kyphone_os.state['screen'], 'settings')
 
@@ -3344,7 +3359,7 @@ class TestWifiList(SettingsBase):
         self.net.nearby = [nc.WifiNetwork(f'Net{i:02d}', 50, True, False) for i in range(12)]
         self.net.current = None
         self.open_settings(0)
-        for _ in range(13):                                    # the switch, 12 networks, SEARCH AGAIN
+        for _ in range(14):                                    # the switch, 12 networks, SEARCH AGAIN (the label skipped)
             wire = self.press('KEY_DOWN')
         self.assertEqual(self.selected(wire), 'SEARCH AGAIN')
         self.assertLessEqual(len(_rows(wire, 3)), kyphone_os.NET_ROWS)

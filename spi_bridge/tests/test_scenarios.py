@@ -427,7 +427,7 @@ class Scenarios(PhoneCase):
         self.key('KEY_ENTER')                                     # Wi-Fi
         self.assertEqual(self.st['screen'], 'wifi')
         self.assertIn('Birch_5G', self.wire)
-        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')             # Birch_5G is secured: the password box
+        self.key('KEY_DOWN', 'KEY_ENTER')                         # opened on Maple; Birch_5G is secured: the password box
         self.assertEqual(self.st['screen'], 'netpass')
         self.type('wrong')
         self.key('KEY_ENTER')

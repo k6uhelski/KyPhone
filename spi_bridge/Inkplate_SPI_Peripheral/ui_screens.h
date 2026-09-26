@@ -350,9 +350,9 @@ static void ui_rows2(char* data, const char* header, const char* empty_title, co
         ui_empty_state(empty_title, empty_hint, 44, 600);
         return;
     }
-    const int row_h = 111, margin = 28;
-    int r = 0;
-    for (int i = first; i < n && r < 5; i++) {
+    const int row_h = 111, section_h = 56, margin = 28;
+    int r = 0, y = 44;
+    for (int i = first; i < n && r < 5 && y < 600; i++) {
         if (f[i][0] == '\0') continue;
         char* sf[3];
         int sn = ui_split(f[i], UI_SUB, sf, 3);
@@ -360,7 +360,13 @@ static void ui_rows2(char* data, const char* header, const char* empty_title, co
         const char* sub   = ui_fld(sf, sn, 1);
         const char* right = ui_fld(sf, sn, 2);
 
-        int y = 44 + r * row_h;
+        if (title[0] == '#') {                            // a section label ("OTHER NETWORKS"): small, never selected
+            ui_text(title + 1, margin, y + 44, 2, BLACK, true);
+            if (right[0]) ui_text_right(right, 600 - margin, y + 44, 2, BLACK, false);
+            y += section_h;
+            r++;
+            continue;
+        }
         bool is_sel = (r == sel);
         uint16_t fg = is_sel ? WHITE : BLACK;
         if (is_sel) display.fillRect(0, y, 600, row_h, BLACK);
@@ -371,6 +377,7 @@ static void ui_rows2(char* data, const char* header, const char* empty_title, co
         if (right[0]) ui_text(right, chev_x - 10 - ui_tw(right, 2), y + 40, 2, fg, false);
         ui_text(sub, margin, y + 77, 2, fg, false);
         ui_hline(y + row_h - 1, 1);
+        y += row_h;
         r++;
     }
 }

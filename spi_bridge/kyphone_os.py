@@ -3613,7 +3613,7 @@ def _open_wifi(keep_index=False):
         state['net_rows']     = []
         state['net_scanning'] = on
         if not keep_index:
-            state['net_index'] = 0
+            state['net_index'] = 1 if status.connected else 0      # it opens on the joined network
             state['net_start'] = 0
     push_net()
     if on:
@@ -3682,10 +3682,17 @@ def _net_entries(kind, on, current, rows, scanning):
         entries.append(('pairnew', None, ['PAIR NEW DEVICE', 'Put the device in pairing mode first', '']))
         return entries
     if kind == 'W':
+        # Laid out like a phone's Wi-Fi page (Kyle, 2026-09-26): the switch and the joined network, then a small
+        # OTHER NETWORKS label (a section row: never selected, the arrows skip it) with the search's state beside it.
         if current:
             entries.append(('current', current, [current, 'Connected', '']))
         nearby = sorted((n for n in rows if n.ssid != current), key=lambda n: n.ssid.lower())
+        state_word = 'SEARCHING...' if scanning else ('NONE FOUND' if not nearby else '')
+        entries.append(('section', None, [SECTION_MARK + 'OTHER NETWORKS', '', state_word]))
         entries += [('net', n, [n.ssid, 'Secured' if n.secured else 'Open', '']) for n in nearby]
+        if not scanning:
+            entries.append(('again', None, ['SEARCH AGAIN', '', '']))
+        return entries
     else:
         entries += [('device', d, [d.name, 'New device', '']) for d in sorted(rows, key=lambda d: d.name.lower())]
     if scanning:
@@ -3694,6 +3701,17 @@ def _net_entries(kind, on, current, rows, scanning):
         none = ('No networks found' if kind == 'W' else 'No devices found') if not rows else ''
         entries.append(('again', None, ['SEARCH AGAIN', none, '']))
     return entries
+
+
+SECTION_MARK = '#'      # a row title starting with this is a section label (the renderers draw it small, unselectable)
+
+
+def _net_step(entries, idx, step):
+    """Move the selection one row, skipping section labels; -1 is the header."""
+    j = idx + step
+    while 0 <= j < len(entries) and entries[j][0] == 'section':
+        j += step
+    return idx if j >= len(entries) else max(-1, j)
 
 
 def _net_snapshot():
@@ -3711,7 +3729,12 @@ def push_net():
         start = window_start(state['net_start'], max(0, idx), NET_ROWS, len(entries))
         state['net_start'] = start
     send_idx = idx if idx < 0 else idx - start
-    shown = [[sanitize(entry[2][0])[:NET_NAME_MAX], sanitize(entry[2][1]), entry[2][2]]
+    def title(entry):
+        t = sanitize(entry[2][0])
+        if entry[0] != 'section' and t.startswith(SECTION_MARK):
+            t = ' ' + t                                   # a network really called "#..." is not a section label
+        return t[:NET_NAME_MAX]
+    shown = [[title(entry), sanitize(entry[2][1]), entry[2][2]]
              for entry in entries[start:start + NET_ROWS]]
     push_screen(_list_command(["NETLIST", kind, str(send_idx)], shown, shrink_order=(0,)))
 
@@ -3732,7 +3755,7 @@ def _from_net(keycode):
     elif keycode in ('KEY_UP', 'KEY_DOWN'):
         step = -1 if keycode == 'KEY_UP' else 1
         with state['lock']:
-            state['net_index'] = max(-1, min(len(entries) - 1, idx + step))
+            state['net_index'] = _net_step(entries, idx, step)
         push_net()
     elif keycode == 'KEY_ENTER' and 0 <= idx < len(entries):
         what, item, _ = entries[idx]

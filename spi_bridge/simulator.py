@@ -898,10 +898,18 @@ class Simulator:
             self._draw_empty_state(empty_title, empty_hint, 44, self.HEIGHT)
             return
 
-        row_h, margin = 111, 28
+        row_h, section_h, margin = 111, 56, 28
+        y = 44
         for i, entry in enumerate(entries[:5]):
-            y = 44 + i * row_h
+            if y >= self.HEIGHT:
+                break
             title, sub, right = (entry.split('\xb7') + ['', '', ''])[:3]
+            if title.startswith('#'):                         # a section label ("OTHER NETWORKS"): small, unselectable
+                self._text_bl(title[1:], margin, y + 44, 2, BLACK, bold=True)
+                if right:
+                    self._text_right(right, self.WIDTH - margin, y + 44, 2, BLACK)
+                y += section_h
+                continue
             sel = i == idx
             fg = WHITE if sel else BLACK
             if sel:
@@ -912,6 +920,7 @@ class Simulator:
                 self._text_right(right, chev_x - 10, y + 40, 2, fg)
             self._text_bl(sub, margin, y + 77, 2, fg)
             self._line(y + row_h - 1)
+            y += row_h
 
     def _draw_library(self, data):
         # data = "sel|title·author·pct|..."   sel: -1=back, 0..4=row within the 5-row window

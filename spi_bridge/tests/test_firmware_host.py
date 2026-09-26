@@ -254,6 +254,15 @@ class FirmwareFrames(unittest.TestCase):
         self.assertGreater(self.ink_box(g, 24, 364 + 68, 400, 364 + 68 + 24), 50)      # the third received line
         self.assertEqual(self.ink_box(e, 24, 364 + 68, 400, 364 + 68 + 24), 0)          # (empty: NOTHING YET only)
 
+    def test_a_section_label_is_a_short_unselected_row_and_the_rows_below_move_up(self):
+        f = self.frames['netlist_sections']
+        self.assertTrue(self.ink(f, 4, 44 + 111 + 4))                               # row 1 (Maple) selected
+        label_top = 44 + 2 * 111
+        self.assertFalse(self.ink(f, 4, label_top + 10))                             # the label is never filled
+        self.assertGreater(self.ink_box(f, 28, label_top + 28, 300, label_top + 46), 20)   # OTHER NETWORKS
+        self.assertGreater(self.ink_box(f, 400, label_top + 28, 572, label_top + 46), 20)  # SEARCHING...
+        self.assertTrue(self.ink(f, 300, label_top + 56 + 111 - 1))                  # Birch_5G's rule: 56 px lower
+
     def test_home_can_select_settings(self):
         self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
 
@@ -399,7 +408,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
     NAMES = ['music', 'music_empty', 'tracks', 'nowplaying', 'nowplaying_paused', 'home_playing', 'home', 'home_read', 'home_listen', 'home_contacts', 'home_both', 'home_words', 'home_icons_end', 'texts', 'texts_empty', 'library', 'library_empty', 'contacts', 'calls', 'thread_sending', 'thread_retry',
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
-             'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
+             'netlist_scanning', 'netlist_sections', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
              'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'chapters', 'upload_empty',
              'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
