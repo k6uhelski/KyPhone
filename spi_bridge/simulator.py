@@ -232,6 +232,8 @@ class Simulator:
             self._draw_lightset(rest)
         elif prefix == 'NOTES':
             self._draw_notes(rest)
+        elif prefix == 'UPLOAD':
+            self._draw_upload(rest)
         elif prefix == 'NOTE':
             self._draw_note(rest)
         elif prefix == 'DIAL':
@@ -975,6 +977,23 @@ class Simulator:
             last = lines[-1] if lines else ''
             y = 60 + 38 * (max(1, len(lines)) - 1)
             pygame.draw.rect(self._surface, BLACK, (24 + self._font(3).size(last)[0], y, self._char_w(3), 24))
+
+    def _draw_upload(self, data):
+        # data = "address|code|received·received·..."  — ADD FROM A COMPUTER, open only while this screen shows
+        parts = data.split('|')
+        addr = parts[0] if parts else ''
+        code = parts[1] if len(parts) > 1 else ''
+        got  = [x for x in (parts[2].split('\xb7') if len(parts) > 2 else []) if x][:3]
+        self._draw_header_bar_back_only('ADD FROM A COMPUTER', False)
+        self._text_centered('ON A COMPUTER ON THE SAME WI-FI, OPEN:', 96, 2)
+        self._text_centered(addr, 124, 4, bold=True)
+        self._text_centered('AND TYPE THE CODE', 196, 2)
+        self._text_centered(code, 224, 8, bold=True)
+        self._line(318)
+        self._text('RECEIVED:', 24, 334, 2)
+        for i, line in enumerate(got or ['NOTHING YET']):
+            self._text(line, 24, 364 + 34 * i, 3)
+        self._text_centered('ENTER OR Q TO STOP', self.HEIGHT - 34 - 16, 2)
 
     def _draw_lightset(self, data):
         # data = "level"  0 (off) .. 8. The panel also sets its front light to this level.

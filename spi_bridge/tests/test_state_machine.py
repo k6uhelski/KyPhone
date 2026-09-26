@@ -2239,6 +2239,114 @@ class TestCallsAndTextsPerPerson(unittest.TestCase):
         self.assertEqual([c.get('number') for c in kyphone_os.state['calls']], ['(555) 010-0001', None])
 
 
+class FakeUploadServer:
+    instances = []
+
+    def __init__(self, books, music, on_event, on_contacts, on_stopped, fail=False):
+        self.on_event, self.on_contacts, self.on_stopped = on_event, on_contacts, on_stopped
+        self.code, self.port, self.running, self.fail = '4821', 8080, False, fail
+        FakeUploadServer.instances.append(self)
+
+    def start(self):
+        if self.fail:
+            raise OSError(98, 'Address already in use')
+        self.running = True
+        return self
+
+    def stop(self):
+        self.running = False
+
+
+class TestAddFromAComputer(unittest.TestCase):
+    def setUp(self):
+        FakeUploadServer.instances = []
+        self.addCleanup(setattr, kyphone_os, '_upload', None)
+
+    def press(self, *keys):
+        wire = None
+        for key in keys:
+            with patch.object(kyphone_os, 'push_screen') as ps:
+                kyphone_os.handle_key(key)
+            wire = _wire(ps) or wire
+        return wire
+
+    def open(self, ip='192.168.1.23', fail=False):
+        reset_state(screen='settings', settings_index=4)
+        with patch.object(kyphone_os.upload_server, 'lan_address', return_value=ip), \
+                patch.object(kyphone_os.upload_server, 'UploadServer',
+                             side_effect=lambda *a: FakeUploadServer(*a, fail=fail)):
+            return self.press('KEY_ENTER')
+
+    def test_the_settings_row(self):
+        reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
+        with patch.object(nc, 'wifi_enabled', return_value=True), \
+                patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(False)), \
+                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
+            rows = _rows(self.press('KEY_ENTER'), 2)
+        self.assertEqual(rows[4], 'Add from a computer' + CELL + 'Books, music, contacts' + CELL)
+
+    def test_opening_starts_the_page_and_shows_the_address_and_code(self):
+        wire = self.open()
+        self.assertEqual(wire, 'UPLOAD|192.168.1.23:8080|4821|')
+        self.assertTrue(FakeUploadServer.instances[0].running)
+
+    def test_what_arrives_is_listed_newest_last_three_at_most(self):
+        self.open()
+        server = FakeUploadServer.instances[0]
+        for name in ('a.epub', 'b.epub', 'c.mp3', 'd.mp3'):
+            with patch.object(kyphone_os, 'push_screen') as ps:
+                server.on_event(name)
+        self.assertEqual(_wire(ps), 'UPLOAD|192.168.1.23:8080|4821|b.epub' + CELL + 'c.mp3' + CELL + 'd.mp3')
+
+    def test_leaving_stops_the_page(self):
+        self.open()
+        with patch.object(nc, 'wifi_enabled', return_value=True), \
+                patch.object(nc, 'wifi_status', return_value=nc.WifiStatus(False)), \
+                patch.object(nc, 'bt_status', return_value=nc.BtStatus(True, [])):
+            self.press('CHAR:q')
+        self.assertEqual(kyphone_os.state['screen'], 'settings')
+        self.assertFalse(FakeUploadServer.instances[0].running)
+        self.assertIsNone(kyphone_os._upload)
+
+    def test_no_network_says_so_and_starts_nothing(self):
+        wire = self.open(ip=None)
+        self.assertTrue(wire.startswith('STUB|SETTINGS|THE PHONE IS NOT ON A NETWORK.'))
+        self.assertEqual(FakeUploadServer.instances, [])
+
+    def test_a_server_that_cannot_start_says_why(self):
+        wire = self.open(fail=True)
+        self.assertTrue(wire.startswith('STUB|SETTINGS|THE UPLOAD PAGE COULD NOT START (ADDRESS ALREADY IN USE)'))
+        self.assertEqual(kyphone_os.state['stub_return'], 'settings')
+
+    def test_too_many_wrong_codes_raise_an_alert(self):
+        self.open()
+        with patch.object(kyphone_os, 'push_screen') as ps:
+            FakeUploadServer.instances[0].on_stopped('too many wrong codes')
+        self.assertTrue(_wire(ps).startswith('STUB|SETTINGS|THE UPLOAD PAGE STOPPED'))
+
+    def test_contacts_merge_under_the_forms_rules(self):
+        before = list(kyphone_os.CONTACTS)
+        self.addCleanup(lambda: kyphone_os.CONTACTS.__setitem__(slice(None), before))
+        kyphone_os.CONTACTS[:] = [{'first': 'Zed', 'last': '', 'number': '(555) 010-0001'}]
+        with patch.object(kyphone_os, '_save_contacts') as save:
+            summary = kyphone_os._import_contacts([
+                ('Ann', 'Lee', '+1 555 010 0002'),        # added
+                ('Zed', 'Again', '5550100001'),           # already here (same number)
+                ('NoNumber', '', ''),                     # not usable
+                ('Bad', '', '12'),                        # not dialable
+                ('Bj\u00f6rk', 'A very very long surname here', '555-010-0003')])
+        self.assertEqual(summary, 'Contacts: 2 added, 1 already here, 2 with no usable number')
+        save.assert_called_once()
+        self.assertEqual([kyphone_os.dispname(c) for c in kyphone_os.CONTACTS],
+                         ['Ann Lee', 'Bj?rk A very very long s', 'Zed'])
+        self.assertEqual(kyphone_os.CONTACTS[0]['number'], '(555) 010-0002')
+
+    def test_nothing_new_saves_nothing(self):
+        with patch.object(kyphone_os, '_save_contacts') as save:
+            self.assertEqual(kyphone_os._import_contacts([]), 'Contacts: 0 added')
+        save.assert_not_called()
+
+
 class TestHomeStyle(unittest.TestCase):
     def wire(self, style=None):
         reset_state(screen='home', home_index=0)
@@ -2321,7 +2429,8 @@ class TestDataDirOverride(unittest.TestCase):
             tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
             for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py'),
-                         os.path.join(here, 'network_control.py'), os.path.join(here, 'modem.py')]
+                         os.path.join(here, 'network_control.py'), os.path.join(here, 'modem.py'),
+                         os.path.join(here, 'upload_server.py')]
                         + glob.glob(os.path.join(here, 'reader_*.py')) + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
@@ -2877,10 +2986,10 @@ class TestSettingsScreen(SettingsBase):
     def test_up_down_and_header(self):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))
         self.press('KEY_ENTER')
+        for _ in range(6):
+            self.press('KEY_DOWN')                             # clamped: five rows
+        self.assertEqual(kyphone_os.state['settings_index'], 4)
         for _ in range(5):
-            self.press('KEY_DOWN')                             # clamped: four rows
-        self.assertEqual(kyphone_os.state['settings_index'], 3)
-        for _ in range(4):
             self.press('KEY_UP')
         self.assertEqual(kyphone_os.state['settings_index'], -1)
         self.press('KEY_ENTER')

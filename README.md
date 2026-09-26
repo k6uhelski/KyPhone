@@ -52,7 +52,7 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_mach
   spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
   spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
   spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py \
-  spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py   # expect 815 passed
+  spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py spi_bridge/tests/test_upload_server.py   # expect 846 passed
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 

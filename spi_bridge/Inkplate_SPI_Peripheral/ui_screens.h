@@ -25,6 +25,7 @@
 //   SETTINGS|sel|Wi-Fi·status·|Bluetooth·status·     NETLIST|W/B/P|sel|name·sub·right|...
 //   NETPASS|network|mask|hdr           NETSTATE|W/B|WORKING/OK/FAIL|detail      LIGHTSET|level (0-8)
 //   NOTES|sel|title·when·|...          NOTE|hdr|line·line·...   (hdr '' typing, B < selected, D DELETE selected)
+//   UPLOAD|address|code|received·...   (ADD FROM A COMPUTER)
 
 #ifndef KYPHONE_UI_SCREENS_H
 #define KYPHONE_UI_SCREENS_H
@@ -472,6 +473,27 @@ static void ui_note(char* data) {
         if (cx > 600 - 18) cx = 600 - 18;
         display.fillRect(cx, 60 + 38 * (nl - 1), 18, 24, BLACK);
     }
+}
+
+// ─── UPLOAD|address|code|received·received·... ────────────────────────────────
+// ADD FROM A COMPUTER: the address to open and the code to type, then the last few things received.
+
+static void ui_upload(char* data) {
+    char* f[3];
+    int n = ui_split(data, '|', f, 3);
+    ui_header("ADD FROM A COMPUTER", false, false, false);
+    ui_text_center("ON A COMPUTER ON THE SAME WI-FI, OPEN:", 96 + 14, 2, BLACK, false);
+    ui_text_center(ui_fld(f, n, 0), 124 + 28, 4, BLACK, true);
+    ui_text_center("AND TYPE THE CODE", 196 + 14, 2, BLACK, false);
+    ui_text_center(ui_fld(f, n, 1), 224 + 56, 8, BLACK, true);
+    ui_hline(318, 1);
+    ui_put("RECEIVED:", 24, 334, 2, BLACK);
+    char empty[1] = "";
+    char* got[3];
+    int ng = ui_split(n > 2 ? f[2] : empty, UI_SUB, got, 3);
+    if (ng == 1 && got[0][0] == '\0') ui_put("NOTHING YET", 24, 364, 3, BLACK);
+    else for (int i = 0; i < ng; i++) ui_put(got[i], 24, 364 + 34 * i, 3, BLACK);
+    ui_text_center("ENTER OR Q TO STOP", 550 + 14, 2, BLACK, false);
 }
 
 // ─── LIGHTSET|level ───────────────────────────────────────────────────────────
@@ -931,7 +953,7 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
         {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
         {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},   {"NOTES|", ui_notes},
-        {"NOTE|", ui_note},
+        {"NOTE|", ui_note},          {"UPLOAD|", ui_upload},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

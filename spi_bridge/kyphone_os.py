@@ -45,6 +45,7 @@ import music_library
 import music_player
 import modem
 import network_control as netctl
+import upload_server
 import version
 
 VERSION = version.VERSION
@@ -249,6 +250,9 @@ STUB_INFO = {}       # (READ and LISTEN were the last two; both are real screens
 # Stop alerts for input the phone will not act on: a no-op is never silent (the
 # only deliberate silence is a rejected keystroke).
 ALERTS = {
+    'NO_NETWORK':   ('SETTINGS', 'THE PHONE IS NOT ON A NETWORK. JOIN ONE UNDER WI-FI, THEN TRY AGAIN.'),
+    'UPLOAD_FAILED': ('SETTINGS', 'THE UPLOAD PAGE COULD NOT START ({why}). TRY AGAIN IN A MOMENT.'),
+    'UPLOAD_STOPPED': ('SETTINGS', 'THE UPLOAD PAGE STOPPED: TOO MANY WRONG CODES WERE TRIED. OPEN IT AGAIN FOR A NEW CODE.'),
     'BT_KEEP_ON':   ('BLUETOOTH', 'BLUETOOTH STAYS ON WHILE THE KEYBOARD IS CONNECTED BY IT. SWITCHED OFF, THE PHONE WOULD HAVE NO WAY TO TYPE, SO NOTHING COULD SWITCH IT BACK ON.'),
     'BT_KEEP_KEYBOARD': ('BLUETOOTH', "THE KEYBOARD CANNOT BE FORGOTTEN. IT IS THE PHONE'S WAY TO TYPE, AND PAIRING IT AGAIN WOULD NEED A KEYBOARD."),
     'NET_FAILED':   ('SETTINGS', '{what}. TRY AGAIN IN A MOMENT.'),
@@ -363,6 +367,9 @@ state = {
     'note_idx':       None,         # the note being edited (an index into notes), or None for a new one
     'note_text':      '',
     'note_hdr':       None,         # None = typing | 'back' | 'delete' — the editor's header selection
+    'upload_log':     [],           # ADD FROM A COMPUTER: the last few things received, newest last
+    'upload_addr':    '',           # what the screen tells the computer to open, e.g. 192.168.1.23:8080
+    'upload_code':    '',
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
@@ -1091,7 +1098,7 @@ def _push_for_screen(screen_name):
         'library': push_library, 'reader': lambda: push_reader(force_full=True),
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
         'notes_list': push_notes, 'note': push_note,
-        'settings': push_settings, 'light': push_light, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
+        'settings': push_settings, 'light': push_light, 'upload': push_upload, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
         'netpass': push_netpass, 'netstate': push_netstate,
     }
     pusher = pushers.get(screen_name)
@@ -1192,6 +1199,9 @@ def handle_key(keycode):
 
     elif screen == 'light':
         _from_light(keycode)
+
+    elif screen == 'upload':
+        _from_upload(keycode)
 
     elif screen == 'notes_list':
         _from_notes(keycode)
@@ -3239,6 +3249,7 @@ def push_settings():
         ['Bluetooth', _bt_status_text(bt), ''],
         ['Screen light', f'Level {light} of {LIGHT_LEVELS}' if light else 'Off', ''],
         ['Activity mark', 'A * on the lock screen', 'ON' if mark else 'OFF'],
+        ['Add from a computer', 'Books, music, contacts', ''],
     ]
     push_screen(_list_command(["SETTINGS", str(idx)], rows, shrink_order=(1,)))
 
@@ -3267,6 +3278,8 @@ def _from_settings(keycode):
             state['activity_mark'] = not state['activity_mark']
         save_settings()
         push_settings()
+    elif keycode == 'KEY_ENTER' and idx == 4:
+        _open_upload()
     elif keycode in ('KEY_ENTER', 'KEY_ESC', 'KEY_BACKSPACE'):   # Enter on the header, or Esc
         with state['lock']:
             state['screen']     = 'home'
@@ -3274,7 +3287,99 @@ def _from_settings(keycode):
         push_home2()
 
 
-SETTINGS_ROWS = 4       # Wi-Fi, Bluetooth, Screen light, Activity mark
+SETTINGS_ROWS = 5       # Wi-Fi, Bluetooth, Screen light, Activity mark, Add from a computer
+
+
+# ─── Add from a computer (upload_server.py) ───
+# The page exists only while this screen is open: opening it starts the server with a fresh four-digit code,
+# leaving it stops the server. Everything received is listed here as it arrives.
+
+_upload = None          # the running upload_server.UploadServer, or None
+UPLOAD_SHOWN = 3        # received items listed on the screen
+
+
+def _open_upload():
+    global _upload
+    ip = upload_server.lan_address()
+    if not ip:
+        _show_alert('NO_NETWORK', 'settings')
+        return
+    server = upload_server.UploadServer(BOOKS_DIR, MUSIC_DIR, _upload_event, _import_contacts, _upload_stopped)
+    try:
+        server.start()
+    except OSError as e:
+        _show_alert('UPLOAD_FAILED', 'settings', why=sanitize(e.strerror or 'busy').upper()[:30])
+        return
+    _upload = server
+    with state['lock']:
+        state['screen']      = 'upload'
+        state['upload_log']  = []
+        state['upload_addr'] = f'{ip}:{server.port}'
+        state['upload_code'] = server.code
+    push_upload()
+
+
+def push_upload():
+    with state['lock']:
+        addr, code = state['upload_addr'], state['upload_code']
+        shown = [sanitize(x)[:30] for x in state['upload_log'][-UPLOAD_SHOWN:]]
+    push_screen(f"UPLOAD|{addr}|{code}|" + '\xb7'.join(shown))
+
+
+def _upload_event(text):
+    """Something arrived (a file name, or the contacts summary). Called from the server's thread."""
+    with state['lock']:
+        state['upload_log'] = (state['upload_log'] + [text])[-10:]
+        showing = state['screen'] == 'upload'
+    if showing:
+        push_upload()
+
+
+def _upload_stopped(reason):
+    global _upload
+    _upload = None
+    with state['lock']:
+        showing = state['screen'] == 'upload'
+    if showing:
+        _show_alert('UPLOAD_STOPPED', 'settings')
+
+
+def _stop_upload():
+    global _upload
+    server, _upload = _upload, None
+    if server is not None:
+        server.stop()
+
+
+def _from_upload(keycode):
+    if keycode in ('KEY_ESC', 'KEY_ENTER', 'KEY_BACKSPACE'):
+        _stop_upload()
+        _back_to_settings()
+
+
+def _import_contacts(cards):
+    """Merge parsed vCards into the address book under the contact form's own rules: a first name and a dialable
+    number; a number already saved is the same person and is skipped. Returns a one-line summary."""
+    added = dup = unusable = 0
+    for first, last, number in cards:
+        first = sanitize(first).strip()[:CONTACT_FIELD_MAX]
+        last  = sanitize(last).strip()[:CONTACT_FIELD_MAX]
+        if not first or not number_valid(number):
+            unusable += 1
+        elif any(same_number(c.get('number'), number) for c in CONTACTS):
+            dup += 1
+        else:
+            CONTACTS.append({'first': first, 'last': last, 'number': format_number(number)})
+            added += 1
+    if added:
+        CONTACTS.sort(key=lambda c: dispname(c).lower())      # the address book stays alphabetical
+        _save_contacts(CONTACTS)
+    parts = [f'{added} added']
+    if dup:
+        parts.append(f'{dup} already here')
+    if unusable:
+        parts.append(f'{unusable} with no usable number')
+    return 'Contacts: ' + ', '.join(parts)
 
 
 def push_light():

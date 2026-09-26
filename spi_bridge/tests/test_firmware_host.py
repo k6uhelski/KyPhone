@@ -247,6 +247,13 @@ class FirmwareFrames(unittest.TestCase):
         plain = self.frame(SCREENS['thread_call'][0].replace(r('C', '', 'LAST CALL: MISSED, YESTERDAY') + '|', ''))
         self.assertEqual(self.ink_box(plain, 100, 58, 500, 73), 0)
 
+    def test_the_upload_screen_shows_the_code_large_and_what_arrived(self):
+        e, g = self.frames['upload_empty'], self.frames['upload_got']
+        self.assertGreater(self.ink_box(e, 200, 224, 400, 280), 800)                   # the big code
+        self.assertTrue(self.ink(e, 300, 318))                                          # the rule
+        self.assertGreater(self.ink_box(g, 24, 364 + 68, 400, 364 + 68 + 24), 50)      # the third received line
+        self.assertEqual(self.ink_box(e, 24, 364 + 68, 400, 364 + 68 + 24), 0)          # (empty: NOTHING YET only)
+
     def test_home_can_select_settings(self):
         self.assertGreater(self.ink_count(self.frames['home_settings']), 300)
 
@@ -393,7 +400,8 @@ class FirmwareMatchesEmulator(unittest.TestCase):
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
              'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
-             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'upload_empty',
+             'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
     def setUpClass(cls):
@@ -487,7 +495,7 @@ class FirmwareMemorySafety(unittest.TestCase):
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
-                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|']
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):
@@ -519,6 +527,7 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long16\tNOTE|B|' + '\xb7' * 30 + '\n',
             'long18\tTHREAD2|N|d||C\xb7\xb7' + 'L' * 120 + '|R\xb71\xb7' + 'w' * 60 + '\n',
             'long19\tTHREAD2|N|d||' + '|'.join(['C\xb7\xb7x'] * 8) + '\n',
+            'long20\tUPLOAD|' + '9' * 60 + '|' + '8' * 30 + '|' + '\xb7'.join(['z' * 60] * 5) + '\n',
             'long17\tNOTES|4|' + '|'.join(('T' * 30 + '\xb7Yesterday\xb7') for _ in range(7)) + '\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')
