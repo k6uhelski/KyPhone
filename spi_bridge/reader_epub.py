@@ -435,6 +435,11 @@ class Book:
             del self._cache[self._used.pop(0)]
         return chapter
 
+    def contents(self):
+        """The book's own table of contents as [(chapter index, title)], in reading order — from the EPUB's nav/NCX,
+        so nothing has to be parsed. Empty when the book has no table of contents."""
+        return [(i, self._titles[name]) for i, (_member, name) in enumerate(self._order) if self._titles.get(name)]
+
     def next_with_text(self, i, step):
         """The nearest chapter after (step=+1) or before (step=-1) chapter i that has text; None at the ends."""
         j = i + step

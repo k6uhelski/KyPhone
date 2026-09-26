@@ -264,6 +264,7 @@ ALERTS = {
     'BAD_NUMBER':   ('CONTACT', 'THAT NUMBER CANNOT BE DIALED. A NUMBER NEEDS TEN DIGITS, OR ELEVEN STARTING WITH 1. SPACES, DASHES AND BRACKETS ARE FINE.'),
     'DUP_NUMBER':   ('CONTACT', 'THAT NUMBER IS ALREADY SAVED AS {name}. EDIT THAT CONTACT INSTEAD, OR TYPE A DIFFERENT NUMBER.'),
     'BAD_BOOK':     ('READ', 'THIS BOOK CANNOT BE OPENED. {reason}. PRESS ENTER TO GO BACK TO YOUR BOOKS.'),
+    'NO_CONTENTS':  ('READ', 'THIS BOOK HAS NO LIST OF CHAPTERS. PAGE THROUGH IT WITH THE ARROW KEYS INSTEAD.'),
     'END_OF_BOOK':  ('READ', 'THAT WAS THE LAST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE, THEN Q FOR YOUR BOOKS.'),
     'START_OF_BOOK': ('READ', 'THIS IS THE FIRST PAGE OF THE BOOK. PRESS ENTER TO GO BACK TO THE PAGE.'),
     'BAD_TRACK':    ('LISTEN', '{title} CANNOT BE PLAYED: {reason}. IT WAS SKIPPED. PRESS ENTER TO GO ON.'),
@@ -370,6 +371,9 @@ state = {
     'upload_log':     [],           # ADD FROM A COMPUTER: the last few things received, newest last
     'upload_addr':    '',           # what the screen tells the computer to open, e.g. 192.168.1.23:8080
     'upload_code':    '',
+    'toc_index':      0,            # CHAPTERS: the selected entry (-1 = the header)
+    'toc_here':       0,            # the entry of the chapter being read
+    'toc_start':      0,
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
@@ -1095,7 +1099,7 @@ def _push_for_screen(screen_name):
         'calls_list': push_calls, 'dial': push_dial,
         'outgoing': push_call_screen, 'incoming': push_call_screen,
         'in_call': push_call_screen,
-        'library': push_library, 'reader': lambda: push_reader(force_full=True),
+        'library': push_library, 'reader': lambda: push_reader(force_full=True), 'chapters': push_chapters,
         'music': push_music, 'tracks': push_tracks, 'nowplaying': push_nowplaying,
         'notes_list': push_notes, 'note': push_note,
         'settings': push_settings, 'light': push_light, 'upload': push_upload, 'wifi': push_net, 'bluetooth': push_net, 'btpair': push_net,
@@ -1181,6 +1185,9 @@ def handle_key(keycode):
 
     elif screen == 'reader':
         _from_reader(keycode)
+
+    elif screen == 'chapters':
+        _from_chapters(keycode)
 
     elif screen == 'music':
         _from_music(keycode)
@@ -2532,6 +2539,9 @@ _NEXT_PAGE = ('KEY_RIGHT', 'KEY_DOWN', 'KEY_ENTER', 'CHAR: ')
 _PREV_PAGE = ('KEY_LEFT', 'KEY_UP', 'KEY_BACKSPACE')
 _BIGGER    = ('CHAR:+', 'CHAR:=')
 _SMALLER   = ('CHAR:-', 'CHAR:_')
+_CHAPTERS  = ('CHAR:c', 'CHAR:C')
+CHAPTER_ROWS      = 5    # rows on the CHAPTERS list (the two-line list)
+CHAPTER_TITLE_MAX = 22
 
 
 def _from_reader(keycode):
@@ -2583,6 +2593,9 @@ def _reader_key(keycode):
             state['r_chapter'], state['r_offset'] = prev, last_start
         push_reader(force_full=True)
 
+    elif keycode in _CHAPTERS:
+        _open_chapters(book, ch)
+
     elif keycode in _BIGGER or keycode in _SMALLER:
         sizes = list(rl.SIZES)
         i = sizes.index(size) + (1 if keycode in _BIGGER else -1)
@@ -2592,6 +2605,77 @@ def _reader_key(keycode):
         with state['lock']:
             state['r_size'] = sizes[i]
         push_reader(force_full=True)
+
+
+# ─── Chapters ───
+# C in a book opens CHAPTERS: the book's own table of contents (nothing is parsed to build it), the chapter being
+# read marked HERE and selected. Enter jumps to the start of a chapter; Esc/Q, or Enter on the header, goes back to
+# the page. A book with no table of contents says so on a stop alert.
+
+def _contents_rows(book):
+    entries = book.contents()
+    return entries, [((t if len(t) <= CHAPTER_TITLE_MAX else t[:CHAPTER_TITLE_MAX - 3].rstrip() + '...'),
+                      f'{int(book.progress(i, 0) * 100)}%') for i, t in entries]
+
+
+def _open_chapters(book, current):
+    entries = book.contents()
+    if not entries:
+        _show_alert('NO_CONTENTS', 'reader')
+        return
+    here = max((k for k, (i, _t) in enumerate(entries) if i <= current), default=0)
+    with state['lock']:
+        state['screen']      = 'chapters'
+        state['toc_index']   = here
+        state['toc_here']    = here
+        state['toc_start']   = max(0, here - CHAPTER_ROWS // 2)
+    push_chapters()
+
+
+def push_chapters():
+    with state['lock']:
+        book = state['book']
+        idx, here = state['toc_index'], state['toc_here']
+    if book is None:
+        return
+    entries, rows = _contents_rows(book)
+    with state['lock']:
+        start = window_start(state['toc_start'], max(0, idx), CHAPTER_ROWS, len(rows))
+        state['toc_start'] = start
+    shown = [[sanitize(t), pct, 'HERE' if start + k == here else '']
+             for k, (t, pct) in enumerate(rows[start:start + CHAPTER_ROWS])]
+    push_screen(_list_command(["CHAPTERS", str(idx if idx < 0 else idx - start)], shown, shrink_order=(0,)))
+
+
+def _from_chapters(keycode):
+    with _reader_lock:
+        with state['lock']:
+            book, idx = state['book'], state['toc_index']
+        if book is None:
+            _open_library()
+            return
+        entries = book.contents()
+        if keycode == 'KEY_ESC' or (keycode == 'KEY_ENTER' and idx < 0):
+            with state['lock']:
+                state['screen'] = 'reader'
+            push_reader(force_full=True)
+        elif keycode in ('KEY_UP', 'KEY_DOWN'):
+            with state['lock']:
+                state['toc_index'] = max(-1, min(len(entries) - 1, idx + (1 if keycode == 'KEY_DOWN' else -1)))
+            push_chapters()
+        elif keycode == 'KEY_ENTER':
+            target = entries[idx][0]
+            try:
+                if not book.chapter(target).paras:             # a title page with no text: the next one with text
+                    target = book.next_with_text(target, +1)
+                    if target is None:
+                        target = entries[idx][0]
+            except reader_epub.EpubError as e:
+                _close_book('BAD_BOOK', reason=str(e))
+                return
+            with state['lock']:
+                state['screen'], state['r_chapter'], state['r_offset'] = 'reader', target, 0
+            push_reader(force_full=True)
 
 
 # ─── Music (LISTEN) ───────────────────────────────────────────────────────────

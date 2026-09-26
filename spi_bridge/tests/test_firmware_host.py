@@ -400,7 +400,7 @@ class FirmwareMatchesEmulator(unittest.TestCase):
              'compose_empty', 'alert_bad_number', 'confirm_delete', 'contact_saved', 'contact_unsaved', 'edit_new',
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
              'netlist_scanning', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
-             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'upload_empty',
+             'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_long', 'thread_call', 'chapters', 'upload_empty',
              'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
 
     @classmethod
@@ -495,7 +495,7 @@ class FirmwareMemorySafety(unittest.TestCase):
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
-                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|']
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|', 'CHAPTERS|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
 
         def field(n):

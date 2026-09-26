@@ -495,6 +495,72 @@ class BrokenChapters(ReaderCase):
         self.assertEqual(self.st['screen'], 'library')
 
 
+class Chapters(ReaderCase):
+    TOC = {'c0.xhtml': 'The Beginning', 'c1.xhtml': 'A Very Long Middle Chapter Title Indeed', 'c2.xhtml': 'The End'}
+
+    def wire(self):
+        return [w for w in self.screens if w.startswith('CHAPTERS|')][-1]
+
+    def test_c_opens_the_contents_with_the_current_chapter_selected_and_marked_here(self):
+        self.add_book(toc=self.TOC)
+        self.open_book()
+        self.key('KEY_RIGHT', 'CHAR:c')
+        self.assertEqual(self.st['screen'], 'chapters')
+        rows = self.wire().split('|')[2:]
+        self.assertEqual(self.wire().split('|')[1], '0')
+        self.assertEqual([r.split(SEP)[0] for r in rows], ['The Beginning', 'A Very Long Middle...', 'The End'])
+        self.assertEqual(rows[0].split(SEP)[2], 'HERE')
+        self.assertEqual(rows[0].split(SEP)[1], '0%')
+        self.assertTrue(all(len(r.split(SEP)[0]) <= kyphone_os.CHAPTER_TITLE_MAX for r in rows))
+
+    def test_enter_jumps_to_the_start_of_a_chapter_with_a_full_refresh(self):
+        self.add_book(toc=self.TOC)
+        self.open_book()
+        self.key('CHAR:C', 'KEY_DOWN', 'KEY_DOWN')
+        self.pages.clear()
+        self.key('KEY_ENTER')
+        self.assertEqual((self.st['screen'], self.st['r_chapter'], self.st['r_offset']), ('reader', 2, 0))
+        self.assertEqual(self.refresh_of(self.pages[-1]), 'F')
+        self.assertEqual(self.saved()['books'][next(iter(self.saved()['books']))]['chapter'], 2)   # remembered
+
+    def test_q_or_the_header_returns_to_the_same_page(self):
+        self.add_book(toc=self.TOC)
+        self.open_book()
+        self.key('KEY_RIGHT')
+        where = (self.st['r_chapter'], self.st['r_offset'])
+        self.key('CHAR:c', 'CHAR:q')
+        self.assertEqual((self.st['screen'], self.st['r_chapter'], self.st['r_offset']), ('reader', *where))
+        self.key('CHAR:c', 'KEY_UP', 'KEY_ENTER')
+        self.assertEqual((self.st['screen'], self.st['r_chapter'], self.st['r_offset']), ('reader', *where))
+
+    def test_reading_in_a_chapter_without_its_own_entry_marks_the_one_before(self):
+        self.add_book(toc={'c0.xhtml': 'Opening', 'c2.xhtml': 'Closing'})
+        self.open_book()
+        self.st['r_chapter'] = 1
+        self.key('CHAR:c')
+        rows = self.wire().split('|')[2:]
+        self.assertEqual([r.split(SEP)[2] for r in rows], ['HERE', ''])
+
+    def test_a_book_without_contents_says_so(self):
+        self.add_book()                                   # no toc
+        self.open_book()
+        self.key('CHAR:c')
+        self.assertEqual(self.st['screen'], 'stub')
+        self.assertTrue(self.screens[-1].startswith('STUB|READ|THIS BOOK HAS NO LIST OF CHAPTERS.'))
+        self.key('KEY_ENTER')
+        self.assertEqual(self.st['screen'], 'reader')
+
+    def test_a_long_contents_windows_around_the_selection(self):
+        chapters = [('c%d.xhtml' % k, chapter_html(k, 3)) for k in range(12)]
+        self.add_book(chapters=chapters, toc={'c%d.xhtml' % k: 'Chapter %d' % (k + 1) for k in range(12)})
+        self.open_book()
+        self.key('CHAR:c', *['KEY_DOWN'] * 11)
+        wire = self.wire()
+        self.assertEqual(len(wire.split('|')[2:]), kyphone_os.CHAPTER_ROWS)
+        self.assertEqual(wire.split('|')[2 + int(wire.split('|')[1])].split(SEP)[0], 'Chapter 12')
+        self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+
+
 class Sending(unittest.TestCase):
     """A page is a list of frames sent back to back; a newer command abandons the rest."""
 

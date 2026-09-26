@@ -232,6 +232,8 @@ class Simulator:
             self._draw_lightset(rest)
         elif prefix == 'NOTES':
             self._draw_notes(rest)
+        elif prefix == 'CHAPTERS':
+            self._draw_chapters(rest)
         elif prefix == 'UPLOAD':
             self._draw_upload(rest)
         elif prefix == 'NOTE':
@@ -951,6 +953,10 @@ class Simulator:
             pygame.draw.rect(self._surface, BLACK, (cursor_x, 160, self._char_w(3), 24))
 
         self._text_centered('ENTER BACK' if back else 'ENTER CONNECT', self.HEIGHT - 34 - 16, 2)
+
+    def _draw_chapters(self, data):
+        # data = "sel|title·pct·HERE|..."  the book's table of contents; sel -1 back, else the row in the window
+        self._draw_rows2(data, 'CHAPTERS', 'NO CHAPTERS', 'THIS BOOK HAS NO LIST OF CHAPTERS.')
 
     def _draw_notes(self, data):
         # data = "sel|title·when·|..."  sel -1 back, -2 plus, else the row in the window; no rows = NO NOTES

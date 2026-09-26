@@ -19,6 +19,7 @@
 //   CONTACT|title|sub|kind|sel         CONTACTEDIT|first|last|number|idx|kind
 //   STUB|title|body                    CONFIRM|title|body|go|keep|sel
 //   LIBRARY|sel|title·author·pct|...   (book pages: RTEXT / RFOOT frames, see ui_reader.h)
+//   CHAPTERS|sel|title·pct·HERE|...    (a book's table of contents)
 //   MUSIC|sel|title·sub·right|...      TRACKS|sel|album|title·artist·time|...
 //   NOWPLAYING|state|title|artist|album|elapsed|total|volume|n/N     (state P playing, U paused, S finished)
 //   HOME2's sixth field: 1 = music is playing (a small equalizer mark by the LISTEN row)
@@ -379,6 +380,9 @@ static void ui_library(char* data) {
 }
 static void ui_music(char* data) {
     ui_rows2(data, "LISTEN", "NO MUSIC", "COPY MUSIC FILES INTO THE MUSIC FOLDER ON THE PHONE.", false);
+}
+static void ui_chapters(char* data) {
+    ui_rows2(data, "CHAPTERS", "NO CHAPTERS", "THIS BOOK HAS NO LIST OF CHAPTERS.", false);
 }
 static void ui_tracks(char* data) {
     ui_rows2(data, "", "NO TRACKS", "THIS ALBUM HAS NO TRACKS.", true);
@@ -953,7 +957,7 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"TRACKS|", ui_tracks},      {"NOWPLAYING|", ui_nowplaying},
         {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
         {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},   {"NOTES|", ui_notes},
-        {"NOTE|", ui_note},          {"UPLOAD|", ui_upload},
+        {"NOTE|", ui_note},          {"UPLOAD|", ui_upload},     {"CHAPTERS|", ui_chapters},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

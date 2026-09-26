@@ -19,7 +19,7 @@
 ## Reading and listening
 - [x] READ: EPUB reader with four text sizes, progress, resume
 - [x] LISTEN: albums, tracks, now playing, background play, resume
-- [ ] Reader: a chapter menu
+- [x] Reader: a chapter menu (`c` in a book)
 - [ ] Music: shuffle and repeat
 - [ ] Bluetooth headphones (PulseAudio's Bluetooth module; the service runs as root)
 
