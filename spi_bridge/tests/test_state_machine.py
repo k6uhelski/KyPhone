@@ -2515,8 +2515,8 @@ class TestFullRefreshWhen(unittest.TestCase):
         self.assertEqual([self.show(s) for s in
                           ['lock', 'lock', 'home', 'home', 'texts_list', 'thread', 'thread', 'texts_list', 'home',
                            'settings', 'wifi', 'settings', 'home', 'lock']],
-                         [True, False, False, False, True, False, False, False, False,
-                          True, False, False, False, True])
+                         [True, False, False, False, True, False, False, False, True,
+                          True, False, False, True, True])      # back to home from a feature is full too
 
     def test_a_replaced_full_request_carries_over(self):
         kyphone_os.state['screen'] = 'home'

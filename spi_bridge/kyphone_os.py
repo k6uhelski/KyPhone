@@ -673,9 +673,10 @@ def build_payload(text, full=False):
     return [FRAME_CHECKED, crc8(body), FRAME_START_FULL if full else FRAME_START] + body
 
 
-# Full vs partial refresh (Kyle, 2026-09-26): a full (flashing, ghost-free) refresh when the phone goes to the lock
-# screen and when a feature is opened from the home menu; partial refreshes everywhere inside a feature, which keeps
-# key presses quick. (The Inkplate also clears ghosting on a lock screen redraw every 10 minutes; book pages decide
+# Full vs partial refresh (Kyle, 2026-09-26): a full (flashing, ghost-free) refresh only when moving between the home
+# screen and a feature (either way) or going to the lock screen; partial refreshes everywhere else — scrolling a list,
+# moving inside a feature — so nothing flashes while you scroll. (The Inkplate library's own every-10th-update full
+# refresh is switched off in the firmware.) (The Inkplate also clears ghosting on a lock screen redraw every 10 minutes; book pages decide
 # their own refresh in RFOOT.)
 _last_screen_pushed = None
 
@@ -685,7 +686,9 @@ def _wants_full_refresh():
     with state['lock']:
         screen = state['screen']
     before, _last_screen_pushed = _last_screen_pushed, screen
-    return (screen == 'lock' and before != 'lock') or (before == 'home' and screen not in ('home', 'lock'))
+    into_feature = before == 'home' and screen not in ('home', 'lock')
+    back_home = screen == 'home' and before not in (None, 'home', 'lock')
+    return (screen == 'lock' and before != 'lock') or into_feature or back_home
 
 
 def push_screen(command):

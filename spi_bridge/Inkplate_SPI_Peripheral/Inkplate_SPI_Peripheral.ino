@@ -1262,6 +1262,10 @@ void setup() {
     Serial.printf(">> KyPhone firmware %s\n", KYPHONE_VERSION);
 
     display.begin();
+    // The library turns every 10th partialUpdate() into a full, flashing refresh by itself (the TEMPERA driver's
+    // _partialUpdateLimiter = 10), which flashed the screen in the middle of scrolling a list. The Radxa decides when
+    // a full refresh happens (moving between the home screen, a feature and the lock screen), so switch that off.
+    display.setFullUpdateThreshold(0);
     display.einkOff();
 
     reclaim_spi_pins_for_gpio();
