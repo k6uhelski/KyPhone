@@ -1,6 +1,6 @@
 # The first real text — checklist
 
-For the day the SIM is activated. Everything before step 4 can be done ahead of time.
+**Done 2026-09-26** (OS 0.6.9): a text sent and a reply received, first with the check tool, then from the phone's own screens. Kept as the procedure for a new SIM or a new dongle.
 
 ## Before (can be done now)
 1. **Install pyserial on the Radxa** — it is not there yet (checked 2026-09-25), and without it the phone quietly
@@ -34,6 +34,7 @@ For the day the SIM is activated. Everything before step 4 can be done ahead of 
 
 ## If something is off
 - **NOT SENT on the phone but the check sent fine:** is `KYPHONE_MODEM_PORT` set in the service, and was it restarted?
-- **Replies never arrive:** `journalctl -u kyphone` shows `Modem poll error: …` lines if polling fails.
+- **Replies never arrive:** `journalctl -u kyphone` shows `Modem poll error: …` lines if polling fails. The SIM7600 stores texts on the SIM, and in PDU mode only (see `modem.py`); `modem_check.py --wait 60` prints anything waiting there.
+- **Texts cost:** a prepaid plan counts the texts the phone *sends* (received ones were free on ours); test with a handful, never a loop.
 - **Long texts** go as several texts (the modem's text mode cannot join them into one).
 - To stop using the modem: remove the `KYPHONE_MODEM_PORT` line and restart; sends go back to NOT SENT.

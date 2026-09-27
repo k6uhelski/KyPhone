@@ -98,9 +98,13 @@ class FakeModem:
         elif cmd == 'AT+CMGF=0' or cmd == 'AT+CMGF=1':
             self.pdu_mode = cmd.endswith('0')
             self._say('OK')
+        elif cmd == 'AT+CPMS?':
+            used = sum(1 for x in self.inbox.values() if x['storage'] == self.storage)
+            self._say('+CPMS: "{0}",{1},30,"{0}",{1},30,"{0}",{1},30\r\n\r\nOK'.format(self.storage, used))
         elif cmd.startswith('AT+CPMS='):
             self.storage = cmd.split('"')[1]
-            self._say('+CPMS: 0,30,0,30,0,30\r\n\r\nOK')
+            used = sum(1 for x in self.inbox.values() if x['storage'] == self.storage)
+            self._say('+CPMS: {0},30,{0},30,{0},30\r\n\r\nOK'.format(used))
         elif cmd.startswith('AT+CMGL='):
             # As the real SIM7600 does (found on the phone, 2026-09-26): texts are on the SIM, and PDU mode lists them.
             if not self.pdu_mode or cmd != 'AT+CMGL=4':
@@ -453,6 +457,32 @@ class SerialModemPollTest(unittest.TestCase):
         modem.send('+15550100001', 'back')
         self.assertFalse(fake.pdu_mode)
         self.assertEqual(fake.texts, [('+15550100001', 'back')])
+
+    def test_an_empty_sim_costs_one_command_per_poll(self):
+        modem, fake = make_modem()
+        modem.poll_new()                                              # the first poll also looks at ME
+        fake.commands.clear()
+        for _ in range(5):
+            self.assertEqual(modem.poll_new(), [])
+        self.assertEqual(fake.commands, ['AT+CPMS?'] * 5)
+        fake.deliver('+15550100002', 'now there is one')
+        self.assertEqual([g['body'] for g in modem.poll_new()], ['now there is one'])
+
+    def test_the_modems_own_storage_is_checked_now_and_then(self):
+        modem, fake = make_modem()
+        modem.poll_new()
+        fake.deliver('+15550100003', 'on the modem', storage='ME')
+        got = []
+        for _ in range(m.ME_CHECK_EVERY):
+            got += modem.poll_new()
+        self.assertEqual([g['body'] for g in got], ['on the modem'])
+
+    def test_an_unreadable_count_falls_back_to_listing(self):
+        modem, fake = make_modem()
+        modem.poll_new()
+        fake.deliver('+15550100002', 'hi')
+        with unittest.mock.patch.object(m, '_CPMS_LINE', m.re.compile('^never$')):
+            self.assertEqual([g['body'] for g in modem.poll_new()], ['hi'])
 
     def test_an_unplugged_dongle_raises_modem_error_not_a_raw_exception(self):
         modem, fake = make_modem()

@@ -37,6 +37,9 @@ import modem as md  # noqa: E402
 import network_control as nc  # noqa: E402
 import audio_fixtures as fx  # noqa: E402
 from epub_fixtures import make_epub  # noqa: E402
+from test_modem import make_modem, make_pdu  # noqa: E402
+
+REAL_TRANSPORT = kyphone_os._transport_send     # before any test patches it
 for _name in _faked:
     if isinstance(sys.modules.get(_name), MagicMock):
         del sys.modules[_name]
@@ -300,6 +303,49 @@ class Scenarios(PhoneCase):
         self.key('KEY_ENTER')                                     # retry
         self.assertIn('Y1' + SEP, self.wire)
         self.assertEqual(self.modem.sent, [('+15550100043', 'hello')])
+
+    def test_texting_through_the_real_modem_code_and_a_fake_dongle(self):
+        """The phone's real send and receive paths (SerialModem, AT commands, PDU decoding) against a scripted
+        SIM7600 — what happens on the phone, minus the radio."""
+        import io
+        from contextlib import redirect_stdout
+        serial_modem, dongle = make_modem()
+        kyphone_os._modem = serial_modem
+        with patch.object(kyphone_os, '_transport_send', REAL_TRANSPORT), patch.object(kyphone_os, 'SIM_MODE', False):
+            self.home('TEXT')
+            self.key('CHAR:+')
+            self.type('5550100045')
+            self.key('KEY_ENTER')
+            self.type('Dinner at 7? $5 @ Joe_s')
+            self.key('KEY_ENTER')
+        self.assertEqual(dongle.texts, [('+15550100045', 'Dinner at 7? $5 @ Joe_s')])
+        self.assertIn('Y1' + SEP, self.wire)                     # SENT
+        # The reply: two parts, UCS2 (curly quotes, an emoji), in the national format; and a carrier notice.
+        dongle.store(make_pdu('5550100045', '\u201cYes\u201d \U0001F600 see ', part=(12, 2, 1)))
+        dongle.store(make_pdu('5550100045', 'you there', part=(12, 2, 2)))
+        dongle.deliver('6700', 'Your plan renews soon.')
+        log = io.StringIO()
+        self.st['running'] = True
+        with patch.object(kyphone_os.time, 'sleep', lambda s: self.st.__setitem__('running', False)), \
+                redirect_stdout(log):
+            kyphone_os.modem_sms_loop()
+        self.assertIn('"Yes" ? see you there', self.wire)         # joined, drawable, in this conversation
+        self.assertEqual(dongle.inbox, {})                        # deleted from the SIM
+        self.assertEqual(len(kyphone_os.get_threads()), 2)       # the carrier's notice is its own conversation
+        self.assertNotIn('see you', log.getvalue())               # nothing read reaches the log
+        self.assertNotIn('0100045', log.getvalue())
+        # The dongle unplugged: the loop logs it and carries on, and a send ends NOT SENT.
+        dongle.broken = True
+        self.st['running'] = True
+        with patch.object(kyphone_os.time, 'sleep', lambda s: self.st.__setitem__('running', False)), \
+                redirect_stdout(log):
+            kyphone_os.modem_sms_loop()
+        self.assertIn('Modem poll error', log.getvalue())
+        with patch.object(kyphone_os, '_transport_send', REAL_TRANSPORT), patch.object(kyphone_os, 'SIM_MODE', False):
+            self.type('ok')
+            self.key('KEY_ENTER')
+        self.assertIn('Y2' + SEP, self.wire)                     # NOT SENT
+        kyphone_os._modem = None
 
     def test_a_text_arriving_while_locked_shows_the_mark_and_reading_clears_it(self):
         kyphone_os.push_lock()

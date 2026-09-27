@@ -48,10 +48,12 @@ SEND_TIMEOUT = 20     # sending a text can take longer (it waits on the network,
 POLL_TIMEOUT = 8     # AT+CMGL can take a moment with several messages waiting
 SMS_CHARS    = 160   # one text in the GSM alphabet
 
+ME_CHECK_EVERY = 30  # polls between looks at the modem's own storage (about a minute at a 2 s poll)
 PART_WAIT    = 600   # seconds to wait for the missing parts of a long text before showing what arrived
 
 _CMGL_PDU    = re.compile(r'^\+CMGL:\s*(\d+),')
 _HEX         = re.compile(r'^(?:[0-9A-Fa-f]{2})+$')
+_CPMS_LINE   = re.compile(r'^\+CPMS:\s*"[A-Z]+",\s*(\d+),')
 _CSQ_LINE    = re.compile(r'^\+CSQ:\s*(\d+),')
 _CREG_LINE   = re.compile(r'^\+CREG:\s*\d+,\s*(\d+)')
 _MODEM_TS    = re.compile(r'^(\d\d)/(\d\d)/(\d\d),(\d\d):(\d\d):(\d\d)')
@@ -219,6 +221,7 @@ class SerialModem:
     def __init__(self, port=None, baud=DEFAULT_BAUD):
         self.port = port or os.environ.get(MODEM_PORT_ENV, DEFAULT_PORT)
         self._lock = threading.RLock()     # one AT exchange at a time: send, poll and start-up share the port
+        self._polls = 0          # poll_new calls so far (the modem's own storage is checked on some)
         self._handed = set()     # PDUs already handed over whose delete failed (so they never repeat)
         self._parts_seen = {}    # (storage, sender, ref) of a long text still missing parts -> when first seen
         self._buf = ''      # bytes already read from the port but not yet consumed by any command —
@@ -331,10 +334,18 @@ class SerialModem:
     def poll_new(self):
         """New texts, oldest first, each deleted from storage once read. A long text sent in parts comes back as one
         text once every part is in (or after PART_WAIT seconds, with what arrived). A text whose delete failed is
-        remembered, so it is never handed over twice."""
+        remembered, so it is never handed over twice.
+
+        Polled every couple of seconds, so the common case is one command: AT+CPMS? says how many texts the SIM
+        holds, and nothing is listed when it is none. The modem's own storage, where the SIM7600 has never put a
+        text, is only looked at on the first poll and every ME_CHECK_EVERY polls after."""
         with self._lock:
+            self._polls += 1
+            check_me = self._polls % ME_CHECK_EVERY == 1
+            if not check_me and self._stored_count() == 0:
+                return []
             messages = []
-            for storage in ('SM', 'ME'):
+            for storage in ('SM', 'ME') if check_me else ('SM',):
                 try:
                     self._cmd('AT+CPMS="%s"' % storage)       # the storage that listing and deleting act on
                 except ModemError:
@@ -342,6 +353,14 @@ class SerialModem:
                 messages += self._take_stored(storage)
             self._cmd('AT+CPMS="SM","SM","SM"')
             return sorted(messages, key=lambda x: x['ts'])
+
+    def _stored_count(self):
+        """How many texts the SIM holds (AT+CPMS?'s first count), or None if the answer could not be read."""
+        for line in self._cmd('AT+CPMS?'):
+            m = _CPMS_LINE.match(line)
+            if m:
+                return int(m.group(1))
+        return None
 
     def _take_stored(self, storage):
         try:
