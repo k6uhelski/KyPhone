@@ -29,6 +29,7 @@ import sys
 import time
 import json
 import threading
+import functools
 from datetime import datetime, timedelta
 
 SIM_MODE = '--sim' in sys.argv
@@ -170,8 +171,18 @@ def dispname(c):
 
 # ─── Phone numbers ────────────────────────────────────────────────────────────
 
+_NOT_DIGITS = re.compile(r'\D')
+
+
+@functools.lru_cache(maxsize=4096)
+def _digits_of(text):
+    return _NOT_DIGITS.sub('', text)
+
+
 def digits(n):
-    return re.sub(r'\D', '', str(n or ''))
+    """Only the digits of a number, however it was typed. Cached: list screens clean the same few hundred numbers
+    on every key press."""
+    return _digits_of(str(n or ''))
 
 
 def number_valid(n):
@@ -467,11 +478,28 @@ if SIM_MODE:
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def format_name(number):
+def format_name(number, names=None):
     """A saved contact's name, else the number formatted — never truncated, so
-    two unsaved senders never look the same."""
+    two unsaved senders never look the same. `names` (from _contact_names()) makes
+    it a lookup instead of a scan of every contact, for screens that name many
+    numbers at once."""
+    if names is not None:
+        d = digits(number)
+        name = names.get(d[-10:]) if d else None
+        return name if name is not None else format_number(number)
     c = find_contact(number=number)
     return dispname(c) if c else format_number(number)
+
+
+def _contact_names():
+    """{last ten digits: display name} for every contact with a number; the first contact wins when two share a
+    number, exactly as find_contact() would choose."""
+    names = {}
+    for c in list(CONTACTS):
+        d = digits(c.get('number'))
+        if d:
+            names.setdefault(d[-10:], dispname(c))
+    return names
 
 
 def format_msg_time(ts):
@@ -595,6 +623,7 @@ def get_threads():
     count."""
     with state['lock']:
         msgs = list(state['messages'])
+    names = _contact_names()                 # once, not a scan of every contact per conversation
 
     thread_map = {}
     for i, m in enumerate(msgs):
@@ -604,7 +633,7 @@ def get_threads():
         if s not in thread_map:
             thread_map[s] = {
                 'sender': s,
-                'name': format_name(s),
+                'name': format_name(s, names),
                 'messages': [],
                 'unread': False,
                 '_last_i': i,
@@ -1513,10 +1542,13 @@ def _open_thread(sender):
         state['thread_draft']      = ''
         state['thread_header_sel'] = None
         state['thread_msg_sel']    = -1
+        changed = False
         for m in state['messages']:
-            if peer_of(m) == sender:
+            if peer_of(m) == sender and not m['read']:
                 m['read'] = True
-    save_messages()
+                changed = True
+    if changed:                         # rewriting every text just to mark nothing read is slow on the SD card
+        save_messages()
     push_thread2()
 
 

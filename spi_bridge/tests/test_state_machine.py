@@ -219,6 +219,42 @@ class TestSavingSafely(unittest.TestCase):
         self.assertEqual(os.listdir(self.dir), [])
 
 
+class TestListsStayFastWithYearsOfTexts(unittest.TestCase):
+    """With 5,000 texts and 300 contacts, scrolling the texts list took 140 ms a key on a Mac (several times that on
+    the Radxa): every conversation's name was a scan of every contact. These pin the fix without timing anything."""
+
+    def setUp(self):
+        self.contacts = [{'first': 'C%d' % i, 'last': '', 'number': '(555) 010-%04d' % i} for i in range(300)]
+        p = patch.object(kyphone_os, 'CONTACTS', self.contacts)
+        p.start()
+        self.addCleanup(p.stop)
+        msgs = [{'sender': '+1555010%04d' % (i % 400), 'name': 'x', 'body': 'b', 'read': True,
+                 'ts': '2026-09-01T12:00:00'} for i in range(5000)]
+        reset_state(messages=msgs)
+
+    def test_naming_conversations_never_scans_the_contacts(self):
+        with patch.object(kyphone_os, 'find_contact', side_effect=AssertionError('scanned the contacts')):
+            threads = kyphone_os.get_threads()
+        self.assertEqual(len(threads), 400)
+        names = {t['sender']: t['name'] for t in threads}
+        self.assertEqual(names['+15550100007'], 'C7')                  # a saved contact by name
+        self.assertEqual(names['+15550100350'], '(555) 010-0350')      # an unsaved number, formatted
+
+    def test_the_lookup_names_exactly_as_find_contact_would(self):
+        self.contacts.insert(0, {'first': 'First', 'last': 'Saved', 'number': '1 555 010 0007'})   # shares a number
+        names = kyphone_os._contact_names()
+        for number in ('+15550100007', '(555) 010-0299', '5550100350', '', 'abc'):
+            self.assertEqual(kyphone_os.format_name(number, names), kyphone_os.format_name(number), number)
+
+    def test_opening_a_conversation_already_read_does_not_rewrite_every_text(self):
+        with patch.object(kyphone_os, 'save_messages') as save, patch.object(kyphone_os, 'push_screen'):
+            kyphone_os._open_thread('+15550100007')
+            save.assert_not_called()
+            kyphone_os.state['messages'][7]['read'] = False
+            kyphone_os._open_thread('+15550100007')
+            save.assert_called_once()
+
+
 class TestInputDevicesLogOnce(unittest.TestCase):
     def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
         import io
