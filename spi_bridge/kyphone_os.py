@@ -4107,11 +4107,12 @@ def modem_sms_loop():
                 peer = resolve_peer(msg['sender'])            # takes the lock itself, so first
                 with state['lock']:
                     name = format_name(peer)
+                    on_screen = state['screen'] == 'thread' and state['thread_id'] == peer
                     state['messages'].append({
                         'sender': peer,
                         'name':   name,
                         'body':   msg['body'],
-                        'read':   False,
+                        'read':   on_screen,                  # seen as it arrives: no unread count, no lock *
                         'ts':     msg['ts'],
                     })
                 save_messages()

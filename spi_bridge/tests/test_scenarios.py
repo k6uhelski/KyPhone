@@ -281,6 +281,9 @@ class Scenarios(PhoneCase):
         self.assertIn('Y1' + SEP, self.wire)                     # SENT
         self.incoming('5550100042', 'Yes!\nSee you there')     # a reply, national format, two lines
         self.assertIn('Yes! See you there', self.wire)            # joins this conversation, redraws
+        kyphone_os.push_lock()
+        self.assertEqual(self.wire.split('|')[-2], '')            # read as it arrived: no lock-screen mark
+        kyphone_os.push_thread2()
         self.type('Great')
         self.key('KEY_ENTER')
         self.assertEqual(self.modem.sent[-1], ('+15550100042', 'Great'))
