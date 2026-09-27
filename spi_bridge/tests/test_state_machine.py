@@ -157,6 +157,97 @@ class TestActivityMark(unittest.TestCase):
         self.assertEqual(_wire(ps).split('|')[-2], '*')
 
 
+class TestSavingSafely(unittest.TestCase):
+    """Every data file is saved all-or-nothing, and a damaged one is set aside, never overwritten: otherwise a power
+    cut mid-save (a knocked cable, later a flat battery) could leave half a file that the next start reads as
+    empty and the next save replaces, losing every text or contact."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(__import__('shutil').rmtree, self.dir)
+        self.messages = os.path.join(self.dir, 'messages.json')
+        self.contacts = os.path.join(self.dir, 'contacts.json')
+        for name, value in (('DATA_DIR', self.dir), ('MESSAGES_FILE', self.messages),
+                            ('_contacts_path', self.contacts)):
+            p = patch.object(kyphone_os, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        reset_state(messages=[{'sender': '+15550100001', 'name': 'A', 'body': 'keep me', 'read': True, 'ts': ''}])
+
+    def test_a_power_cut_mid_save_leaves_the_old_file_whole(self):
+        kyphone_os.save_messages()
+        kyphone_os.state['messages'].append({'sender': '+15550100002', 'name': 'B', 'body': 'new', 'read': False,
+                                             'ts': ''})
+        real_dump = json.dump
+
+        def dies_halfway(obj, f, **kw):
+            f.write('{"messages": [{"sen')                   # the power goes here
+            raise OSError(5, 'Input/output error')
+        with patch.object(kyphone_os.json, 'dump', dies_halfway):
+            kyphone_os.save_messages()
+        with open(self.messages) as f:
+            self.assertEqual([m['body'] for m in json.load(f)['messages']], ['keep me'])
+        self.assertIs(kyphone_os.json.dump, real_dump)
+
+    def test_a_damaged_file_is_set_aside_not_overwritten(self):
+        with open(self.messages, 'w') as f:
+            f.write('{"messages": [{"sender": "+1555')            # half a file
+        kyphone_os.load_messages()
+        self.assertEqual(kyphone_os.state['messages'], [])
+        aside = [n for n in os.listdir(self.dir) if n.startswith('messages.json.damaged-')]
+        self.assertEqual(len(aside), 1)
+        kyphone_os.save_messages()                                # the next save does not touch it
+        with open(os.path.join(self.dir, aside[0])) as f:
+            self.assertEqual(f.read(), '{"messages": [{"sender": "+1555')
+
+    def test_damaged_contacts_are_set_aside_too(self):
+        with open(self.contacts, 'w') as f:
+            f.write('[{"first": "Contact')
+        self.assertEqual(kyphone_os._load_contacts(), [])
+        self.assertTrue(any(n.startswith('contacts.json.damaged-') for n in os.listdir(self.dir)))
+
+    def test_every_data_file_goes_through_the_safe_helpers(self):
+        with open(kyphone_os.__file__) as f:
+            src = f.read()
+        self.assertEqual(src.count('json.dump('), 1)              # only inside _write_json
+        self.assertEqual(src.count('json.load('), 1)              # only inside _read_json
+        self.assertIn('os.fsync', src)
+
+    def test_a_missing_file_is_simply_empty(self):
+        kyphone_os.load_messages()
+        self.assertEqual(kyphone_os.state['messages'], [])
+        self.assertEqual(os.listdir(self.dir), [])
+
+
+class TestInputDevicesLogOnce(unittest.TestCase):
+    def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
+        import io
+        from contextlib import redirect_stdout
+        import importlib.util
+
+        def real(name):                                         # this file swaps them for stand-ins at import
+            spec = importlib.util.spec_from_file_location('real_' + name, os.path.join(os.path.dirname(kyphone_os.__file__), name + '.py'))
+            mod = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {'evdev': MagicMock()}):
+                spec.loader.exec_module(mod)
+            return mod
+        for mod, finder, cls in ((real('input_handler'), 'find_keyboard', 'KeyboardHandler'),
+                                 (real('trackpad_handler'), 'find_trackpad', 'TrackpadHandler')):
+            calls = []
+
+            def not_there():
+                calls.append(1)
+                if len(calls) > 5:
+                    raise KeyboardInterrupt                        # end the endless search after 5 looks
+                return None
+            handler = getattr(mod, cls).__new__(getattr(mod, cls))
+            log = io.StringIO()
+            with patch.object(mod, finder, not_there), patch.object(mod.time, 'sleep', lambda s: None), \
+                    redirect_stdout(log), self.assertRaises(KeyboardInterrupt):
+                handler._run()
+            self.assertEqual(log.getvalue().count('found'), 1, mod.__name__)
+
+
 class TestSavedSettings(unittest.TestCase):
     def test_round_trip_and_bad_values_keep_defaults(self):
         path = os.path.join(tempfile.mkdtemp(), 'settings.json')

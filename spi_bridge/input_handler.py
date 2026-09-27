@@ -108,10 +108,13 @@ class KeyboardHandler:
     def _run(self):
         while True:
             device = None
+            said = False
             while device is None:
                 device = find_keyboard()
                 if device is None:
-                    print("[keyboard] No keyboard found, retrying in 3s...")
+                    if not said:                      # once, not every 3 s (it filled the journal)
+                        print("[keyboard] No keyboard found; checking every 3s.")
+                        said = True
                     time.sleep(3)
             print(f"[keyboard] Using: {device.name} ({device.path})")
             try:

@@ -102,24 +102,55 @@ DATA_DIR = os.path.abspath(os.path.expanduser(os.environ.get('KYPHONE_DATA_DIR')
 _contacts_path = os.path.join(DATA_DIR, 'contacts.json')
 
 
+def _write_json(path, data, **dump_args):
+    """Save `data` so a power cut can never leave half a file: write a temporary file, force it to the SD card,
+    then swap it in (a rename is all-or-nothing). Raises OSError on failure; callers warn and carry on."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(data, f, **dump_args)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    try:
+        fd = os.open(os.path.dirname(path), os.O_RDONLY)   # and the rename itself
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def _read_json(path, default):
+    """A saved file's contents, or `default` if there is none. A file that cannot be read as JSON (damaged, e.g.
+    written by a version without _write_json when the power went) is renamed to <name>.damaged-<time> rather than
+    left for the next save to overwrite, so nothing in it is lost for good, and `default` is returned."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as e:
+        aside = '%s.damaged-%s' % (path, datetime.now().strftime('%Y%m%d-%H%M%S'))
+        try:
+            os.replace(path, aside)
+            print(f"Warning: {os.path.basename(path)} could not be read ({e.__class__.__name__}); kept as {os.path.basename(aside)}")
+        except OSError:
+            print(f"Warning: {os.path.basename(path)} could not be read ({e.__class__.__name__})")
+        return default
+
+
+
 def _save_contacts(contacts):
     try:
-        os.makedirs(os.path.dirname(_contacts_path), exist_ok=True)
-        with open(_contacts_path, 'w') as f:
-            json.dump(contacts, f, indent=2)
+        _write_json(_contacts_path, contacts, indent=2)
     except Exception as e:
         print(f"Warning: could not save contacts: {e}")
 
 
 def _load_contacts():
-    try:
-        with open(_contacts_path) as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        print(f"Warning: could not load contacts: {e}")
-        return []
+    data = _read_json(_contacts_path, [])
 
     if isinstance(data, dict):
         # OS 0.1 format: {number: name}. Migrate to {first, last, number}.
@@ -2300,22 +2331,14 @@ def _save_calls():
     with state['lock']:
         data = list(state['calls'])
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = CALLS_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f)
-        os.replace(tmp, CALLS_FILE)
+        _write_json(CALLS_FILE, data)
     except OSError as e:
         print(f"Warning: could not save the call log: {e}")
 
 
 def load_calls():
     """Read the call log back; anything that is not a well-formed entry is dropped."""
-    try:
-        with open(CALLS_FILE) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = []
+    data = _read_json(CALLS_FILE, [])
     good = []
     for c in data if isinstance(data, list) else []:
         if (isinstance(c, dict) and isinstance(c.get('name'), str) and c.get('tag') in ('OUT', 'IN', 'MISS')
@@ -2331,11 +2354,7 @@ def load_calls():
 
 def load_settings():
     """The phone's own settings; anything missing or malformed keeps its default."""
-    try:
-        with open(SETTINGS_FILE) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
+    data = _read_json(SETTINGS_FILE, {})
     data = data if isinstance(data, dict) else {}
     light = data.get('light')
     with state['lock']:
@@ -2349,11 +2368,7 @@ def save_settings():
     with state['lock']:
         data = {'light': state['light'], 'activity_mark': state['activity_mark']}
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = SETTINGS_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f)
-        os.replace(tmp, SETTINGS_FILE)
+        _write_json(SETTINGS_FILE, data)
     except OSError as e:
         print(f"Warning: could not save settings: {e}")
 
@@ -2362,9 +2377,8 @@ def save_settings():
 
 def load_messages():
     try:
-        with open(MESSAGES_FILE, 'r') as f:
-            data = json.load(f)
-        state['messages'] = data.get('messages', [])
+        data = _read_json(MESSAGES_FILE, {})
+        state['messages'] = data.get('messages', []) if isinstance(data, dict) else []
         # A send that was still in flight when the phone last stopped never finished.
         for m in state['messages']:
             if m.get('state') == 'sending':
@@ -2377,10 +2391,10 @@ def load_messages():
 
 
 def save_messages():
+    with state['lock']:
+        data = {'messages': [dict(m) for m in state['messages']]}   # a snapshot: other threads keep changing it
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(MESSAGES_FILE, 'w') as f:
-            json.dump({'messages': state['messages']}, f)
+        _write_json(MESSAGES_FILE, data)
     except Exception as e:
         print(f"Warning: could not save messages: {e}")
 
@@ -2463,11 +2477,7 @@ _reader_lock = threading.RLock()     # the keyboard and the trackpad each call h
 
 def _load_reading():
     """READING_FILE as {'font': size, 'books': {id: {chapter, offset, pct}}}; anything unreadable is empty."""
-    try:
-        with open(READING_FILE) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
+    data = _read_json(READING_FILE, {})
     if not isinstance(data, dict):
         data = {}
     books = data.get('books')
@@ -2478,11 +2488,7 @@ def _load_reading():
 
 def _save_reading(reading):
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = READING_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(reading, f)
-        os.replace(tmp, READING_FILE)
+        _write_json(READING_FILE, reading)
     except OSError as e:
         print(f"Warning: could not save reading position: {e}")
 
@@ -2822,11 +2828,7 @@ _music_save_count = 0
 
 def _load_listening():
     """LISTENING_FILE as {'volume': 0-100, 'last': {'path', 'position'} or None}; anything unreadable gives defaults."""
-    try:
-        with open(LISTENING_FILE) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
+    data = _read_json(LISTENING_FILE, {})
     if not isinstance(data, dict):
         data = {}
     volume = data.get('volume')
@@ -2847,11 +2849,7 @@ def _save_listening():
     if now is not None:
         saved['last'] = {'path': now.track.path, 'position': 0 if now.state == 'stopped' else int(now.position)}
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = LISTENING_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(saved, f)
-        os.replace(tmp, LISTENING_FILE)
+        _write_json(LISTENING_FILE, saved)
     except OSError as e:
         print(f"Warning: could not save listening state: {e}")
 
@@ -3164,11 +3162,7 @@ NOTE_TITLE_MAX = 22    # a note's name on the list (the bold 24px row title, cle
 
 def load_notes():
     """The saved notes; anything malformed is dropped."""
-    try:
-        with open(NOTES_FILE) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = []
+    data = _read_json(NOTES_FILE, [])
     good = [{'text': n['text'][:NOTE_MAX], 'ts': n.get('ts', '') if isinstance(n.get('ts', ''), str) else ''}
             for n in (data if isinstance(data, list) else [])
             if isinstance(n, dict) and isinstance(n.get('text'), str) and n['text'].strip()]
@@ -3180,11 +3174,7 @@ def save_notes():
     with state['lock']:
         data = [dict(n) for n in state['notes']]
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = NOTES_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f)
-        os.replace(tmp, NOTES_FILE)
+        _write_json(NOTES_FILE, data)
     except OSError as e:
         print(f"Warning: could not save notes: {e}")
 

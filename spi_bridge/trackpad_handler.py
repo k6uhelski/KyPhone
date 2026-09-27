@@ -59,10 +59,13 @@ class TrackpadHandler:
     def _run(self):
         while True:
             device = None
+            said = False
             while device is None:
                 device = find_trackpad()
                 if device is None:
-                    print("[trackpad] No trackpad found, retrying in 3s...")
+                    if not said:                      # once, not every 3 s (it filled the journal)
+                        print("[trackpad] No trackpad found; checking every 3s.")
+                        said = True
                     time.sleep(3)
             print(f"[trackpad] Using: {device.name} ({device.path})")
 
