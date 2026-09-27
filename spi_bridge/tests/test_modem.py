@@ -43,6 +43,11 @@ class FakeModem:
         self._typing = None               # the number being texted while in text-entry mode
 
     # pyserial's side
+    closed = False
+
+    def close(self):
+        self.closed = True
+
     @property
     def in_waiting(self):
         return len(self._out)
@@ -265,6 +270,20 @@ class SerialModemConfigureTest(unittest.TestCase):
     def test_startup_turns_echo_off_selects_text_mode_and_sim_storage(self):
         modem, fake = make_modem()
         self.assertEqual(fake.commands, ['ATE0', 'AT+CMGF=1', 'AT+CPMS="SM","SM","SM"'])
+
+    def test_a_modem_still_booting_closes_the_port_it_opened(self):
+        holder = {}
+        fake_module = MagicMock()
+
+        def make(port_, baud, timeout=None):
+            holder['fake'] = FakeModem(port_, baud, timeout)
+            holder['fake'].broken = True               # opens, but nothing answers yet
+            return holder['fake']
+        fake_module.Serial = make
+        sys.modules['serial'] = fake_module
+        with self.assertRaises(m.ModemError):
+            m.SerialModem(port='/dev/ttyUSB2')
+        self.assertTrue(holder['fake'].closed)
 
     def test_a_bad_port_raises_modem_error_not_a_raw_exception(self):
         fake_module = MagicMock()

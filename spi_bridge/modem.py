@@ -202,6 +202,9 @@ class SimModem:
             raise ModemError(reason)
         self.sent.append((number, text))
 
+    def close(self):
+        pass
+
     def poll_new(self):
         new, self._inbox = self._inbox, []
         return new
@@ -234,7 +237,17 @@ class SerialModem:
             raise ModemError('pyserial not installed (%s)' % e.__class__.__name__)
         except OSError as e:                # no such port, permission denied, device unplugged, ...
             raise ModemError('could not open %s (%s)' % (self.port, e))
-        self._configure()
+        try:
+            self._configure()
+        except ModemError:
+            self.close()                    # a modem still booting is tried again later: never leak the port
+            raise
+
+    def close(self):
+        try:
+            self._ser.close()
+        except Exception:
+            pass
 
     def _configure(self):
         with self._lock:

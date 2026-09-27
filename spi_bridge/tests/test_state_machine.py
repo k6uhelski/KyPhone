@@ -3722,6 +3722,79 @@ class TestModemTransport(unittest.TestCase):
         self.assertIsNone(kyphone_os._modem)
 
 
+class TestModemRecovery(unittest.TestCase):
+    """At power-on the phone starts before the dongle has booted (found on the phone, 2026-09-26), and a dongle can
+    drop off the USB bus: the receive loop keeps trying and reopens, so texting comes back without a restart."""
+
+    def setUp(self):
+        kyphone_os._modem = None
+        self.addCleanup(setattr, kyphone_os, '_modem', None)
+        reset_state(screen='home', running=True, messages=[], calls=[])
+        self.clock = [0.0]
+        self.polls = 0
+        for p in (patch.object(kyphone_os, 'SIM_MODE', False),
+                  patch.dict(os.environ, {md.MODEM_PORT_ENV: '/dev/ttyUSB2'}),
+                  patch.object(kyphone_os, 'save_messages'), patch.object(kyphone_os, 'push_screen'),
+                  patch.object(kyphone_os.time, 'monotonic', lambda: self.clock[0]),
+                  patch.object(kyphone_os.time, 'sleep', self.tick)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tick(self, seconds):
+        self.clock[0] += seconds
+        self.polls += 1
+        if self.polls >= self.limit:
+            kyphone_os.state['running'] = False
+
+    def run_loop(self, limit):
+        import io
+        from contextlib import redirect_stdout
+        self.limit, self.polls = limit, 0
+        kyphone_os.state['running'] = True
+        log = io.StringIO()
+        with redirect_stdout(log):
+            kyphone_os.modem_sms_loop()
+        return log.getvalue()
+
+    def test_a_dongle_still_booting_at_start_up_is_picked_up_later(self):
+        ready = md.SimModem()
+        ready.deliver('+15550100009', 'hello')
+        attempts = [md.ModemError('modem did not answer within 5s')] * 3 + [ready]
+        with patch.object(md, 'SerialModem', side_effect=attempts) as opener:
+            kyphone_os._init_modem()                              # start-up: too early
+            self.assertIsNone(kyphone_os._modem)
+            log = self.run_loop(40)
+        self.assertIs(kyphone_os._modem, ready)
+        self.assertEqual(opener.call_count, 4)
+        self.assertEqual([m['body'] for m in kyphone_os.state['messages']], ['hello'])
+        self.assertEqual(log.count('Modem ready'), 1)
+
+    def test_retries_are_spaced_out_not_every_poll(self):
+        with patch.object(md, 'SerialModem', side_effect=md.ModemError('no such device')) as opener:
+            self.run_loop(50)                                     # 50 polls x 2 s = 100 s
+        self.assertLessEqual(opener.call_count, 100 // kyphone_os.MODEM_RETRY_SECONDS + 1)
+        self.assertGreaterEqual(opener.call_count, 100 // kyphone_os.MODEM_RETRY_SECONDS - 1)
+
+    def test_a_modem_that_stops_answering_is_reopened(self):
+        dead, fresh = md.SimModem(), md.SimModem()
+        dead.poll_new = MagicMock(side_effect=md.ModemError('read failed (OSError)'))
+        dead.close = MagicMock()
+        fresh.deliver('+15550100009', 'back again')
+        kyphone_os._modem = dead
+        with patch.object(md, 'SerialModem', return_value=fresh):
+            log = self.run_loop(kyphone_os.MODEM_REOPEN_AFTER + 5)
+        dead.close.assert_called_once()
+        self.assertIs(kyphone_os._modem, fresh)
+        self.assertEqual([m['body'] for m in kyphone_os.state['messages']], ['back again'])
+        self.assertEqual(log.count('Modem poll error'), 1)          # a run of errors is logged once
+
+    def test_without_the_env_var_the_loop_does_not_run(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(md, 'SerialModem') as opener:
+            self.run_loop(5)
+        opener.assert_not_called()
+        self.assertEqual(self.polls, 0)
+
+
 class TestModemReceiveLoop(unittest.TestCase):
     """modem_sms_loop drains whatever the modem hands back into the message list — with no dedup
     bookkeeping, since the modem's own storage already dedupes (poll_new removes each message as it's

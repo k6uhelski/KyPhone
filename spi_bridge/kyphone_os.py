@@ -2387,24 +2387,51 @@ def save_messages():
 
 # ─── Modem ────────────────────────────────────────────────────────────────────
 
-_modem = None    # a modem.SerialModem, once _init_modem() succeeds at startup; None = no dongle configured
+_modem = None    # a modem.SerialModem once _init_modem() succeeds; None = no dongle (yet)
+MODEM_RETRY_SECONDS = 10   # how often a missing or silent modem is tried again
+MODEM_REOPEN_AFTER  = 5    # failed polls in a row before the modem is closed and opened afresh
 
 
-def _init_modem():
-    """Bring up the real cellular modem once, at startup, if KYPHONE_MODEM_PORT is set — that
-    environment variable is the deliberate opt-in, so the code never goes probing a serial port that
-    just happens to be free for something else. Never raises: if the dongle is not there or not
-    answering, _modem stays None and every send ends as 'no service' (NOT SENT)."""
+def _modem_wanted():
+    """True when this phone is meant to have a modem: KYPHONE_MODEM_PORT is set (the deliberate opt-in, so the
+    code never goes probing a serial port that just happens to be free for something else) and this is not
+    the emulator."""
+    return not SIM_MODE and bool(os.environ.get(modem.MODEM_PORT_ENV))
+
+
+def _init_modem(quiet=False):
+    """Try to bring up the real cellular modem; True if it answered. Never raises: if the dongle is not there
+    or not answering, _modem stays None, every send ends as 'no service' (NOT SENT), and modem_sms_loop
+    tries again every MODEM_RETRY_SECONDS. At power-on the phone starts before the dongle has finished
+    booting (found 2026-09-26: the first try always failed), so a failure here is expected and temporary."""
     global _modem
-    if SIM_MODE or not os.environ.get(modem.MODEM_PORT_ENV):
-        return
+    if not _modem_wanted():
+        return False
     try:
-        _modem = modem.SerialModem()
-        print(f"Modem ready on {_modem.port}.")
-        if not _modem.registered():
-            print("Warning: the modem has not registered on the carrier's network yet.")
+        m = modem.SerialModem()
     except modem.ModemError as e:
-        print(f"Warning: modem not available ({e}); texts will not send.")
+        if not quiet:
+            print(f"Modem not ready yet ({e}); trying again every {MODEM_RETRY_SECONDS}s.")
+        return False
+    _modem = m
+    print(f"Modem ready on {m.port}.")
+    try:
+        if not m.registered():
+            print("Warning: the modem has not registered on the carrier's network yet.")
+    except modem.ModemError:
+        pass
+    return True
+
+
+def _drop_modem():
+    """Forget a modem that stopped answering (unplugged, or re-enumerated after a USB reset) so
+    modem_sms_loop opens it afresh."""
+    global _modem
+    m, _modem = _modem, None
+    try:
+        m.close()
+    except Exception:
+        pass
 
 
 def _transport_send(to_number, body):
@@ -4097,38 +4124,68 @@ def modem_sms_loop():
     """Polls the real modem for texts that arrived while the phone wasn't looking. The modem clears what it
     hands back from its own storage (modem.SerialModem.poll_new), so there is no dedup bookkeeping to do here.
     A text joins the existing conversation with that number however the network wrote it (resolve_peer), and
-    no error ever ends the loop: a glitch is logged and the next poll tries again."""
-    if _modem is None:
+    no error ever ends the loop.
+
+    It also keeps the modem alive: if there is none yet (the dongle was still booting when the phone started,
+    or is not plugged in) it tries again every MODEM_RETRY_SECONDS, and a modem that fails MODEM_REOPEN_AFTER
+    polls in a row is closed and opened afresh. A run of errors is logged once, not every poll."""
+    if _modem is None and not _modem_wanted():
         return
     print(f"Polling the modem for texts every {SMS_POLL_INTERVAL}s...")
+    failures, next_try = 0, 0.0
     while state['running']:
+        if _modem is None:
+            now = time.monotonic()
+            if now >= next_try:
+                next_try = now + MODEM_RETRY_SECONDS
+                _init_modem(quiet=True)
+            if _modem is None:
+                time.sleep(SMS_POLL_INTERVAL)
+                continue
         try:
-            for msg in _modem.poll_new():
-                peer = resolve_peer(msg['sender'])            # takes the lock itself, so first
-                with state['lock']:
-                    name = format_name(peer)
-                    on_screen = state['screen'] == 'thread' and state['thread_id'] == peer
-                    state['messages'].append({
-                        'sender': peer,
-                        'name':   name,
-                        'body':   msg['body'],
-                        'read':   on_screen,                  # seen as it arrives: no unread count, no lock *
-                        'ts':     msg['ts'],
-                    })
-                save_messages()
-                print("\n[NEW SMS]")                           # who and what stay out of the log
-                with state['lock']:
-                    current_screen = state['screen']
-                    thread_id      = state['thread_id']
-                if current_screen == 'thread' and thread_id == peer:
-                    push_thread2()
-                elif current_screen == 'texts_list':
-                    push_texts()
-                elif current_screen == 'lock':
-                    push_lock()                                 # the new-activity * appears
+            arrived = _modem.poll_new()
+            failures = 0
         except Exception as e:                                # never let one bad poll stop texts arriving
-            print(f"Modem poll error: {e.__class__.__name__}: {e}")
+            failures += 1
+            if failures == 1:
+                print(f"Modem poll error: {e.__class__.__name__}: {e}")
+            if failures >= MODEM_REOPEN_AFTER and _modem_wanted():
+                print("Modem stopped answering; opening it again.")
+                _drop_modem()
+                failures, next_try = 0, 0.0
+            arrived = []
+        for msg in arrived:
+            try:
+                _receive_text(msg)
+            except Exception as e:
+                print(f"Modem poll error: {e.__class__.__name__}: {e}")
         time.sleep(SMS_POLL_INTERVAL)
+
+
+def _receive_text(msg):
+    """One text from the modem into the message list, and the screen redrawn if it shows it."""
+    peer = resolve_peer(msg['sender'])            # takes the lock itself, so first
+    with state['lock']:
+        name = format_name(peer)
+        on_screen = state['screen'] == 'thread' and state['thread_id'] == peer
+        state['messages'].append({
+            'sender': peer,
+            'name':   name,
+            'body':   msg['body'],
+            'read':   on_screen,                  # seen as it arrives: no unread count, no lock *
+            'ts':     msg['ts'],
+        })
+    save_messages()
+    print("\n[NEW SMS]")                           # who and what stay out of the log
+    with state['lock']:
+        current_screen = state['screen']
+        thread_id      = state['thread_id']
+    if current_screen == 'thread' and thread_id == peer:
+        push_thread2()
+    elif current_screen == 'texts_list':
+        push_texts()
+    elif current_screen == 'lock':
+        push_lock()                                 # the new-activity * appears
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
