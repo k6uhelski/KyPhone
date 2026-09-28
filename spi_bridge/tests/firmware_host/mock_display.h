@@ -117,4 +117,5 @@ struct MockDisplay {
         }
     }
     void print(const char* s) { for (; *s; s++) write((uint8_t)*s); }
+    void print(char c) { write((uint8_t)c); }
 };

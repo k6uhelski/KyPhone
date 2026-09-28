@@ -255,6 +255,56 @@ class TestListsStayFastWithYearsOfTexts(unittest.TestCase):
             save.assert_called_once()
 
 
+class TestEmojiInReceivedTexts(unittest.TestCase):
+    """A received emoji in the drawn set travels as one byte (0x80-0xFF, never 0xB7) that the panel draws as a picture;
+    only the bubbles and the texts-list preview ask for that. Everywhere else stays plain ASCII."""
+
+    def code(self, cp):
+        import emoji_table
+        return chr(emoji_table.CODES[cp])
+
+    def test_an_emoji_in_the_set_becomes_one_byte_and_others_stay_question_marks(self):
+        s = kyphone_os.sanitize('hi \U0001F602 \U0001F9FF', emoji=True)
+        self.assertEqual(s, 'hi %s ?' % self.code(0x1F602))
+        self.assertEqual(kyphone_os.sanitize('hi \U0001F602'), 'hi ?')              # without emoji=True: '?'
+
+    def test_selectors_skin_tones_joins_and_flags(self):
+        heart, thumbs = self.code(0x2764), self.code(0x1F44D)
+        self.assertEqual(kyphone_os.sanitize('\u2764\ufe0f', emoji=True), heart)                 # presentation selector
+        self.assertEqual(kyphone_os.sanitize('\U0001F44D\U0001F3FF', emoji=True), thumbs)         # skin tone
+        self.assertEqual(kyphone_os.sanitize('\u2764\ufe0f\u200d\U0001F525!', emoji=True), heart + '!')   # joined
+        self.assertEqual(kyphone_os.sanitize('\U0001F1FA\U0001F1F8\U0001F1EC\U0001F1E7', emoji=True), '??')  # 2 flags
+        self.assertEqual(kyphone_os.sanitize('\u263a \u2665', emoji=True),                         # older forms
+                         self.code(0x1F642) + ' ' + heart)
+
+    def test_padding_gives_each_emoji_two_cells(self):
+        self.assertEqual(kyphone_os.sanitize('a\U0001F602b', emoji=True, pad=True), 'a%s b' % self.code(0x1F602))
+
+    def test_the_codes_never_collide_with_the_wire_separators(self):
+        import emoji_table
+        codes = set(emoji_table.CODES.values())
+        self.assertEqual(len(set(emoji_table.BITMAPS16)), 127)
+        self.assertTrue(all(0x80 <= c <= 0xFF and c != 0xB7 for c in codes))
+        self.assertTrue(all(kyphone_os.is_emoji_code(chr(c)) for c in codes))
+        self.assertFalse(kyphone_os.is_emoji_code('\xb7') or kyphone_os.is_emoji_code('a'))
+
+    def test_bubbles_and_the_preview_carry_emoji_and_nothing_else_does(self):
+        contacts = [{'first': 'Pat\U0001F602', 'last': '', 'number': '(555) 010-0001'}]
+        reset_state(screen='texts_list', messages=[{'sender': '+15550100001', 'name': 'x', 'read': False,
+                                                    'body': 'yes \U0001F602', 'ts': '2026-09-01T12:00:00'}])
+        wires = []
+        with patch.object(kyphone_os, 'CONTACTS', contacts), \
+                patch.object(kyphone_os, 'push_screen', side_effect=wires.append):
+            kyphone_os.push_texts()
+            kyphone_os._open_thread('+15550100001')
+        joy = self.code(0x1F602)
+        texts, thread = wires
+        self.assertIn('yes ' + joy + ' ', texts)                     # the preview, padded
+        self.assertIn('yes ' + joy, thread)                          # the bubble
+        self.assertIn('Pat?', texts)                                 # a name never carries emoji
+        self.assertTrue(thread.startswith('THREAD2|Pat?|'), thread)
+
+
 class TestInputDevicesLogOnce(unittest.TestCase):
     def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
         import io
@@ -1279,8 +1329,9 @@ class TestDrawableText(SendBase):
         reset_state(screen='thread', thread_id=ALICE,
                     messages=[_inbound('it’s fine \U0001F600 | ok · done')])
         wire = self.thread_wire()
-        for ch in wire:
-            self.assertTrue(ch == CELL or ' ' <= ch <= '~', repr(ch))
+        for ch in wire:                                            # (an emoji in the set is a drawable picture byte)
+            self.assertTrue(ch == CELL or ' ' <= ch <= '~' or kyphone_os.is_emoji_code(ch), repr(ch))
+        self.assertIn('fine %s ? ok ? done' % kyphone_os.sanitize('\U0001F600', emoji=True), wire)   # | and · become ?
         text = kyphone_os.build_payload(wire)[3:]                 # (bytes 0-2: the marker, the CRC-8, the start byte)
         self.assertEqual(max(text), max(ord(c) for c in wire))
         self.assertLessEqual(max(kyphone_os.build_payload(wire)), 255)
@@ -2758,7 +2809,7 @@ class TestDataDirOverride(unittest.TestCase):
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
             for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py'),
                          os.path.join(here, 'network_control.py'), os.path.join(here, 'modem.py'),
-                         os.path.join(here, 'upload_server.py')]
+                         os.path.join(here, 'upload_server.py'), os.path.join(here, 'emoji_table.py')]
                         + glob.glob(os.path.join(here, 'reader_*.py')) + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"

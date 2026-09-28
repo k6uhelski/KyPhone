@@ -28,6 +28,7 @@ HOST = os.path.join(HERE, 'firmware_host')
 sys.path.insert(0, HOST)
 sys.path.insert(0, os.path.join(HERE, '..'))
 from screens import SCREENS, r                  # noqa: E402
+import emoji_table                               # noqa: E402
 
 GLCDFONT = os.environ.get('GLCDFONT_C') or os.path.expanduser(
     '~/Documents/Arduino/libraries/Adafruit_GFX_Library/glcdfont.c')
@@ -498,6 +499,46 @@ class FirmwareMatchesEmulator(unittest.TestCase):
 
 
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
+class FirmwareEmoji(unittest.TestCase):
+    """A received emoji is one byte 0x80-0xFF; the firmware draws its 16x16 picture in that character's place."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='kyphone-fw-emoji-')
+        cls.exe = os.path.join(cls.tmp, 'render_host')
+        build(cls.exe)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    render = classmethod(FirmwareFrames.render.__func__)
+
+    def assert_emoji_at(self, frame, code, x, y, ink=True):
+        rows = emoji_table.BITMAPS16[code]
+        for r in range(16):
+            for c in range(16):
+                want = bool(rows[r] >> (15 - c) & 1)
+                self.assertEqual(frame[(y + r) * W + x + c] == 0, want if ink else not want, (hex(code), r, c))
+
+    def test_in_a_bubble_an_emoji_fills_one_character_cell(self):
+        heart = emoji_table.CODES[0x2764]
+        f = self.render({'t': 'THREAD2|N|||R\xb71\xb7' + chr(heart) + 'ab'})['t']
+        # one received line: bubble top 458, text at x 44 with its cell top at 472; the picture sits at +1, +3
+        self.assert_emoji_at(f, heart, 45, 475)
+
+    def test_in_the_preview_an_emoji_is_centred_over_two_cells(self):
+        cake = emoji_table.CODES[0x1F382]
+        f = self.render({'t': 'TEXTS|-1|Contact 1\xb7' + chr(cake) + ' hi\xb70\xb71:00 PM'})['t']
+        self.assert_emoji_at(f, cake, 28 + 4, 44 + 77 - 14)
+
+    def test_on_a_selected_row_the_emoji_is_drawn_in_paper_white(self):
+        cake = emoji_table.CODES[0x1F382]
+        f = self.render({'t': 'TEXTS|0|Contact 1\xb7' + chr(cake) + ' hi\xb70\xb71:00 PM'})['t']
+        self.assert_emoji_at(f, cake, 28 + 4, 44 + 77 - 14, ink=False)
+
+
+@unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMemorySafety(unittest.TestCase):
     def test_malformed_and_maximum_length_commands_do_not_overflow_or_misbehave(self):
         tmp = tempfile.mkdtemp(prefix='kyphone-fw-asan-')
@@ -509,7 +550,8 @@ class FirmwareMemorySafety(unittest.TestCase):
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
                     'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|', 'CHAPTERS|']
-        alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6
+        alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6 + \
+            [chr(c) for c in range(0x80, 0x100)]                   # emoji codes (and 0xB7) on every screen
 
         def field(n):
             return ''.join(rng.choice(alphabet) for _ in range(rng.randint(0, n)))

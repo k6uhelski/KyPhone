@@ -13,6 +13,7 @@ import threading
 import pygame
 
 from home_icons import ICONS, ICON_SIZE
+import emoji_table
 import reader_layout as rl
 from reader_fonts import FONTS as READER_FONTS
 
@@ -30,6 +31,11 @@ def _get_font(px_size, bold=False, clock=False):
         name = CLOCK_FONT if clock else 'courier'
         _FONT_CACHE[key] = pygame.font.SysFont(name, px_size, bold=bold)
     return _FONT_CACHE[key]
+
+
+def _is_emoji_code(ch):
+    """A wire byte standing for an emoji (kyphone_os.is_emoji_code)."""
+    return 0x80 <= ord(ch) <= 0xFF and ch != '\xb7'
 
 
 def wrap_words(text, cols):
@@ -460,9 +466,47 @@ class Simulator:
 
     def _text_bl(self, text, x, baseline, text_size, color=BLACK, bold=False):
         """Draw text with its baseline at `baseline`, so vertical placement
-        does not depend on the font's own leading."""
+        does not depend on the font's own leading. A received emoji (one byte
+        0x80-0xFF, see kyphone_os.sanitize) is drawn as its 16x16 picture, placed
+        as the firmware places it: in one cell at size 3, and across its own and
+        the following padding space's cell at size 2."""
         font = self._font(text_size, bold)
-        self._surface.blit(font.render(str(text), True, color), (x, baseline - font.get_ascent()))
+        text = str(text)
+        if not any(_is_emoji_code(c) for c in text):
+            self._surface.blit(font.render(text, True, color), (x, baseline - font.get_ascent()))
+            return
+        i, run = 0, ''
+        while i < len(text):
+            c = text[i]
+            if not _is_emoji_code(c) or text_size not in (2, 3):
+                run += '?' if _is_emoji_code(c) else c
+                i += 1
+                continue
+            if run:
+                self._surface.blit(font.render(run, True, color), (x, baseline - font.get_ascent()))
+                x += font.size(run)[0]
+                run = ''
+            top = baseline - 7 * text_size
+            if text_size == 3:
+                self._emoji(c, x + 1, top + 3, color)
+                x += 18
+            else:
+                self._emoji(c, x + 4, top, color)
+                x += 24
+                if i + 1 < len(text) and text[i + 1] == ' ':
+                    i += 1                                    # the padding space is part of the emoji's two cells
+            i += 1
+        if run:
+            self._surface.blit(font.render(run, True, color), (x, baseline - font.get_ascent()))
+
+    def _emoji(self, c, x, y, color):
+        rows = emoji_table.BITMAPS16.get(ord(c))
+        if rows is None:
+            return
+        for r, bits in enumerate(rows):
+            for col in range(16):
+                if bits >> (15 - col) & 1:
+                    self._surface.set_at((x + col, y + r), color)
 
     BUTTON_H = 36     # every small button: border + 6-7px padding + an 18px line
 

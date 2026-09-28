@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.join(HERE, '..'))
 sys.path.insert(0, HERE)
 import kyphone_os  # noqa: E402
 import modem as md  # noqa: E402
+import emoji_table as md_emoji  # noqa: E402
 import network_control as nc  # noqa: E402
 import audio_fixtures as fx  # noqa: E402
 from epub_fixtures import make_epub  # noqa: E402
@@ -184,7 +185,9 @@ class PhoneCase(unittest.TestCase):
 
     def check_frame(self, cmd):
         self.assertLessEqual(len(cmd), kyphone_os.MAX_COMMAND_CHARS, cmd[:60])
-        self.assertTrue(all(' ' <= c <= '~' or c == SEP for c in cmd), cmd[:80])
+        emoji_ok = cmd.startswith(('TEXTS|', 'THREAD2|'))           # received emoji travel only on these two
+        self.assertTrue(all(' ' <= c <= '~' or c == SEP or (emoji_ok and kyphone_os.is_emoji_code(c)) for c in cmd),
+                        cmd[:80])
 
     # ── helpers ──
     @property
@@ -332,7 +335,7 @@ class Scenarios(PhoneCase):
         with patch.object(kyphone_os.time, 'sleep', lambda s: self.st.__setitem__('running', False)), \
                 redirect_stdout(log):
             kyphone_os.modem_sms_loop()
-        self.assertIn('"Yes" ? see you there', self.wire)         # joined, drawable, in this conversation
+        self.assertIn('"Yes" %s see you there' % chr(md_emoji.CODES[0x1F600]), self.wire)   # joined, emoji drawn
         self.assertEqual(dongle.inbox, {})                        # deleted from the SIM
         self.assertEqual(len(kyphone_os.get_threads()), 2)       # the carrier's notice is its own conversation
         self.assertNotIn('see you', log.getvalue())               # nothing read reaches the log
@@ -349,6 +352,21 @@ class Scenarios(PhoneCase):
             self.key('KEY_ENTER')
         self.assertIn('Y2' + SEP, self.wire)                     # NOT SENT
         kyphone_os._modem = None
+
+    def test_an_emoji_text_arrives_and_is_drawn_as_pictures(self):
+        """A reply with emoji, a skin tone, a family and a flag: pictures in the bubble and the preview, '?' for what
+        is not in the set, and the contact's name (which also has one) stays plain."""
+        self.contacts.append({'first': 'Sam\U0001F600', 'last': '', 'number': '(555) 010-0046'})
+        self.incoming('+15550100046', 'Happy birthday \U0001F382\U0001F389 \U0001F44D\U0001F3FD '
+                                      '\u2764\ufe0f\u200d\U0001F525 \U0001F1FA\U0001F1F8 \U0001F9FF')
+        cake, party = chr(md_emoji.CODES[0x1F382]), chr(md_emoji.CODES[0x1F389])
+        thumbs, heart = chr(md_emoji.CODES[0x1F44D]), chr(md_emoji.CODES[0x2764])
+        self.home('TEXT')
+        self.assertIn(cake + ' ' + party + ' ', self.wire)          # the preview: each emoji padded to two cells
+        self.assertIn('Sam?', self.wire)                             # a name never carries emoji
+        self.key('KEY_ENTER')
+        # 👍🏽 loses its skin tone; ❤️‍🔥 (joined) shows its first emoji; a flag and 🧿 (not in the set) are '?'
+        self.assertIn('Happy birthday %s%s %s %s ? ?' % (cake, party, thumbs, heart), self.wire)
 
     def test_a_text_arriving_while_locked_shows_the_mark_and_reading_clears_it(self):
         kyphone_os.push_lock()

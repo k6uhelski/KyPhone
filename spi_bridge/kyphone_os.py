@@ -48,6 +48,7 @@ import modem
 import network_control as netctl
 import upload_server
 import version
+import emoji_table
 
 VERSION = version.VERSION
 
@@ -561,14 +562,47 @@ def can_draw(ch):
     return len(ch) == 1 and ' ' <= ch <= '~' and ch not in _RESERVED
 
 
-def sanitize(text):
+_EMOJI_SILENT = {0xFE0F, 0xFE0E} | set(range(0x1F3FB, 0x1F400))   # presentation selectors, skin tones: drawn as nothing
+_ZWJ = 0x200D                                                       # joins emoji into one (a family, a profession)
+
+
+def sanitize(text, emoji=False, pad=False):
     """Make received text drawable: common typographic characters become their
-    ASCII look-alikes, anything else undrawable becomes '?'."""
-    out = []
+    ASCII look-alikes, anything else undrawable becomes '?'.
+
+    emoji=True (the bubbles and the texts-list preview only): an emoji in the drawn set (tools/make_emoji.py) becomes
+    its one wire byte, 0x80-0xFF, which the panel draws as a 16x16 picture. A skin tone or presentation selector adds
+    nothing; an emoji joined to others (a family) shows as its first one; a flag or an emoji not in the set is '?'.
+    pad=True puts a space after each emoji: the preview's text is smaller, so an emoji there takes two cells."""
+    out, skip_next, flag_half = [], False, False
     for c in str(text):
+        cp = ord(c)
+        if emoji:
+            if skip_next:
+                skip_next = False
+                continue
+            if cp == _ZWJ:
+                skip_next = True
+                continue
+            if cp in _EMOJI_SILENT:
+                continue
+            if 0x1F1E6 <= cp <= 0x1F1FF:                 # a flag is two regional letters: one '?'
+                flag_half = not flag_half
+                if flag_half:
+                    out.append('?')
+                continue
+            code = emoji_table.CODES.get(cp)
+            if code is not None:
+                out.append(chr(code) + (' ' if pad else ''))
+                continue
         c = _TRANSLIT.get(c, c)
         out.append(c if all(can_draw(x) for x in c) else '?')
     return ''.join(out)
+
+
+def is_emoji_code(ch):
+    """True for a wire byte that stands for an emoji (see sanitize)."""
+    return len(ch) == 1 and 0x80 <= ord(ch) <= 0xFF and ch != '\xb7'
 
 
 def wrap_words(text, cols):
@@ -949,7 +983,7 @@ def push_texts():
         prefix  = ''
         if last and is_outgoing(last):
             prefix = '! ' if last.get('state') == 'not_sent' else 'You: '
-        preview = sanitize(prefix + last['body'])[:PREVIEW_MAX] if last else ''
+        preview = sanitize(prefix + last['body'], emoji=True, pad=True)[:PREVIEW_MAX] if last else ''
         unread  = '1' if t['unread'] else '0'
         time_str = format_msg_time(last.get('ts')) if last else ''
         rows.append([name, preview, unread, time_str])
@@ -1009,7 +1043,7 @@ def push_thread2():
                 code = 'Y3'
         else:
             code = 'R'
-        entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'])])
+        entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'], emoji=True)])
 
     last = _last_call_with(thread_id)
     if last:

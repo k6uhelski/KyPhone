@@ -46,6 +46,15 @@ class SimulatorPixels(unittest.TestCase):
     def px(self, x, y):
         return tuple(self.sim._surface.get_at((x, y)))[:3]
 
+    def test_an_emoji_in_a_bubble_is_drawn_where_the_firmware_draws_it(self):
+        import emoji_table
+        heart = emoji_table.CODES[0x2764]
+        self.draw('THREAD2|N|||R' + CELL + '1' + CELL + chr(heart) + 'ab')
+        rows = emoji_table.BITMAPS16[heart]
+        for r in range(16):
+            for c in range(16):
+                self.assertEqual(self.px(45 + c, 475 + r) == BLACK, bool(rows[r] >> (15 - c) & 1), (r, c))
+
     def ink(self):
         """Number of black pixels on screen."""
         s = self.sim._surface
@@ -348,6 +357,10 @@ class HomeIconsMatchTheDesign(unittest.TestCase):
     def test_generated_files_are_up_to_date_with_the_generator(self):
         import make_icons
         self.assertEqual(make_icons.main(['--check']), 0)
+
+    def test_the_emoji_tables_are_up_to_date_with_the_generator(self):
+        import make_emoji
+        self.assertEqual(make_emoji.main(['--check']), 0)
 
     def test_the_menu_order_matches_the_os_and_the_renderers(self):
         import make_icons
