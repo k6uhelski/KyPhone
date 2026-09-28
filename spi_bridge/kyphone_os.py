@@ -423,6 +423,7 @@ state = {
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
     'light_lit':      False,        # the light is on right now (it goes off LIGHT_IDLE_SECONDS after the last key)
     'last_key_at':    0.0,
+    'locked_from':    None,         # the screen auto-lock left (the next key returns there); None = unlock to home
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
     'settings_bt':    None,         # network_control.BtStatus, same
@@ -793,7 +794,7 @@ def _wants_full_refresh():
     with state['lock']:
         screen = state['screen']
     before, _last_screen_pushed = _last_screen_pushed, screen
-    into_feature = before == 'home' and screen not in ('home', 'lock')
+    into_feature = before in ('home', 'lock') and screen not in ('home', 'lock')   # (lock: unlocking into a feature)
     back_home = screen == 'home' and before not in (None, 'home', 'lock')
     return (screen == 'lock' and before != 'lock') or into_feature or back_home
 
@@ -892,6 +893,28 @@ def light_loop():
     while state['running']:
         time.sleep(0.25)
         _light_tick()
+        _auto_lock_tick()
+
+
+# ─── Auto-lock ───
+# After AUTO_LOCK_SECONDS with no key the phone shows the lock screen, remembering the screen it left; the next key
+# goes straight back there, everything as it was (Kyle, 2026-09-27). Not while reading (a page can take longer), in a
+# call, with Add from a computer open (its page exists only while that screen is up) or while connecting.
+AUTO_LOCK_SECONDS = 30
+NO_AUTO_LOCK = ('reader', 'outgoing', 'incoming', 'in_call', 'upload', 'netstate')
+
+
+def _auto_lock_tick():
+    with state['lock']:
+        screen = state['screen']
+        due = (screen != 'lock' and screen not in NO_AUTO_LOCK
+               and _LIGHT_CLOCK() - state['last_key_at'] >= AUTO_LOCK_SECONDS)
+        if due:
+            state['locked_from'] = screen
+            state['screen'] = 'lock'
+    if due:
+        print("[auto-lock]")
+        push_lock()
 
 
 _LIGHT_CLOCK = time.monotonic
@@ -1436,10 +1459,16 @@ def handle_key(keycode):
 
 
 def _from_lock(keycode):
+    """Any key: back to the screen auto-lock left, as it was; else (the phone was locked by hand) home."""
     with state['lock']:
-        state['screen'] = 'home'
-        state['home_index'] = 0
-    push_home2()
+        back, state['locked_from'] = state['locked_from'], None
+        state['screen'] = back or 'home'
+        if not back:
+            state['home_index'] = 0
+    if back:
+        _push_for_screen(back)
+    else:
+        push_home2()
 
 
 def _from_home(keycode):

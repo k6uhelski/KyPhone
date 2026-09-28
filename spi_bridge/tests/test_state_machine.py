@@ -40,6 +40,7 @@ def reset_state(**overrides):
     """Reset kyphone_os.state to a clean baseline (does not touch the Lock)."""
     defaults = {
         'screen': 'lock',
+        'locked_from': None,
         'home_index': 0,
         'texts_index': 0,
         'texts_start': 0,
@@ -2607,6 +2608,68 @@ class TestCheckedFrames(unittest.TestCase):
         frame = kyphone_os.build_payload('X' * kyphone_os.MAX_COMMAND_CHARS)
         self.assertEqual(len(frame), kyphone_os.PAYLOAD_BYTES)
         self.assertEqual(frame[-1], ord('X'))
+
+
+class TestAutoLock(unittest.TestCase):
+    """After 30 idle seconds the lock screen comes back; the next key returns to exactly where you were (Kyle,
+    2026-09-27). Not while reading, in a call, with the upload page open or while connecting."""
+
+    def setUp(self):
+        self.now = [100.0]
+        self.wires = []
+        for name, value in (('_LIGHT_CLOCK', lambda: self.now[0]), ('_send_light', lambda level: None),
+                            ('push_screen', self.wires.append), ('save_messages', lambda: None)):
+            p = patch.object(kyphone_os, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        reset_state(screen='home', home_index=0, light=0, last_key_at=0.0,
+                    messages=[_inbound('hello')])
+
+    def idle(self, seconds):
+        self.now[0] += seconds
+        kyphone_os._auto_lock_tick()
+
+    def test_thirty_idle_seconds_lock_and_a_key_returns_with_everything_as_it_was(self):
+        kyphone_os._open_thread(ALICE)
+        for ch in 'half a draft':
+            kyphone_os.handle_key('CHAR:' + ch)
+        self.idle(29.9)
+        self.assertEqual(kyphone_os.state['screen'], 'thread')    # not yet
+        self.idle(0.2)
+        self.assertEqual(kyphone_os.state['screen'], 'lock')
+        self.assertTrue(self.wires[-1].startswith('LOCK|'))
+        kyphone_os.handle_key('KEY_DOWN')                           # only unlocks; the key does nothing else
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.assertEqual(kyphone_os.state['thread_draft'], 'half a draft')
+        self.assertTrue(self.wires[-1].startswith('THREAD2|'))
+        self.assertIn('half a draft', self.wires[-1])
+
+    def test_it_locks_once_and_waits(self):
+        self.idle(31)
+        n = len(self.wires)
+        self.idle(60)
+        self.assertEqual(len(self.wires), n)                       # no redraw every tick
+
+    def test_not_while_reading_in_a_call_uploading_or_connecting(self):
+        for screen in kyphone_os.NO_AUTO_LOCK:
+            reset_state(screen=screen, last_key_at=self.now[0])
+            self.idle(120)
+            self.assertEqual(kyphone_os.state['screen'], screen, screen)
+
+    def test_locking_by_hand_still_unlocks_to_home(self):
+        reset_state(screen='lock', locked_from=None)
+        kyphone_os.handle_key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'home')
+
+    def test_unlocking_into_a_feature_is_a_full_refresh(self):
+        kyphone_os._open_thread(ALICE)
+        self.idle(31)
+        with patch.object(kyphone_os, '_last_screen_pushed', 'lock'):
+            kyphone_os.state['screen'] = 'thread'
+            self.assertTrue(kyphone_os._wants_full_refresh())
+            kyphone_os.state['screen'] = 'home'
+            kyphone_os._last_screen_pushed = 'lock'
+            self.assertFalse(kyphone_os._wants_full_refresh())   # lock -> home stays partial, as before
 
 
 class TestLightTimeout(unittest.TestCase):
