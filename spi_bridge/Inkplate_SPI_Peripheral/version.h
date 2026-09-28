@@ -6,6 +6,6 @@
 #ifndef KYPHONE_VERSION_H
 #define KYPHONE_VERSION_H
 
-#define KYPHONE_VERSION "0.7.0"
+#define KYPHONE_VERSION "0.7.1"
 
 #endif  // KYPHONE_VERSION_H
