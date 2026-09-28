@@ -15,6 +15,7 @@
 - [x] Call screens and a call log (simulated until the modem carries voice)
 - [x] Calls and texts per person: a call-log row opens the person's page; a conversation shows the last call (0.6.0)
 - [ ] Real voice calls through the modem (audio routing on the Radxa)
+- [ ] Before starting calls: tidy `kyphone_os.py` (4,273 lines, five jobs) — `handle_key` as a lookup table; file saving and the Inkplate link in their own files; one list-navigation helper for the ~9 list screens. Nothing visible changes; the tests guard it (Kyle, 2026-09-27: wait until calls are next)
 
 ## Reading and listening
 - [x] READ: EPUB reader with four text sizes, progress, resume
