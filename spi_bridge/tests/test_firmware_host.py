@@ -521,11 +521,15 @@ class FirmwareEmoji(unittest.TestCase):
                 want = bool(rows[r] >> (15 - c) & 1)
                 self.assertEqual(frame[(y + r) * W + x + c] == 0, want if ink else not want, (hex(code), r, c))
 
-    def test_in_a_bubble_an_emoji_fills_one_character_cell(self):
+    def test_in_a_bubble_an_emoji_is_doubled_across_two_character_cells(self):
         heart = emoji_table.CODES[0x2764]
-        f = self.render({'t': 'THREAD2|N|||R\xb71\xb7' + chr(heart) + 'ab'})['t']
-        # one received line: bubble top 458, text at x 44 with its cell top at 472; the picture sits at +1, +3
-        self.assert_emoji_at(f, heart, 45, 475)
+        f = self.render({'t': 'THREAD2|N|||R\xb71\xb7' + chr(heart) + '\x7fab'})['t']
+        # one received line: bubble top 458, text at x 44 with its cell top at 472; the 32x32 picture sits at +2, -8
+        rows = emoji_table.BITMAPS16[heart]
+        for r in range(32):
+            for c in range(32):
+                self.assertEqual(f[(464 + r) * W + 46 + c] == 0, bool(rows[r // 2] >> (15 - c // 2) & 1), (r, c))
+        self.assertFalse(any(f[y * W + x] == 0 for y in range(464, 496) for x in (78, 79)))   # nothing between it and the next letter
 
     def test_in_the_preview_an_emoji_is_centred_over_two_cells(self):
         cake = emoji_table.CODES[0x1F382]

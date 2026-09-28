@@ -73,20 +73,26 @@ static void ui_put(const char* s, int x, int y, int size, uint16_t color) {
     display.setTextSize(size);
     display.setTextColor(color);
     bool has_emoji = false;
-    for (int i = 0; i < n; i++) if (ui_emoji_index((unsigned char)tmp[i]) >= 0) has_emoji = true;
+    for (int i = 0; i < n; i++) if (ui_emoji_index((unsigned char)tmp[i]) >= 0 || tmp[i] == 0x7F) has_emoji = true;
     if (!has_emoji) {
         display.setCursor(x, y);
         display.print(tmp);
         return;
     }
-    // A received emoji is one byte 0x80-0xFF (not 0xB7): its 16x16 picture takes that character's place. In a bubble
-    // (size 3, an 18x24 cell) it fills one cell; in the preview (size 2) the Radxa sends a space after it, so it is
-    // centred across two 12px cells. Other sizes never carry emoji; a stray one there draws as '?'.
+    // A received emoji is one byte 0x80-0xFF (not 0xB7), followed by a pad byte 0x7F that gives it a second cell
+    // (drawn as nothing). In a bubble (size 3, 18x24 cells) the picture is doubled to 32x32, centred across the two
+    // cells and rising 8px above the cell top (bubble lines are 35px apart, so it clears the line above). In the
+    // preview (size 2, 12x16 cells) it is 16x16, centred across two cells. Other sizes never carry emoji: '?'.
     for (int i = 0; i < n; i++) {
         int cx = x + i * 6 * size;
+        if ((unsigned char)tmp[i] == 0x7F) continue;
         int e = ui_emoji_index((unsigned char)tmp[i]);
-        if (e >= 0 && size == 3)      display.drawBitmap(cx + 1, y + 3, ui_emoji16[e], 16, 16, color);
-        else if (e >= 0 && size == 2) display.drawBitmap(cx + 4, y, ui_emoji16[e], 16, 16, color);
+        if (e >= 0 && size == 3) {
+            for (int r = 0; r < 16; r++)
+                for (int c = 0; c < 16; c++)
+                    if (ui_emoji16[e][r * 2 + c / 8] & (0x80 >> (c % 8)))
+                        display.fillRect(cx + 2 + 2 * c, y - 8 + 2 * r, 2, 2, color);
+        } else if (e >= 0 && size == 2) display.drawBitmap(cx + 4, y, ui_emoji16[e], 16, 16, color);
         else {
             display.setCursor(cx, y);
             display.print(e >= 0 ? '?' : tmp[i]);

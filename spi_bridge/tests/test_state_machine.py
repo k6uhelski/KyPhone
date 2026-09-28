@@ -277,8 +277,17 @@ class TestEmojiInReceivedTexts(unittest.TestCase):
         self.assertEqual(kyphone_os.sanitize('\u263a \u2665', emoji=True),                         # older forms
                          self.code(0x1F642) + ' ' + heart)
 
-    def test_padding_gives_each_emoji_two_cells(self):
-        self.assertEqual(kyphone_os.sanitize('a\U0001F602b', emoji=True, pad=True), 'a%s b' % self.code(0x1F602))
+    def test_padding_gives_each_emoji_two_cells_and_is_not_a_word_break(self):
+        joy = self.code(0x1F602)
+        self.assertEqual(kyphone_os.sanitize('a\U0001F602b', emoji=True, pad=True), 'a%s\x7fb' % joy)
+        line = kyphone_os.sanitize('x' * 18 + '\U0001F602', emoji=True, pad=True)   # the emoji ends a 20-cell line
+        self.assertEqual(kyphone_os.wrap_words(line + ' ok', 20), [line, 'ok'])      # never split from its pad
+
+    def test_a_cut_never_leaves_an_emoji_without_its_second_cell(self):
+        joy = self.code(0x1F602)
+        text = 'ab' + joy + '\x7f' + 'cd'
+        self.assertEqual(kyphone_os.cut_text(text, 3), 'ab')
+        self.assertEqual(kyphone_os.cut_text(text, 4), 'ab' + joy + '\x7f')
 
     def test_the_codes_never_collide_with_the_wire_separators(self):
         import emoji_table
@@ -299,8 +308,8 @@ class TestEmojiInReceivedTexts(unittest.TestCase):
             kyphone_os._open_thread('+15550100001')
         joy = self.code(0x1F602)
         texts, thread = wires
-        self.assertIn('yes ' + joy + ' ', texts)                     # the preview, padded
-        self.assertIn('yes ' + joy, thread)                          # the bubble
+        self.assertIn('yes ' + joy + '\x7f', texts)                  # the preview, padded
+        self.assertIn('yes ' + joy + '\x7f', thread)                 # the bubble, padded too (drawn double size)
         self.assertIn('Pat?', texts)                                 # a name never carries emoji
         self.assertTrue(thread.startswith('THREAD2|Pat?|'), thread)
 
@@ -1330,8 +1339,8 @@ class TestDrawableText(SendBase):
                     messages=[_inbound('it’s fine \U0001F600 | ok · done')])
         wire = self.thread_wire()
         for ch in wire:                                            # (an emoji in the set is a drawable picture byte)
-            self.assertTrue(ch == CELL or ' ' <= ch <= '~' or kyphone_os.is_emoji_code(ch), repr(ch))
-        self.assertIn('fine %s ? ok ? done' % kyphone_os.sanitize('\U0001F600', emoji=True), wire)   # | and · become ?
+            self.assertTrue(ch == CELL or ' ' <= ch <= '~' or kyphone_os.is_emoji_code(ch) or ch == '\x7f', repr(ch))
+        self.assertIn('fine %s ? ok ? done' % kyphone_os.sanitize('\U0001F600', emoji=True, pad=True), wire)   # | and · become ?
         text = kyphone_os.build_payload(wire)[3:]                 # (bytes 0-2: the marker, the CRC-8, the start byte)
         self.assertEqual(max(text), max(ord(c) for c in wire))
         self.assertLessEqual(max(kyphone_os.build_payload(wire)), 255)

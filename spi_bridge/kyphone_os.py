@@ -564,6 +564,7 @@ def can_draw(ch):
 
 _EMOJI_SILENT = {0xFE0F, 0xFE0E} | set(range(0x1F3FB, 0x1F400))   # presentation selectors, skin tones: drawn as nothing
 _ZWJ = 0x200D                                                       # joins emoji into one (a family, a profession)
+EMOJI_PAD = '\x7f'                                                  # an emoji's second cell (see sanitize)
 
 
 def sanitize(text, emoji=False, pad=False):
@@ -573,7 +574,9 @@ def sanitize(text, emoji=False, pad=False):
     emoji=True (the bubbles and the texts-list preview only): an emoji in the drawn set (tools/make_emoji.py) becomes
     its one wire byte, 0x80-0xFF, which the panel draws as a 16x16 picture. A skin tone or presentation selector adds
     nothing; an emoji joined to others (a family) shows as its first one; a flag or an emoji not in the set is '?'.
-    pad=True puts a space after each emoji: the preview's text is smaller, so an emoji there takes two cells."""
+    pad=True puts EMOJI_PAD after each emoji, so it has two character cells: in a bubble it is drawn at double size
+    (32x32) across them, in the preview at 16x16 across two of that smaller text's cells. The pad is not a space, so
+    word wrapping never parts an emoji from its second cell; the panel draws nothing for it."""
     out, skip_next, flag_half = [], False, False
     for c in str(text):
         cp = ord(c)
@@ -593,11 +596,19 @@ def sanitize(text, emoji=False, pad=False):
                 continue
             code = emoji_table.CODES.get(cp)
             if code is not None:
-                out.append(chr(code) + (' ' if pad else ''))
+                out.append(chr(code) + (EMOJI_PAD if pad else ''))
                 continue
         c = _TRANSLIT.get(c, c)
         out.append(c if all(can_draw(x) for x in c) else '?')
     return ''.join(out)
+
+
+def cut_text(text, n):
+    """text[:n], never leaving an emoji without its pad byte (the second cell it is drawn across)."""
+    text = text[:max(0, n)]
+    if text and is_emoji_code(text[-1]):
+        text = text[:-1]
+    return text
 
 
 def is_emoji_code(ch):
@@ -713,7 +724,7 @@ def _list_command(head, rows, shrink_order, floor=6):
         for f in shrink_order:
             longest = max(rows, key=lambda r: len(r[f]), default=None)
             if longest is not None and len(longest[f]) > floor:
-                longest[f] = longest[f][:-1]
+                longest[f] = cut_text(longest[f], len(longest[f]) - 1)
                 break
         else:
             break    # nothing left to shorten; build_payload truncates
@@ -983,7 +994,7 @@ def push_texts():
         prefix  = ''
         if last and is_outgoing(last):
             prefix = '! ' if last.get('state') == 'not_sent' else 'You: '
-        preview = sanitize(prefix + last['body'], emoji=True, pad=True)[:PREVIEW_MAX] if last else ''
+        preview = cut_text(sanitize(prefix + last['body'], emoji=True, pad=True), PREVIEW_MAX) if last else ''
         unread  = '1' if t['unread'] else '0'
         time_str = format_msg_time(last.get('ts')) if last else ''
         rows.append([name, preview, unread, time_str])
@@ -1017,7 +1028,7 @@ def _thread_command(head, entries):
     if len(cmd) > MAX_COMMAND_CHARS and entries:
         text = entries[-1][2]
         keep = max(0, len(text) - (len(cmd) - MAX_COMMAND_CHARS) - 3)
-        entries[-1][2] = text[:keep] + '...'
+        entries[-1][2] = cut_text(text, keep) + '...'
         cmd = build()
     return cmd
 
@@ -1043,7 +1054,7 @@ def push_thread2():
                 code = 'Y3'
         else:
             code = 'R'
-        entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'], emoji=True)])
+        entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'], emoji=True, pad=True)])
 
     last = _last_call_with(thread_id)
     if last:

@@ -35,6 +35,8 @@ sys.path.insert(0, HERE)
 import kyphone_os  # noqa: E402
 import modem as md  # noqa: E402
 import emoji_table as md_emoji  # noqa: E402
+
+PAD = kyphone_os.EMOJI_PAD       # an emoji's second cell
 import network_control as nc  # noqa: E402
 import audio_fixtures as fx  # noqa: E402
 from epub_fixtures import make_epub  # noqa: E402
@@ -186,7 +188,8 @@ class PhoneCase(unittest.TestCase):
     def check_frame(self, cmd):
         self.assertLessEqual(len(cmd), kyphone_os.MAX_COMMAND_CHARS, cmd[:60])
         emoji_ok = cmd.startswith(('TEXTS|', 'THREAD2|'))           # received emoji travel only on these two
-        self.assertTrue(all(' ' <= c <= '~' or c == SEP or (emoji_ok and kyphone_os.is_emoji_code(c)) for c in cmd),
+        self.assertTrue(all(' ' <= c <= '~' or c == SEP or (emoji_ok and (kyphone_os.is_emoji_code(c) or c == PAD))
+                            for c in cmd),
                         cmd[:80])
 
     # ── helpers ──
@@ -335,7 +338,7 @@ class Scenarios(PhoneCase):
         with patch.object(kyphone_os.time, 'sleep', lambda s: self.st.__setitem__('running', False)), \
                 redirect_stdout(log):
             kyphone_os.modem_sms_loop()
-        self.assertIn('"Yes" %s see you there' % chr(md_emoji.CODES[0x1F600]), self.wire)   # joined, emoji drawn
+        self.assertIn('"Yes" %s see you there' % (chr(md_emoji.CODES[0x1F600]) + PAD), self.wire)   # joined, emoji drawn
         self.assertEqual(dongle.inbox, {})                        # deleted from the SIM
         self.assertEqual(len(kyphone_os.get_threads()), 2)       # the carrier's notice is its own conversation
         self.assertNotIn('see you', log.getvalue())               # nothing read reaches the log
@@ -362,11 +365,11 @@ class Scenarios(PhoneCase):
         cake, party = chr(md_emoji.CODES[0x1F382]), chr(md_emoji.CODES[0x1F389])
         thumbs, heart = chr(md_emoji.CODES[0x1F44D]), chr(md_emoji.CODES[0x2764])
         self.home('TEXT')
-        self.assertIn(cake + ' ' + party + ' ', self.wire)          # the preview: each emoji padded to two cells
+        self.assertIn(cake + PAD + party + PAD, self.wire)          # the preview: each emoji padded to two cells
         self.assertIn('Sam?', self.wire)                             # a name never carries emoji
         self.key('KEY_ENTER')
         # 👍🏽 loses its skin tone; ❤️‍🔥 (joined) shows its first emoji; a flag and 🧿 (not in the set) are '?'
-        self.assertIn('Happy birthday %s%s %s %s ? ?' % (cake, party, thumbs, heart), self.wire)
+        self.assertIn('Happy birthday %s%s %s %s ? ?' % (cake + PAD, party + PAD, thumbs + PAD, heart + PAD), self.wire)
 
     def test_a_text_arriving_while_locked_shows_the_mark_and_reading_clears_it(self):
         kyphone_os.push_lock()

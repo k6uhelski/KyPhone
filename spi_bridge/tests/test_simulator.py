@@ -49,11 +49,11 @@ class SimulatorPixels(unittest.TestCase):
     def test_an_emoji_in_a_bubble_is_drawn_where_the_firmware_draws_it(self):
         import emoji_table
         heart = emoji_table.CODES[0x2764]
-        self.draw('THREAD2|N|||R' + CELL + '1' + CELL + chr(heart) + 'ab')
+        self.draw('THREAD2|N|||R' + CELL + '1' + CELL + chr(heart) + '\x7fab')
         rows = emoji_table.BITMAPS16[heart]
-        for r in range(16):
-            for c in range(16):
-                self.assertEqual(self.px(45 + c, 475 + r) == BLACK, bool(rows[r] >> (15 - c) & 1), (r, c))
+        for r in range(32):                                        # doubled: each picture pixel is 2x2
+            for c in range(32):
+                self.assertEqual(self.px(46 + c, 464 + r) == BLACK, bool(rows[r // 2] >> (15 - c // 2) & 1), (r, c))
 
     def ink(self):
         """Number of black pixels on screen."""
