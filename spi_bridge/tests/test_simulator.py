@@ -46,6 +46,16 @@ class SimulatorPixels(unittest.TestCase):
     def px(self, x, y):
         return tuple(self.sim._surface.get_at((x, y)))[:3]
 
+    def test_a_selected_bubble_is_ringed_as_on_the_panel(self):
+        self.draw('THREAD2|N||S|R' + CELL + '1' + CELL + 'hello')
+        self.assertEqual(self.px(30 + 20, 458 + 6), BLACK)
+
+    def test_a_message_page_draws_its_lines(self):
+        self.draw('MESSAGE|6700|Yesterday|2/3|first line' + CELL + 'second line')
+        ink = lambda y0, y1: any(self.px(x, y) == BLACK for y in range(y0, y1) for x in range(30, 200))
+        self.assertTrue(ink(104, 126) and ink(139, 161))
+        self.assertFalse(ink(174, 196))
+
     def test_an_emoji_in_a_bubble_is_drawn_where_the_firmware_draws_it(self):
         import emoji_table
         heart = emoji_table.CODES[0x2764]

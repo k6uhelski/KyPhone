@@ -315,6 +315,85 @@ class TestEmojiInReceivedTexts(unittest.TestCase):
         self.assertTrue(thread.startswith('THREAD2|Pat?|'), thread)
 
 
+class TestScrollingAConversation(unittest.TestCase):
+    """Up and Down walk through every message in a conversation, the view following the selection; Enter opens a
+    message full screen, paged (Kyle, 2026-10-02: a long text was cut off at the top with no way to read it)."""
+
+    LONG = ('Thanks for choosing Ultra Mobile. To easily manage your plan, check balances & more, visit your account '
+            'at u.example/account or download the app at u.example/app. ') * 6        # about 830 characters
+
+    def setUp(self):
+        self.wires = []
+        for name, value in (('push_screen', self.wires.append), ('save_messages', lambda: None)):
+            p = patch.object(kyphone_os, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        msgs = [_inbound('message %d' % i) for i in range(8)] + [_inbound(self.LONG)]
+        reset_state(screen='thread', thread_id=ALICE, messages=msgs)
+
+    def key(self, *keys):
+        for k in keys:
+            kyphone_os.handle_key(k)
+
+    def test_the_view_follows_the_selection_back_through_the_whole_conversation(self):
+        self.key('KEY_UP')                                          # the newest (long) message
+        self.assertEqual(self.wires[-1].split('|')[3], 'S')
+        self.key('KEY_UP', 'KEY_UP', 'KEY_UP', 'KEY_UP', 'KEY_UP')  # message 3
+        entries = _entries(self.wires[-1])
+        self.assertEqual([e[2] for e in entries], ['message 1', 'message 2', 'message 3'])   # ends at the selection
+        self.assertEqual(self.wires[-1].split('|')[3], 'S')
+
+    def test_enter_opens_the_message_and_every_word_is_on_some_page(self):
+        self.key('KEY_UP', 'KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'message')
+        title, meta, pages = kyphone_os._message_view(ALICE, kyphone_os.state['thread_msg_sel'])
+        self.assertGreater(len(pages), 1)
+        self.assertEqual(' '.join(' '.join(p) for p in pages).split(), self.LONG.split())
+        seen = []
+        for k in range(len(pages)):
+            wire = self.wires[-1]
+            self.assertTrue(wire.startswith('MESSAGE|'))
+            self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS)
+            fields = wire.split('|')
+            self.assertEqual(fields[3], '%d/%d' % (k + 1, len(pages)))
+            lines = fields[4].split(CELL)
+            self.assertLessEqual(len(lines), kyphone_os.MESSAGE_LINES)
+            self.assertTrue(all(len(l) <= kyphone_os.MESSAGE_COLS for l in lines))
+            seen += lines
+            self.key('KEY_DOWN')
+        self.assertEqual(seen, [l for p in pages for l in p])
+        n = len(self.wires)
+        self.key('KEY_DOWN')                                        # past the last page: redrawn, not silent
+        self.assertEqual(len(self.wires), n + 1)
+        self.key('KEY_UP')
+        self.assertEqual(self.wires[-1].split('|')[3], '%d/%d' % (len(pages) - 1, len(pages)))
+
+    def test_leaving_the_message_returns_to_the_same_selection(self):
+        self.key('KEY_UP', 'KEY_UP', 'KEY_ENTER')
+        self.key('KEY_ESC')
+        self.assertEqual(kyphone_os.state['screen'], 'thread')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], 7)
+        self.assertEqual(_entries(self.wires[-1])[-1][2], 'message 7')
+
+    def test_typing_returns_to_the_composer_and_the_newest_messages(self):
+        self.key('KEY_UP', 'KEY_UP', 'KEY_UP', 'CHAR:h')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
+        self.assertEqual(kyphone_os.state['thread_draft'], 'h')
+        self.assertEqual(self.wires[-1].split('|')[3], '')
+
+    def test_a_short_message_is_one_page_with_no_page_label(self):
+        self.key('KEY_UP', 'KEY_UP', 'KEY_ENTER')
+        self.assertEqual(self.wires[-1].split('|')[3:], ['', 'message 7'])
+
+    def test_opening_and_leaving_a_message_or_a_conversation_is_a_full_refresh(self):
+        for before, after, full in (('texts_list', 'thread', True), ('thread', 'message', True),
+                                    ('message', 'thread', True), ('message', 'message', False),
+                                    ('thread', 'thread', False), ('stub', 'thread', False)):
+            with patch.object(kyphone_os, '_last_screen_pushed', before):
+                kyphone_os.state['screen'] = after
+                self.assertEqual(kyphone_os._wants_full_refresh(), full, (before, after))
+
+
 class TestInputDevicesLogOnce(unittest.TestCase):
     def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
         import io
@@ -702,9 +781,14 @@ class TestThreadScreen(unittest.TestCase):
         self.assertEqual(kyphone_os.state['screen'], 'texts_list')
 
     @patch.object(kyphone_os, 'push_screen')
-    def test_up_enters_header_on_back(self, _ps):
+    def test_up_selects_the_newest_message_then_older_ones_then_the_header(self, _ps):
+        n = len(kyphone_os._thread_bubbles(kyphone_os.state['thread_id']))
+        for k in range(n):
+            kyphone_os.handle_key('KEY_UP')
+            self.assertEqual(kyphone_os.state['thread_msg_sel'], n - 1 - k)
         kyphone_os.handle_key('KEY_UP')
         self.assertEqual(kyphone_os.state['thread_header_sel'], 'back')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
 
     @patch.object(kyphone_os, 'push_screen')
     def test_right_in_header_moves_to_info(self, _ps):
@@ -1292,13 +1376,18 @@ class TestRetry(SendBase):
         wire = self.key('KEY_ENTER')
         self.assertEqual(_entries(wire)[-1][0], 'Y2')
 
-    def test_arrow_up_again_reaches_the_header_and_down_returns_to_the_composer(self):
-        self.key('KEY_UP')
-        self.key('KEY_UP')
+    def test_up_past_the_oldest_message_reaches_the_header_and_down_walks_back(self):
+        n = len(kyphone_os._thread_bubbles(kyphone_os.state['thread_id']))
+        for _ in range(n + 1):
+            self.key('KEY_UP')
         self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
         self.assertEqual(kyphone_os.state['thread_header_sel'], 'back')
-        self.key('KEY_DOWN')
+        self.key('KEY_DOWN')                                         # down from the header: the oldest message
         self.assertIsNone(kyphone_os.state['thread_header_sel'])
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], 0)
+        for _ in range(n):
+            self.key('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)     # ... and on down to the composer
 
     def test_arrow_down_from_a_selected_message_returns_to_the_composer(self):
         self.key('KEY_UP')
@@ -1312,11 +1401,17 @@ class TestRetry(SendBase):
         self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
         self.assertEqual(kyphone_os.state['thread_draft'], 'x')
 
-    def test_with_nothing_to_retry_arrow_up_goes_straight_to_the_header(self):
+    def test_with_nothing_to_retry_arrow_up_selects_the_message_and_enter_opens_it(self):
         reset_state(screen='thread', thread_id=ALICE, messages=[_inbound()])
         self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['thread_msg_sel'], 0)
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'message')
+
+    def test_an_empty_conversation_goes_straight_to_the_header(self):
+        reset_state(screen='thread', thread_id=ALICE, messages=[])
+        self.key('KEY_UP')
         self.assertEqual(kyphone_os.state['thread_header_sel'], 'back')
-        self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1521,7 +1616,7 @@ class TestContactPage(ContactBase):
 
     def test_unsaved_number_shows_it_formatted_with_call_text_and_save(self):
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
-        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # header -> info
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # header -> info
         self.assertEqual(kyphone_os.state['screen'], 'contact')
         self.assertIsNone(kyphone_os.state['contact_idx'])
         with patch.object(kyphone_os, 'push_screen') as ps:
@@ -1540,7 +1635,7 @@ class TestContactPage(ContactBase):
 
     def test_unsaved_page_row_has_three_buttons(self):
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
-        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
         self.key('KEY_RIGHT', 'KEY_RIGHT')
         self.assertEqual(kyphone_os.state['contact_sel'], 'save')
         self.key('KEY_UP')
@@ -1569,7 +1664,7 @@ class TestContactPage(ContactBase):
         self.key('KEY_ENTER')
         self.assertEqual(kyphone_os.state['call_name'], 'Alice Test')
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
-        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_ENTER')
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_ENTER')
         self.assertEqual(kyphone_os.state['call_name'], '(555) 019-9002')
 
 
@@ -1595,7 +1690,7 @@ class TestSaveAnUnsavedNumber(ContactBase):
     def setUp(self):
         super().setUp()
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
-        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # info -> unsaved contact page
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')                        # info -> unsaved contact page
         self.key('KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')                     # SAVE
 
     def test_save_opens_a_blank_form_with_the_number_filled_in_and_formatted(self):
@@ -1811,7 +1906,7 @@ class TestNewContactFromOtherScreens(NewContactBase):
 
     def test_from_an_unsaved_number_a_save_lands_on_its_page_and_esc_goes_back_to_the_thread(self):
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
-        self.key('KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')     # SAVE
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER', 'KEY_RIGHT', 'KEY_RIGHT', 'KEY_ENTER')     # SAVE
         for ch in 'Dave':
             self.key(f'CHAR:{ch}')
         self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')
@@ -2779,8 +2874,9 @@ class TestFullRefreshWhen(unittest.TestCase):
         self.assertEqual([self.show(s) for s in
                           ['lock', 'lock', 'home', 'home', 'texts_list', 'thread', 'thread', 'texts_list', 'home',
                            'settings', 'wifi', 'settings', 'home', 'lock']],
-                         [True, False, False, False, True, False, False, False, True,
-                          True, False, False, True, True])      # back to home from a feature is full too
+                         [True, False, False, False, True, True, False, False, True,
+                          True, False, False, True, True])      # back to home from a feature is full too; so is
+                                                                # opening a conversation (2026-10-02: ghosting)
 
     def test_a_replaced_full_request_carries_over(self):
         kyphone_os.state['screen'] = 'home'

@@ -339,7 +339,8 @@ state = {
     'thread_id':        None,       # sender phone number
     'thread_draft':     '',
     'thread_header_sel': None,      # None=typing | 'back' | 'info'
-    'thread_msg_sel':   -1,         # -1=composer | index into the shown bubbles (a not-sent one, for retry)
+    'thread_msg_sel':   -1,         # -1=composer | the selected message, counted from the oldest (_thread_bubbles)
+    'message_page':     0,          # the page shown on the full-screen message view
     'compose_to':       '',
     'compose_msg':      '',
     'compose_to_active': True,
@@ -796,7 +797,11 @@ def _wants_full_refresh():
     before, _last_screen_pushed = _last_screen_pushed, screen
     into_feature = before in ('home', 'lock') and screen not in ('home', 'lock')   # (lock: unlocking into a feature)
     back_home = screen == 'home' and before not in (None, 'home', 'lock')
-    return (screen == 'lock' and before != 'lock') or into_feature or back_home
+    # Opening a conversation, or one of its messages full screen, and coming back from one (Kyle, 2026-10-02: the
+    # texts list ghosted through a partially refreshed conversation).
+    conversation = ((screen == 'thread' and before in ('texts_list', 'contact', 'compose', 'contacts_pick', 'message'))
+                    or (screen == 'message' and before == 'thread'))
+    return (screen == 'lock' and before != 'lock') or into_feature or back_home or conversation
 
 
 def push_screen(command):
@@ -1056,6 +1061,12 @@ def _thread_command(head, entries):
     return cmd
 
 
+def _thread_bubbles(peer):
+    """The messages a conversation shows as bubbles (every message with `peer` that has text), oldest first. The
+    selection (state['thread_msg_sel']) and the message view count positions in this list."""
+    return [m for m in _thread_messages(peer) if str(m['body']).strip()]
+
+
 def push_thread2():
     with state['lock']:
         thread_id  = state['thread_id']
@@ -1063,26 +1074,89 @@ def push_thread2():
         header_sel = state['thread_header_sel']
         msg_sel    = state['thread_msg_sel']
 
-    shown = _thread_messages(thread_id)[-THREAD_BUBBLES:]
+    msgs  = _thread_bubbles(thread_id)
+    msg_sel = msg_sel if isinstance(msg_sel, int) else -1
+    if 0 <= msg_sel < len(msgs):
+        first = max(0, msg_sel + 1 - THREAD_BUBBLES)       # the selected message is the bottom bubble, older above
+        shown, sel_i = msgs[first:msg_sel + 1], msg_sel - first
+    else:
+        shown, sel_i = msgs[-THREAD_BUBBLES:], -1
     name  = sanitize(format_name(thread_id))[:THREAD_NAME_MAX] if thread_id else ''
     hdr   = {'back': 'B', 'info': 'I'}.get(header_sel, '')
 
     entries = []
     for i, m in enumerate(shown):
-        if not str(m['body']).strip():
-            continue
         if is_outgoing(m):
             code = _BUBBLE_CODE.get(m.get('state'), 'Y1')
-            if code == 'Y2' and i == msg_sel:
-                code = 'Y3'
+            if code == 'Y2' and i == sel_i:
+                code = 'Y3'                                 # not sent and selected: the retry prompt
         else:
             code = 'R'
         entries.append([code, format_msg_time(m.get('ts')), sanitize(m['body'], emoji=True, pad=True)])
+    if sel_i >= 0 and entries[-1][0] != 'Y3':
+        hdr = 'S'                                           # the bottom bubble is selected: ring it (Enter opens it)
 
     last = _last_call_with(thread_id)
     if last:
         entries.insert(0, ['C', '', last])                  # the quiet LAST CALL line under the header
     push_screen(_thread_command(["THREAD2", name, sanitize(composer_view(draft)), hdr], entries))
+
+
+# ─── One message, full screen ───
+# Enter on a selected bubble opens it here, wrapped at MESSAGE_COLS and paged so every page is one frame (at most
+# MESSAGE_LINES lines, and whatever fits in MAX_COMMAND_CHARS). Down/Right/Space and Up/Left page; Esc, Enter or
+# Backspace return to the conversation with the same message selected.
+MESSAGE_COLS  = 30
+MESSAGE_LINES = 13
+_MESSAGE_STATE = {'sending': 'SENDING... ', 'sent': 'SENT ', 'not_sent': 'NOT SENT '}
+
+
+def _message_view(peer, index):
+    """(title, meta, pages) for message `index` of the conversation; each page is a list of lines."""
+    msgs = _thread_bubbles(peer)
+    m = msgs[min(max(index, 0), len(msgs) - 1)]
+    title = sanitize(format_name(peer))[:THREAD_NAME_MAX]
+    when = format_msg_time(m.get('ts'))
+    meta = (_MESSAGE_STATE.get(m.get('state'), 'SENT ') + when) if is_outgoing(m) else when
+    lines = wrap_words(sanitize(m['body'], emoji=True, pad=True), MESSAGE_COLS)
+    room = MAX_COMMAND_CHARS - len('|'.join(['MESSAGE', title, meta, '99/99', '']))
+    pages, page = [], []
+    for line in lines:
+        if page and (len(page) >= MESSAGE_LINES or len('\xb7'.join(page + [line])) > room):
+            pages.append(page)
+            page = []
+        page.append(line)
+    pages.append(page)
+    return title, meta, pages
+
+
+def push_message():
+    with state['lock']:
+        peer, index, page = state['thread_id'], state['thread_msg_sel'], state['message_page']
+    title, meta, pages = _message_view(peer, index)
+    page = min(max(page, 0), len(pages) - 1)
+    label = '%d/%d' % (page + 1, len(pages)) if len(pages) > 1 else ''
+    push_screen('|'.join(['MESSAGE', title, meta, label, '\xb7'.join(pages[page])]))
+
+
+def _from_message(keycode):
+    with state['lock']:
+        peer, index, page = state['thread_id'], state['thread_msg_sel'], state['message_page']
+    if keycode in ('KEY_ESC', 'KEY_ENTER', 'KEY_BACKSPACE'):
+        with state['lock']:
+            state['screen'] = 'thread'
+        push_thread2()
+        return
+    pages = len(_message_view(peer, index)[2])
+    if keycode in ('KEY_DOWN', 'KEY_RIGHT', 'CHAR: '):
+        page = min(page + 1, pages - 1)
+    elif keycode in ('KEY_UP', 'KEY_LEFT'):
+        page = max(page - 1, 0)
+    else:
+        return
+    with state['lock']:
+        state['message_page'] = page
+    push_message()                                          # at either end it redraws, so the key is answered
 
 
 _CALL_WORD = {'MISS': 'MISSED', 'IN': 'IN', 'OUT': 'OUT'}
@@ -1320,7 +1394,7 @@ def _push_for_screen(screen_name):
     return screen) rather than a fixed literal."""
     pushers = {
         'home': push_home2, 'lock': push_lock, 'texts_list': push_texts,
-        'thread': push_thread2, 'compose': push_compose, 'stub': push_stub,
+        'thread': push_thread2, 'message': push_message, 'compose': push_compose, 'stub': push_stub,
         'confirm': push_confirm, 'contacts_pick': push_contacts,
         'contact': push_contact, 'contact_edit': push_contact_edit,
         'calls_list': push_calls, 'dial': push_dial,
@@ -1377,6 +1451,9 @@ def handle_key(keycode):
 
     elif screen == 'thread':
         _from_thread(keycode)
+
+    elif screen == 'message':
+        _from_message(keycode)
 
     elif screen == 'compose':
         _from_compose(keycode)
@@ -1639,11 +1716,16 @@ def _open_compose():
 
 
 def _from_thread(keycode):
+    """The conversation. Up from the composer selects the newest message, and each Up an older one (the view follows
+    the selection); Up from the oldest reaches the header. Down walks back toward the composer. Enter on a selected
+    message opens it full screen, or retries it if it was NOT SENT. Typing always returns to the composer."""
     with state['lock']:
         header_sel = state['thread_header_sel']
         msg_sel    = state['thread_msg_sel']
         thread_id  = state['thread_id']
-    shown = _thread_messages(thread_id)[-THREAD_BUBBLES:]
+    msgs = _thread_bubbles(thread_id)
+    if not isinstance(msg_sel, int) or msg_sel >= len(msgs):
+        msg_sel = -1
 
     # A typed key while a bubble is selected first returns to the composer, so
     # nothing is ever typed into a composer that shows no cursor.
@@ -1659,31 +1741,36 @@ def _from_thread(keycode):
 
     elif msg_sel >= 0 and keycode == 'KEY_UP':
         with state['lock']:
-            state['thread_msg_sel']    = -1
-            state['thread_header_sel'] = 'back'
+            if msg_sel > 0:
+                state['thread_msg_sel'] = msg_sel - 1
+            else:
+                state['thread_msg_sel']    = -1
+                state['thread_header_sel'] = 'back'
         push_thread2()
 
     elif msg_sel >= 0 and keycode == 'KEY_DOWN':
         with state['lock']:
-            state['thread_msg_sel'] = -1
+            state['thread_msg_sel'] = msg_sel + 1 if msg_sel < len(msgs) - 1 else -1
         push_thread2()
 
     elif msg_sel >= 0 and keycode == 'KEY_ENTER':
-        with state['lock']:
-            state['thread_msg_sel'] = -1
-        if msg_sel < len(shown):
-            retry_message(shown[msg_sel])
-        push_thread2()
+        m = msgs[msg_sel]
+        if is_outgoing(m) and m.get('state') == 'not_sent':
+            with state['lock']:
+                state['thread_msg_sel'] = -1
+            retry_message(m)
+            push_thread2()
+        else:
+            with state['lock']:
+                state['screen']       = 'message'
+                state['message_page'] = 0
+            push_message()
 
     elif keycode == 'KEY_UP':
         if header_sel is None:
-            # A not-sent message is the only thing in a transcript worth
-            # selecting, so arrow up reaches the newest one before the header.
-            retryable = [i for i, m in enumerate(shown)
-                         if is_outgoing(m) and m.get('state') == 'not_sent']
             with state['lock']:
-                if retryable:
-                    state['thread_msg_sel'] = retryable[-1]
+                if msgs:
+                    state['thread_msg_sel'] = len(msgs) - 1
                 else:
                     state['thread_header_sel'] = 'back'
             push_thread2()
@@ -1692,6 +1779,7 @@ def _from_thread(keycode):
     elif header_sel is not None and keycode == 'KEY_DOWN':
         with state['lock']:
             state['thread_header_sel'] = None
+            state['thread_msg_sel']    = 0 if msgs else -1     # back down through the messages, oldest first
         push_thread2()
 
     elif header_sel is not None and keycode == 'KEY_RIGHT':

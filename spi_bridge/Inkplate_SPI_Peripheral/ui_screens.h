@@ -702,8 +702,9 @@ static void ui_calls(char* data) {
 }
 
 // ─── THREAD2|name|draft|hdr|code·time·text|... ────────────────────────────────
-// hdr '' composer / 'B' back / 'I' info. code: R received, Y0 sending, Y1 sent,
-// Y2 not sent, Y3 not sent + selected (the retry prompt).
+// hdr '' composer / 'B' back / 'I' info / 'S' the bottom bubble is selected (ringed). code: R received, Y0 sending,
+// Y1 sent, Y2 not sent, Y3 not sent + selected (the retry prompt). A selected bubble taller than the message area is
+// shown from its top (so a long message's start is never cut off); otherwise the column sits on the composer.
 
 #define UI_BUBBLES     3
 #define UI_BUB_LINES   16
@@ -737,6 +738,7 @@ static void ui_thread(char* data) {
         if (strcmp(b[nb].code, "Y3") == 0) any_selected = true;
         nb++;
     }
+    if (hdr == 'S') any_selected = true;
     bool composer_active = (hdr == '\0') && !any_selected;
 
     // Composer: '> ' + draft, word-wrapped to 30 columns, at most three lines.
@@ -758,6 +760,8 @@ static void ui_thread(char* data) {
         b[i].h = (b[i].out ? 0 : name_h) + b[i].bubble_h + meta_h;
     }
     int y_bottom = area_bottom;
+    if (nb > 0 && (hdr == 'S' || strcmp(b[nb - 1].code, "Y3") == 0) && b[nb - 1].h > area_bottom - area_top)
+        y_bottom = area_top + b[nb - 1].h;           // a tall selected bubble: show its beginning
     for (int i = nb - 1; i >= 0; i--) {
         int top = y_bottom - b[i].h;
         int y0 = top;
@@ -775,7 +779,8 @@ static void ui_thread(char* data) {
         bool filled = (strcmp(b[i].code, "Y1") == 0);
         if (filled) display.fillRect(bx, y0, bw, b[i].bubble_h, BLACK);
         ui_rect(bx, y0, bw, b[i].bubble_h, 2, BLACK);
-        if (strcmp(b[i].code, "Y3") == 0) ui_rect(bx + 5, y0 + 5, bw - 10, b[i].bubble_h - 10, 2, BLACK);   // selection ring
+        bool ringed = strcmp(b[i].code, "Y3") == 0 || (hdr == 'S' && i == nb - 1);
+        if (ringed) ui_rect(bx + 5, y0 + 5, bw - 10, b[i].bubble_h - 10, 2, filled ? WHITE : BLACK);   // selection ring
         for (int j = 0; j < b[i].nlines; j++)
             ui_text(ui_bub_lines[i][j], bx + 2 + pad_x, y0 + 10 + line_h * j + 25, 3, filled ? WHITE : BLACK, false);
         // Tail: five stacked bars on the bubble's outer edge.
@@ -982,6 +987,25 @@ static void ui_contact_edit(char* data) {
 // `text` (a command such as "TEXTS|0|..."; modified in place) and returns true,
 // or returns false for a command it does not own (the legacy renderers).
 
+// ─── MESSAGE|title|meta|page|line·line·... ────────────────────────────────────
+// One message, full screen. The Radxa wraps it at 30 columns and pages it (at most 13 lines a page, one frame);
+// page is '2/3', or '' for a single page.
+static void ui_message(char* data) {
+    char* f[5];
+    int n = ui_split(data, '|', f, 5);
+    ui_text("<", 26, 32, 3, BLACK, true);
+    ui_text_center(ui_fld(f, n, 0), 31, 3, BLACK, true);
+    display.fillRect(0, 46, 600, 2, BLACK);
+    ui_text(ui_fld(f, n, 1), 30, 78, 2, BLACK, false);
+    if (n > 3) {
+        char* lines[14];
+        int nl = ui_split(f[3], UI_SUB, lines, 14);
+        for (int i = 0; i < nl && i < 13; i++) ui_text(lines[i], 30, 125 + 35 * i, 3, BLACK, false);
+    }
+    const char* page = ui_fld(f, n, 2);
+    if (page[0]) ui_text_right(page, 570, 585, 2, BLACK, false);
+}
+
 static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
     struct Cmd { const char* prefix; void (*fn)(char*); };
     static const Cmd cmds[] = {
@@ -993,6 +1017,7 @@ static bool ui_dispatch(char* text, char* screen_out, int screen_out_len) {
         {"SETTINGS|", ui_settings},  {"NETLIST|", ui_netlist},     {"NETPASS|", ui_netpass},
         {"NETSTATE|", ui_netstate},  {"LIGHTSET|", ui_lightset},   {"NOTES|", ui_notes},
         {"NOTE|", ui_note},          {"UPLOAD|", ui_upload},     {"CHAPTERS|", ui_chapters},
+        {"MESSAGE|", ui_message},
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         size_t len = strlen(cmds[i].prefix);

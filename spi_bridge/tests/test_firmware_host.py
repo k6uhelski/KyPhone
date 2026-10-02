@@ -543,6 +543,46 @@ class FirmwareEmoji(unittest.TestCase):
 
 
 @unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
+class FirmwareScrolling(unittest.TestCase):
+    """A selected bubble is ringed; one taller than the message area is shown from its top; MESSAGE draws a page."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='kyphone-fw-scroll-')
+        cls.exe = os.path.join(cls.tmp, 'render_host')
+        build(cls.exe)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    render = classmethod(FirmwareFrames.render.__func__)
+
+    def test_a_selected_bubble_is_ringed(self):
+        plain = self.render({'t': 'THREAD2|N|||R\xb71\xb7hello'})['t']
+        ringed = self.render({'t': 'THREAD2|N||S|R\xb71\xb7hello'})['t']
+        # one received line: the bubble starts at x 30, y 458; the ring is drawn 5px inside its border
+        self.assertFalse(plain[(458 + 6) * W + 30 + 20] == 0)
+        self.assertTrue(ringed[(458 + 6) * W + 30 + 20] == 0)
+
+    def test_a_tall_selected_bubble_is_shown_from_its_top(self):
+        text = ' '.join(['word'] * 60)                                   # about 15 lines at 20 columns
+        bottom = self.render({'t': 'THREAD2|N|||R\xb71\xb7' + text})['t']
+        top = self.render({'t': 'THREAD2|N||S|R\xb71\xb7' + text})['t']
+        # the area starts at y 62; selected, the bubble's top border lies under its 27px name label, at y 89
+        border = lambda f: all(f[89 * W + x] == 0 for x in range(40, 300))
+        self.assertTrue(border(top))
+        self.assertFalse(border(bottom))
+
+    def test_a_message_page_draws_its_lines_and_page_label(self):
+        f = self.render({'t': 'MESSAGE|6700|Yesterday|2/3|first line\xb7second line'})['t']
+        self.assertTrue(any(f[y * W + x] == 0 for y in range(104, 126) for x in range(30, 200)))    # line 1
+        self.assertTrue(any(f[y * W + x] == 0 for y in range(139, 161) for x in range(30, 200)))    # line 2
+        self.assertFalse(any(f[y * W + x] == 0 for y in range(174, 196) for x in range(30, 200)))   # no line 3
+        self.assertTrue(any(f[y * W + x] == 0 for y in range(571, 586) for x in range(520, 570)))   # 2/3
+
+
+@unittest.skipUnless(AVAILABLE, 'needs clang++ and Adafruit_GFX (glcdfont.c)')
 class FirmwareMemorySafety(unittest.TestCase):
     def test_malformed_and_maximum_length_commands_do_not_overflow_or_misbehave(self):
         tmp = tempfile.mkdtemp(prefix='kyphone-fw-asan-')
@@ -553,7 +593,8 @@ class FirmwareMemorySafety(unittest.TestCase):
         rng = random.Random(20260918)
         prefixes = ['HOME2|', 'TEXTS|', 'CONTACTSPICK|', 'CALLS|', 'THREAD2|', 'COMPOSE|', 'STUB|', 'CONFIRM|',
                     'CONTACTEDIT|', 'CONTACT|', 'LIBRARY|', 'MUSIC|', 'TRACKS|', 'NOWPLAYING|',
-                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|', 'CHAPTERS|']
+                    'SETTINGS|', 'NETLIST|', 'NETPASS|', 'NETSTATE|', 'LIGHTSET|', 'NOTES|', 'NOTE|', 'UPLOAD|', 'CHAPTERS|',
+                    'MESSAGE|']
         alphabet = [chr(c) for c in range(0x20, 0x7f) if chr(c) != '|'] + ['\xb7'] * 6 + \
             [chr(c) for c in range(0x80, 0x100)]                   # emoji codes (and 0xB7) on every screen
 
@@ -587,6 +628,7 @@ class FirmwareMemorySafety(unittest.TestCase):
             'long18\tTHREAD2|N|d||C\xb7\xb7' + 'L' * 120 + '|R\xb71\xb7' + 'w' * 60 + '\n',
             'long19\tTHREAD2|N|d||' + '|'.join(['C\xb7\xb7x'] * 8) + '\n',
             'long20\tUPLOAD|' + '9' * 60 + '|' + '8' * 30 + '|' + '\xb7'.join(['z' * 60] * 5) + '\n',
+            'long21\tMESSAGE|' + 'T' * 60 + '|' + 'M' * 60 + '|99/99|' + '\xb7'.join(['w' * 40] * 20) + '\n',
             'long17\tNOTES|4|' + '|'.join(('T' * 30 + '\xb7Yesterday\xb7') for _ in range(7)) + '\n',
         ]
         env = dict(os.environ, ASAN_OPTIONS='halt_on_error=1:detect_leaks=0', UBSAN_OPTIONS='halt_on_error=1')

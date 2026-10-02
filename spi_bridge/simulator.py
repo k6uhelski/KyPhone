@@ -204,6 +204,8 @@ class Simulator:
             self._draw_texts(rest)
         elif prefix == 'THREAD2':
             self._draw_thread2(rest)
+        elif prefix == 'MESSAGE':
+            self._draw_message(rest)
         elif prefix == 'COMPOSE':
             self._draw_compose(rest)
         elif prefix == 'STUB':
@@ -621,7 +623,7 @@ class Simulator:
             parsed.append((code, time_str, text))
         if call_line:
             self._text_centered(call_line, 72 - 14, 2)
-        composer_active = not hdr and not any(c == 'Y3' for c, _, _ in parsed)
+        composer_active = not hdr and not any(c == 'Y3' for c, _, _ in parsed)   # ('S' = a bubble is selected)
 
         # Composer: '> ' + the draft, word-wrapped to 30 columns, at most three
         # lines (kyphone_os.composer_view already trimmed the draft to fit).
@@ -652,7 +654,9 @@ class Simulator:
 
         self._surface.set_clip(pygame.Rect(0, area_top, self.WIDTH, area_bottom - area_top))
         y_bottom = area_bottom
-        for b in reversed(blocks):
+        if blocks and (hdr == 'S' or blocks[-1]['code'] == 'Y3') and blocks[-1]['h'] > area_bottom - area_top:
+            y_bottom = area_top + blocks[-1]['h']              # a tall selected bubble: show its beginning
+        for k, b in enumerate(reversed(blocks)):
             top = y_bottom - b['h']
             y0  = top
             if not b['outgoing']:
@@ -664,8 +668,9 @@ class Simulator:
             filled = b['code'] == 'Y1'
             pygame.draw.rect(self._surface, BLACK if filled else WHITE, (bx, y0, bw, b['bubble_h']))
             pygame.draw.rect(self._surface, BLACK, (bx, y0, bw, b['bubble_h']), 2)
-            if b['code'] == 'Y3':          # selection ring: 3px inside the border, inside the box
-                pygame.draw.rect(self._surface, BLACK, (bx + 5, y0 + 5, bw - 10, b['bubble_h'] - 10), 2)
+            if b['code'] == 'Y3' or (hdr == 'S' and k == 0):   # selection ring: 3px inside the border
+                pygame.draw.rect(self._surface, WHITE if filled else BLACK,
+                                 (bx + 5, y0 + 5, bw - 10, b['bubble_h'] - 10), 2)
             for j, line in enumerate(b['lines']):
                 self._text_bl(line, bx + 2 + pad_x, y0 + 10 + line_h * j + 25, 3, WHITE if filled else BLACK)
             tail_y = y0 + (b['bubble_h'] - tail_seg_h * len(tail_widths)) // 2
@@ -683,6 +688,21 @@ class Simulator:
                 self._text_bl(meta, bx, baseline, 2, bold=bold)
             y_bottom = top - gap
         self._surface.set_clip(None)
+
+    def _draw_message(self, data):
+        # data = "title|meta|page|line·line·..."   one message, full screen, paged by the Radxa (as ui_message)
+        parts = data.split('|')
+        title, meta, page = (parts + ['', '', ''])[:3]
+        lines = parts[3].split('\xb7') if len(parts) > 3 and parts[3] else []
+        self._text_bl('<', 26, 32, 3, bold=True)
+        font = self._font(3, True)
+        self._surface.blit(font.render(title, True, BLACK), ((self.WIDTH - font.size(title)[0]) // 2, 31 - font.get_ascent()))
+        pygame.draw.rect(self._surface, BLACK, (0, 46, self.WIDTH, 2))
+        self._text_bl(meta, 30, 78, 2)
+        for i, line in enumerate(lines[:13]):
+            self._text_bl(line, 30, 125 + 35 * i, 3)
+        if page:
+            self._text_right(page, 570, 585, 2)
 
     def _draw_field_label(self, text, x, y, active):
         """A field label that inverts (fills ink, text flips to paper) while

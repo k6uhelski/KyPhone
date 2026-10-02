@@ -187,7 +187,7 @@ class PhoneCase(unittest.TestCase):
 
     def check_frame(self, cmd):
         self.assertLessEqual(len(cmd), kyphone_os.MAX_COMMAND_CHARS, cmd[:60])
-        emoji_ok = cmd.startswith(('TEXTS|', 'THREAD2|'))           # received emoji travel only on these two
+        emoji_ok = cmd.startswith(('TEXTS|', 'THREAD2|', 'MESSAGE|'))   # received emoji travel only on these
         self.assertTrue(all(' ' <= c <= '~' or c == SEP or (emoji_ok and (kyphone_os.is_emoji_code(c) or c == PAD))
                             for c in cmd),
                         cmd[:80])
@@ -370,6 +370,22 @@ class Scenarios(PhoneCase):
         self.key('KEY_ENTER')
         # 👍🏽 loses its skin tone; ❤️‍🔥 (joined) shows its first emoji; a flag and 🧿 (not in the set) are '?'
         self.assertIn('Happy birthday %s%s %s %s ? ?' % (cake + PAD, party + PAD, thumbs + PAD, heart + PAD), self.wire)
+
+    def test_a_long_text_is_read_by_selecting_it_and_paging(self):
+        body = ' '.join('word%d' % i for i in range(160)) + ' \U0001F602'
+        self.incoming('6700', body)
+        self.home('TEXT')
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_ENTER')                 # open the conversation, select the text, open it
+        self.assertEqual(self.st['screen'], 'message')
+        words = []
+        for _ in range(12):
+            words += self.wire.split('|')[4].replace(SEP, ' ').split()
+            if self.wire.split('|')[3].split('/')[0] == self.wire.split('|')[3].split('/')[-1]:
+                break
+            self.key('KEY_DOWN')
+        self.assertEqual(words[:160], ['word%d' % i for i in range(160)])
+        self.key('KEY_ESC', 'KEY_UP', 'KEY_UP')                      # back, then up past the oldest to the header
+        self.assertEqual(self.st['thread_header_sel'], 'back')
 
     def test_a_text_arriving_while_locked_shows_the_mark_and_reading_clears_it(self):
         kyphone_os.push_lock()
