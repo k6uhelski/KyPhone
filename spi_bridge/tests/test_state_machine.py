@@ -319,7 +319,7 @@ class TestScrollingAConversation(unittest.TestCase):
     """Up and Down walk through every message in a conversation, the view following the selection; Enter opens a
     message full screen, paged (Kyle, 2026-10-02: a long text was cut off at the top with no way to read it)."""
 
-    LONG = ('Thanks for choosing Ultra Mobile. To easily manage your plan, check balances & more, visit your account '
+    LONG = ('Thanks for choosing Example Mobile. To easily manage your plan, check balances & more, visit your account '
             'at u.example/account or download the app at u.example/app. ') * 6        # about 830 characters
 
     def setUp(self):
