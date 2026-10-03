@@ -324,14 +324,23 @@ static void ui_home(char* data) {
         }
         if (y + row_h <= 600) display.fillRect(0, y + row_h, 600, 1, BLACK);
     }
-    // "More below" cue: shown while part of the menu is still below the fold.
-    if (n_rows * row_h - shift > view_h) {
-        // A downward-pointing funnel: 14, 8 and 3px bars, widest on top, centred, 2px apart,
-        // 6px from the bottom edge and 12px from the right.
-        const int widths[] = {14, 8, 3};
+    // Scroll cues: a funnel 12px from the right edge, pointing up 6px under the header rule while the menu is scrolled
+    // down, pointing down 6px above the bottom edge while part of it is below. Each is drawn in the colour opposite the
+    // row it sits on, so it still shows on the selected (inverted) row: the selection is often the bottom row.
+    #define UI_CUE_COLOR(yy) ((((yy) - view_top + shift) / row_h == home_index) ? WHITE : BLACK)
+    if (shift > 8) {                                      // (a few pixels cut off the top row is not "more above")
+        const int widths[] = {3, 8, 14};
+        uint16_t c = UI_CUE_COLOR(view_top + 6);
         for (int i = 0; i < 3; i++)
-            display.fillRect(600 - 12 - 14 + (14 - widths[i] + 1) / 2, 600 - 6 - 13 + 5 * i, widths[i], 3, BLACK);
+            display.fillRect(600 - 12 - 14 + (14 - widths[i] + 1) / 2, view_top + 6 + 5 * i, widths[i], 3, c);
     }
+    if (n_rows * row_h - shift > view_h) {
+        const int widths[] = {14, 8, 3};                  // 14, 8 and 3px bars, widest on top, 2px apart
+        uint16_t c = UI_CUE_COLOR(600 - 6 - 13);
+        for (int i = 0; i < 3; i++)
+            display.fillRect(600 - 12 - 14 + (14 - widths[i] + 1) / 2, 600 - 6 - 13 + 5 * i, widths[i], 3, c);
+    }
+    #undef UI_CUE_COLOR
 }
 
 // ─── TEXTS|sel|name·preview·unread·time|... ───────────────────────────────────

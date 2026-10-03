@@ -406,13 +406,20 @@ class Simulator:
             self._line(y + row_h, weight=1)
         self._surface.set_clip(prev_clip)
 
-        # "More below" chevron — three shrinking bars, bottom right
+        # Scroll cues, as ui_home draws them: up under the header while scrolled down, down at the bottom while more is
+        # below; each in the colour opposite the row it sits on (it must show on the selected, inverted row too).
+        cue = lambda yy: WHITE if (yy - view_top + shift) // row_h == home_index else BLACK
+        if shift > 8:                                     # (a few pixels cut off the top row is not "more above")
+            y = view_top + 6
+            for w in (3, 8, 14):
+                pygame.draw.rect(self._surface, cue(view_top + 6), (self.WIDTH - 12 - 14 + (14 - w + 1) // 2, y, w, 3))
+                y += 5
         if n * row_h - shift > view_h:                    # part of the menu is still below the fold
             # a downward-pointing funnel: 14, 8 and 3px bars, widest on top, centred, 2px apart,
             # 6px from the bottom edge and 12px from the right (measured from the designer's capture)
             y = self.HEIGHT - 6 - 13
             for w in (14, 8, 3):
-                pygame.draw.rect(self._surface, BLACK, (self.WIDTH - 12 - 14 + (14 - w + 1) // 2, y, w, 3))
+                pygame.draw.rect(self._surface, cue(self.HEIGHT - 6 - 13), (self.WIDTH - 12 - 14 + (14 - w + 1) // 2, y, w, 3))
                 y += 5
 
     def _draw_playing_mark(self, x, cy, color):

@@ -401,6 +401,17 @@ class FirmwareFrames(unittest.TestCase):
         self.assertTrue(self.has_ink(f, ix + 84, 62 + 50, ix + 84 + 100, 62 + 85))   # every word starts at x 222
         self.assertFalse(self.has_ink(f, ix + 70, 62 + 50, ix + 83, 62 + 85))        # the gap between the columns
 
+    def test_the_scroll_cues_show_only_where_there_is_more_even_on_the_selected_row(self):
+        frames = self.render({'r%d' % k: 'HOME2|9:41 AM|%d|0|B|0' % k for k in range(7)})
+
+        def cue(f, y):        # the widest bar differs from the row's background (just left of it) all along
+            bg = f[y * W + 568] == 0
+            return all((f[y * W + x] == 0) != bg for x in range(574, 588))
+        self.assertEqual([cue(frames['r%d' % k], 62 + 6 + 10 + 1) for k in range(7)],
+                         [False, False, False, False, True, True, True])             # up: once a row is cut off
+        self.assertEqual([cue(frames['r%d' % k], 582) for k in range(7)],
+                         [True, True, True, True, True, True, False])                # down: until the last item
+
     def test_words_style_draws_no_icon(self):
         self.assertFalse(self.icon_matches(self.frames['home_words'], 'TEXT', 272, 62 + 39, True))
 
