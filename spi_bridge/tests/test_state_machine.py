@@ -375,6 +375,16 @@ class TestScrollingAConversation(unittest.TestCase):
         self.assertEqual(kyphone_os.state['thread_msg_sel'], 7)
         self.assertEqual(_entries(self.wires[-1])[-1][2], 'message 7')
 
+    def test_left_and_right_jump_from_deep_in_the_conversation_to_the_header(self):
+        self.key('KEY_UP', 'KEY_UP', 'KEY_UP')
+        self.key('KEY_LEFT')
+        self.assertEqual((kyphone_os.state['thread_header_sel'], kyphone_os.state['thread_msg_sel']), ('back', -1))
+        self.key('KEY_DOWN', 'KEY_UP')                              # (down from the header: the oldest message; up: back)
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_RIGHT')
+        self.assertEqual(kyphone_os.state['thread_header_sel'], 'info')
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact')     # the contact page, without scrolling to the top
+
     def test_typing_returns_to_the_composer_and_the_newest_messages(self):
         self.key('KEY_UP', 'KEY_UP', 'KEY_UP', 'CHAR:h')
         self.assertEqual(kyphone_os.state['thread_msg_sel'], -1)

@@ -1717,8 +1717,9 @@ def _open_compose():
 
 def _from_thread(keycode):
     """The conversation. Up from the composer selects the newest message, and each Up an older one (the view follows
-    the selection); Up from the oldest reaches the header. Down walks back toward the composer. Enter on a selected
-    message opens it full screen, or retries it if it was NOT SENT. Typing always returns to the composer."""
+    the selection); Up from the oldest reaches the header, and Left / Right jump to the header's back / info from any
+    selected message. Down walks back toward the composer. Enter on a selected message opens it full screen, or
+    retries it if it was NOT SENT. Typing always returns to the composer."""
     with state['lock']:
         header_sel = state['thread_header_sel']
         msg_sel    = state['thread_msg_sel']
@@ -1751,6 +1752,13 @@ def _from_thread(keycode):
     elif msg_sel >= 0 and keycode == 'KEY_DOWN':
         with state['lock']:
             state['thread_msg_sel'] = msg_sel + 1 if msg_sel < len(msgs) - 1 else -1
+        push_thread2()
+
+    elif msg_sel >= 0 and keycode in ('KEY_LEFT', 'KEY_RIGHT'):
+        # Straight to the header from anywhere in a long conversation: Left to back (<), Right to info (i).
+        with state['lock']:
+            state['thread_msg_sel']    = -1
+            state['thread_header_sel'] = 'back' if keycode == 'KEY_LEFT' else 'info'
         push_thread2()
 
     elif msg_sel >= 0 and keycode == 'KEY_ENTER':
