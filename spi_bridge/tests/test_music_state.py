@@ -356,15 +356,15 @@ class Background(MusicCase):
         self.key('KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         self.assertEqual(self.st['screen'], 'home')
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|I|1'))
+        self.assertTrue(self.last.endswith('|B|1'))
 
     def test_no_mark_when_paused_or_never_played(self):
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|I|0'))
+        self.assertTrue(self.last.endswith('|B|0'))
         self.play_track(0)
         self.key('CHAR: ', 'KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|I|0'))
+        self.assertTrue(self.last.endswith('|B|0'))
 
     def test_playback_continues_and_advances_while_you_do_other_things_without_redrawing_anything(self):
         self.play_track(0)
@@ -380,7 +380,7 @@ class Background(MusicCase):
         self.key('KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         self.tick(31)
         self.assertEqual(kyphone_os._music.now().state, 'stopped')
-        self.assertTrue(self.last.startswith('HOME2|') and self.last.endswith('|I|0'))
+        self.assertTrue(self.last.startswith('HOME2|') and self.last.endswith('|B|0'))
 
     def test_when_the_album_ends_on_the_now_playing_screen_it_shows_stopped(self):
         self.play_track(2)
