@@ -392,12 +392,14 @@ class FirmwareFrames(unittest.TestCase):
         for i, name in enumerate(['TEXT', 'CALL', 'READ']):                      # the three rows on screen
             self.assertTrue(self.icon_matches(f, name, 272, 62 + i * 135 + 39, i == 0), name)
 
-    def test_icons_and_words_are_a_left_aligned_grid(self):
+    def test_icons_and_words_are_two_columns_centred_as_a_block(self):
         f = self.frames['home_both']
-        self.assertTrue(self.icon_matches(f, 'CALL', 72, 62 + 135 + 39, True))     # the icon at x 72
-        self.assertTrue(self.has_ink(f, 28, 62 + 16, 52, 62 + 32))                  # the row number, in the corner
-        self.assertTrue(self.has_ink(f, 156, 62 + 50, 300, 62 + 85))                # the word: textSize 5, 35px tall
-        self.assertFalse(self.has_ink(f, 156, 62 + 30, 300, 62 + 49))               # nothing above the word
+        ix = (600 - (56 + 28 + 8 * 30)) // 2                                       # 138: the block, centred
+        self.assertTrue(self.icon_matches(f, 'TEXT', ix, 62 + 39, False))           # every icon in one column
+        self.assertTrue(self.icon_matches(f, 'CALL', ix, 62 + 135 + 39, True))
+        self.assertFalse(self.has_ink(f, 20, 62 + 10, 120, 62 + 40))                # no row number
+        self.assertTrue(self.has_ink(f, ix + 84, 62 + 50, ix + 84 + 100, 62 + 85))   # every word starts at x 222
+        self.assertFalse(self.has_ink(f, ix + 70, 62 + 50, ix + 83, 62 + 85))        # the gap between the columns
 
     def test_words_style_draws_no_icon(self):
         self.assertFalse(self.icon_matches(self.frames['home_words'], 'TEXT', 272, 62 + 39, True))

@@ -279,16 +279,15 @@ static void ui_home(char* data) {
             display.fillRect(0, fy, 600, fh, BLACK);
         }
         if (style == 'B') {
-            // Icons and words (the default since 0.8.1, Kyle's pick): a left-aligned grid. The row number sits small in
-            // the corner, the 56px icon at x 72, the word beside it at textSize 5 (35px tall, two-thirds of the icon);
-            // the unread count and the music bars sit at the right margin.
-            char num[4];
-            snprintf(num, sizeof(num), "%02d", i + 1);
-            ui_put(num, 28, y + 16, 2, tc);
-            display.drawBitmap(72, y + 39, ui_icons[i], UI_ICON_SIZE, UI_ICON_SIZE, tc);
+            // Icons and words (the default; Kyle, 2026-10-03): one column of icons and one of words, the pair centred as
+            // a block on the longest word, so every icon lines up and every word starts at the same x. The word is
+            // textSize 5 (35px tall, two-thirds of the icon); the unread count and music bars sit at the right margin.
+            const int gap = 28, block_w = UI_ICON_SIZE + gap + 8 * 30;     // 8 = the longest label (CONTACTS, SETTINGS)
+            int ix = (600 - block_w) / 2, lx = ix + UI_ICON_SIZE + gap;
+            display.drawBitmap(ix, y + 39, ui_icons[i], UI_ICON_SIZE, UI_ICON_SIZE, tc);
             int ly = y + (row_h - 35) / 2;
-            ui_put(labels[i], 72 + UI_ICON_SIZE + 28, ly, 5, tc);
-            ui_put(labels[i], 72 + UI_ICON_SIZE + 29, ly, 5, tc);
+            ui_put(labels[i], lx, ly, 5, tc);
+            ui_put(labels[i], lx + 1, ly, 5, tc);
             if (i == 0 && unread > 0) {
                 char count[4];
                 snprintf(count, sizeof(count), "%02d", unread > 99 ? 99 : unread);

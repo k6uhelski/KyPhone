@@ -316,11 +316,13 @@ class SimulatorPixels(unittest.TestCase):
             self.draw('HOME2|12:44 PM|%d|0|I' % index)
             self.assertTrue(self.icon_matches(name, 272, 504, selected=True), name)
 
-    def test_icons_and_words_are_a_left_aligned_grid(self):
+    def test_icons_and_words_are_two_columns_centred_as_a_block(self):
         self.draw('HOME2|12:44 PM|1|3|B|0')                                      # CALL selected, 3 unread
-        self.assertTrue(self.icon_matches('CALL', 72, 62 + 135 + 39, selected=True))   # the icon at x 72
-        self.assertTrue(self.region_has_ink(28, 62 + 16, 52, 62 + 32))              # the row number 01, in the corner
-        self.assertTrue(self.region_has_ink(156, 62 + 50, 300, 62 + 85))            # the word beside the icon
+        ix = (600 - (56 + 28 + 8 * 30)) // 2                                     # 138: the block, centred
+        for row, name in ((0, 'TEXT'), (1, 'CALL'), (2, 'READ')):
+            self.assertTrue(self.icon_matches(name, ix, 62 + row * 135 + 39, selected=(row == 1)), name)   # one column
+        self.assertFalse(self.region_has_ink(20, 62 + 10, 120, 62 + 40))         # no row number
+        self.assertTrue(self.region_has_ink(ix + 84, 62 + 50, ix + 84 + 100, 62 + 85))   # the word beside the icon
         self.assertTrue(self.region_has_ink(530, 62 + 55, 572, 62 + 80))            # the unread count, right margin
 
     def test_words_style_draws_no_icon(self):

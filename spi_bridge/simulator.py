@@ -372,11 +372,12 @@ class Simulator:
                 pygame.draw.rect(self._surface, BLACK, (0, y, self.WIDTH, row_h))
 
             if style == 'B':
-                # Icons and words (the default): the left-aligned grid, as ui_home draws it. Row number small in the
-                # corner, the icon at x 72, the word at textSize 5 beside it, the count and music bars at the right.
-                self._text('%02d' % (i + 1), 28, y + 16, 2, fg)
-                self._draw_icon(label, 72, y + 39, fg)
-                self._text(label, 72 + 56 + 28, y + (row_h - 35) // 2, 5, fg, bold=True)
+                # Icons and words (the default), as ui_home draws it: a column of icons and a column of words, the
+                # pair centred as a block on the longest word; the count and music bars at the right margin.
+                block_w = 56 + 28 + 8 * 30
+                ix = (self.WIDTH - block_w) // 2
+                self._draw_icon(label, ix, y + 39, fg)
+                self._text(label, ix + 56 + 28, y + (row_h - 35) // 2, 5, fg, bold=True)
                 if label == 'TEXT' and unread > 0:
                     self._text_right('%02d' % unread, self.WIDTH - 28, y + (row_h - 21) // 2 + 21, 3, fg)
                 if label == 'LISTEN' and playing:
