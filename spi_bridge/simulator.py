@@ -333,7 +333,7 @@ class Simulator:
             unread = int(parts[2]) if len(parts) > 2 else 0
         except ValueError:
             unread = 0
-        style = parts[3] if len(parts) > 3 and parts[3] in ('I', 'B', 'W') else 'I'
+        style = parts[3] if len(parts) > 3 and parts[3] in ('I', 'B', 'W') else 'B'
         playing = len(parts) > 4 and parts[4] == '1'         # music is playing: a small mark by the LISTEN row
 
         header_h   = 60
@@ -370,6 +370,19 @@ class Simulator:
             fg  = WHITE if sel else BLACK
             if sel:
                 pygame.draw.rect(self._surface, BLACK, (0, y, self.WIDTH, row_h))
+
+            if style == 'B':
+                # Icons and words (the default): the left-aligned grid, as ui_home draws it. Row number small in the
+                # corner, the icon at x 72, the word at textSize 5 beside it, the count and music bars at the right.
+                self._text('%02d' % (i + 1), 28, y + 16, 2, fg)
+                self._draw_icon(label, 72, y + 39, fg)
+                self._text(label, 72 + 56 + 28, y + (row_h - 35) // 2, 5, fg, bold=True)
+                if label == 'TEXT' and unread > 0:
+                    self._text_right('%02d' % unread, self.WIDTH - 28, y + (row_h - 21) // 2 + 21, 3, fg)
+                if label == 'LISTEN' and playing:
+                    self._draw_playing_mark(self.WIDTH - 28 - 26, y + 67, fg)
+                self._line(y + row_h, weight=1)
+                continue
 
             label_w   = 36 * len(label)                    # textSize 6: 36px cells, as on the panel
             content_w = (56 if show_icon else 0) + (28 if show_icon and show_label else 0) + (label_w if show_label else 0)

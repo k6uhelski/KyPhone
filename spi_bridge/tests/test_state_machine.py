@@ -2905,9 +2905,10 @@ class TestHomeStyle(unittest.TestCase):
                     kyphone_os.push_home2()
         return _wire(ps)
 
-    def test_the_wire_carries_the_style_and_icons_are_the_default(self):
-        self.assertEqual(kyphone_os.HOME_STYLE, 'I')
-        self.assertTrue(self.wire().endswith('|I|0'))                       # style, then the "music is playing" flag
+    def test_the_wire_carries_the_style_and_icons_with_words_are_the_default(self):
+        self.assertEqual(kyphone_os.HOME_STYLE, 'B')                        # Kyle's pick, 2026-10-03
+        self.assertTrue(self.wire().endswith('|B|0'))                       # style, then the "music is playing" flag
+        self.assertTrue(self.wire('I').endswith('|I|0'))
         self.assertTrue(self.wire('B').endswith('|B|0'))
         self.assertTrue(self.wire('W').endswith('|W|0'))
 

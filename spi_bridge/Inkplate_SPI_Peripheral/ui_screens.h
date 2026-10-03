@@ -248,7 +248,7 @@ static void ui_home(char* data) {
     const char* time_str = ui_fld(f, n, 0);
     int home_index = ui_fld_int(f, n, 1, 0);
     int unread     = ui_fld_int(f, n, 2, 0);
-    char style     = ui_fld(f, n, 3)[0];            // I icons (the default), B icons and words, W words
+    char style     = ui_fld(f, n, 3)[0];            // B icons and words (the default), I icons, W words
     bool playing   = ui_fld_int(f, n, 4, 0) == 1;   // music is playing
     bool show_icon  = (style != 'W');
     bool show_label = (style == 'B' || style == 'W');
@@ -278,8 +278,31 @@ static void ui_home(char* data) {
             int fh = (y + row_h > 600 ? 600 : y + row_h) - fy;
             display.fillRect(0, fy, 600, fh, BLACK);
         }
-        // The icon and/or the word are centred as one unit, 28px apart; the unread
-        // count hangs 24px to the right of that unit.
+        if (style == 'B') {
+            // Icons and words (the default since 0.8.1, Kyle's pick): a left-aligned grid. The row number sits small in
+            // the corner, the 56px icon at x 72, the word beside it at textSize 5 (35px tall, two-thirds of the icon);
+            // the unread count and the music bars sit at the right margin.
+            char num[4];
+            snprintf(num, sizeof(num), "%02d", i + 1);
+            ui_put(num, 28, y + 16, 2, tc);
+            display.drawBitmap(72, y + 39, ui_icons[i], UI_ICON_SIZE, UI_ICON_SIZE, tc);
+            int ly = y + (row_h - 35) / 2;
+            ui_put(labels[i], 72 + UI_ICON_SIZE + 28, ly, 5, tc);
+            ui_put(labels[i], 72 + UI_ICON_SIZE + 29, ly, 5, tc);
+            if (i == 0 && unread > 0) {
+                char count[4];
+                snprintf(count, sizeof(count), "%02d", unread > 99 ? 99 : unread);
+                ui_put(count, 600 - 28 - ui_tw(count, 3), y + (row_h - 21) / 2, 3, tc);
+            }
+            if (playing && strcmp(labels[i], "LISTEN") == 0) {
+                static const int bar_h[3] = {20, 28, 14};
+                for (int k = 0; k < 3; k++)
+                    display.fillRect(600 - 28 - 26 + k * 10, y + 67 + 14 - bar_h[k], 6, bar_h[k], tc);
+            }
+            if (y + row_h <= 600) display.fillRect(0, y + row_h, 600, 1, BLACK);
+            continue;
+        }
+        // Icons only (I) or words only (W): centred as one unit; the unread count hangs 24px to the right of it.
         int label_w   = ui_tw(labels[i], 6);
         int content_w = (show_icon ? UI_ICON_SIZE : 0) + ((show_icon && show_label) ? 28 : 0) + (show_label ? label_w : 0);
         int x0        = (600 - content_w) / 2;

@@ -316,10 +316,12 @@ class SimulatorPixels(unittest.TestCase):
             self.draw('HOME2|12:44 PM|%d|0|I' % index)
             self.assertTrue(self.icon_matches(name, 272, 504, selected=True), name)
 
-    def test_icons_and_words_share_the_row_with_a_28px_gap(self):
-        self.draw('HOME2|12:44 PM|1|0|B')                                        # CALL selected
-        x0 = (600 - (56 + 28 + 4 * 36)) // 2                                     # icon + 28 + "CALL"
-        self.assertTrue(self.icon_matches('CALL', x0, 62 + 135 + 39, selected=True))
+    def test_icons_and_words_are_a_left_aligned_grid(self):
+        self.draw('HOME2|12:44 PM|1|3|B|0')                                      # CALL selected, 3 unread
+        self.assertTrue(self.icon_matches('CALL', 72, 62 + 135 + 39, selected=True))   # the icon at x 72
+        self.assertTrue(self.region_has_ink(28, 62 + 16, 52, 62 + 32))              # the row number 01, in the corner
+        self.assertTrue(self.region_has_ink(156, 62 + 50, 300, 62 + 85))            # the word beside the icon
+        self.assertTrue(self.region_has_ink(530, 62 + 55, 572, 62 + 80))            # the unread count, right margin
 
     def test_words_style_draws_no_icon(self):
         self.draw('HOME2|12:44 PM|1|0|W')

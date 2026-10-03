@@ -392,9 +392,12 @@ class FirmwareFrames(unittest.TestCase):
         for i, name in enumerate(['TEXT', 'CALL', 'READ']):                      # the three rows on screen
             self.assertTrue(self.icon_matches(f, name, 272, 62 + i * 135 + 39, i == 0), name)
 
-    def test_icons_and_words_are_centred_as_one_unit(self):
-        x0 = (600 - (56 + 28 + 4 * 36)) // 2
-        self.assertTrue(self.icon_matches(self.frames['home_both'], 'CALL', x0, 62 + 135 + 39, True))
+    def test_icons_and_words_are_a_left_aligned_grid(self):
+        f = self.frames['home_both']
+        self.assertTrue(self.icon_matches(f, 'CALL', 72, 62 + 135 + 39, True))     # the icon at x 72
+        self.assertTrue(self.has_ink(f, 28, 62 + 16, 52, 62 + 32))                  # the row number, in the corner
+        self.assertTrue(self.has_ink(f, 156, 62 + 50, 300, 62 + 85))                # the word: textSize 5, 35px tall
+        self.assertFalse(self.has_ink(f, 156, 62 + 30, 300, 62 + 49))               # nothing above the word
 
     def test_words_style_draws_no_icon(self):
         self.assertFalse(self.icon_matches(self.frames['home_words'], 'TEXT', 272, 62 + 39, True))

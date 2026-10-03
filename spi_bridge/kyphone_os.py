@@ -328,7 +328,7 @@ HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS']
 # words, or words only. Set KYPHONE_HOME_STYLE=icons|both|words; the renderer draws
 # whichever it is told, so changing it needs no reflash.
 HOME_STYLES = {'icons': 'I', 'both': 'B', 'words': 'W'}
-HOME_STYLE  = HOME_STYLES.get(os.environ.get('KYPHONE_HOME_STYLE', 'icons'), 'I')
+HOME_STYLE  = HOME_STYLES.get(os.environ.get('KYPHONE_HOME_STYLE', 'both'), 'B')   # icons and words since 0.8.1
 
 state = {
     'screen':           'lock',
