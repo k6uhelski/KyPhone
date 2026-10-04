@@ -35,6 +35,12 @@ bool did_boot_full_refresh = false;  // force one full refresh on the first scre
 char current_screen[32] = "BOOT";
 volatile uint16_t bit_counter = 0;
 volatile bool transfer_complete = false;
+
+// Per-screen timing, for the ">> TIMING" line after each frame (microseconds; 0 = that step did not happen):
+// draw = building the image, refresh = the panel update, settle = the pause and panel power-off after it.
+static uint32_t tm_draw_us = 0, tm_refresh_us = 0, tm_settle_us = 0;
+static char tm_kind = '-';                      // P partial, F full, - no refresh (a LIGHT or a book text frame)
+static uint32_t tm_frame_first = 0, tm_transfer_us = 0, tm_silence_us = 0;   // first clock edge; clocking; the quiet
 volatile uint32_t last_sclk_time = 0;
 volatile uint32_t last_cs_time = 0;
 
@@ -1321,23 +1327,32 @@ void handle_command(char* text) {
     } else if (ui_is_reader_frame(text)) {
         // Book page: RTEXT frames only draw (they must not clear or refresh); RFOOT ends the page and refreshes.
         strncpy(current_screen, "READER", sizeof(current_screen) - 1);
+        uint32_t t0 = micros();
         int refresh = ui_reader_frame(text);
+        tm_draw_us = micros() - t0;
         if (refresh != UI_READER_NONE) {
             unsigned long now_ms = millis();
+            uint32_t t1 = micros();
             if (refresh == UI_READER_FULL || !did_boot_full_refresh || now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS) {
                 display.display();
                 last_full_refresh_ms  = now_ms;
                 did_boot_full_refresh = true;
+                tm_kind = 'F';
                 Serial.println(">> Full refresh (reader page)");
             } else {
                 display.partialUpdate();
+                tm_kind = 'P';
             }
+            uint32_t t2 = micros();
             delay(100);
             display.einkOff();
             reclaim_spi_pins_for_gpio();
+            tm_refresh_us = t2 - t1;
+            tm_settle_us  = micros() - t2;
         }
     } else {
         if (strncmp(text, "LIGHTSET|", 9) == 0) apply_light(atoi(text + 9));   // the light changes with the drawing
+        uint32_t t0 = micros();
         display.clearDisplay();
         if (ui_dispatch(text, current_screen, sizeof(current_screen))) {
             // OS 0.2.1 screen: drawn by ui_screens.h
@@ -1381,18 +1396,25 @@ void handle_command(char* text) {
         // ghosting while idle — on a lock screen redraw once 10 minutes have passed. Everything else is partial, so a
         // key press inside a feature never gets the slow flashing refresh.
         unsigned long now_ms = millis();
+        uint32_t t1 = micros();
+        tm_draw_us = t1 - t0;
         bool ghost_clear = strncmp(text, "LOCK|", 5) == 0 && now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS;
         if (full_requested || !did_boot_full_refresh || ghost_clear) {
             display.display();
             last_full_refresh_ms   = now_ms;
             did_boot_full_refresh  = true;
+            tm_kind = 'F';
             Serial.println(full_requested ? ">> Full refresh (asked for)" : ">> Full refresh (ghost clear, lock screen)");
         } else {
             display.partialUpdate();
+            tm_kind = 'P';
         }
+        uint32_t t2 = micros();
         delay(100);
         display.einkOff();
         reclaim_spi_pins_for_gpio();
+        tm_refresh_us = t2 - t1;
+        tm_settle_us  = micros() - t2;
     }
 }
 
@@ -1443,6 +1465,9 @@ void loop() {
             uint32_t elapsed_us = now_us - snap_first;
             if (snap_bits == TOTAL_BITS) {
                 transfer_complete = true;
+                tm_frame_first = snap_first;
+                tm_transfer_us = snap_sclk - snap_first;
+                tm_silence_us  = now_us - snap_sclk;
                 Serial.printf(">> COMPLETE: %d bits in %lums\n", snap_bits, elapsed_us / 1000);
             } else if (snap_bits > TOTAL_BITS) {
                 Serial.printf(">> OVERFLOW: %d bits in %lums. Resetting.\n", snap_bits, elapsed_us / 1000);
@@ -1466,6 +1491,8 @@ void loop() {
         bit_counter = 0;
         
         Serial.println(">> MESSAGE CAPTURED!");
+        tm_draw_us = tm_refresh_us = tm_settle_us = 0;   // (a USB preview drawn since the last frame is not this frame's)
+        tm_kind = '-';
 
         int offset = -1;
         if (local_buf[0] == FRAME_CHECKED) {
@@ -1538,5 +1565,12 @@ void loop() {
 
         done_processing:
         display.expander2.digitalWrite(8, HIGH, true);
+        // One line per frame: where the time went, first clock edge to "ready" again (milliseconds).
+        Serial.printf(">> TIMING: transfer %lu | silence %lu | draw %lu | refresh %lu (%c) | settle %lu | total %lu ms\n",
+                      (unsigned long)(tm_transfer_us / 1000), (unsigned long)(tm_silence_us / 1000),
+                      (unsigned long)(tm_draw_us / 1000), (unsigned long)(tm_refresh_us / 1000), tm_kind,
+                      (unsigned long)(tm_settle_us / 1000), (unsigned long)((micros() - tm_frame_first) / 1000));
+        tm_draw_us = tm_refresh_us = tm_settle_us = 0;
+        tm_kind = '-';
     }
 }

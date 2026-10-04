@@ -51,7 +51,7 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 
 **Checked frames (0.6.3):** every frame is `[0xA5, CRC-8 of bytes 3..255, 0x02, text…, 0 padding]`; the firmware recomputes the CRC-8 (polynomial 0x07) and drops a frame that does not match (`>> CHECKSUM MISMATCH` on the serial log), so a flipped bit is not drawn. A 1-byte check misses about 1 damaged frame in 256; at 40 kHz no damaged frames were seen at all. Frames starting 0x00 0x00 0x02 (older Radxa software) are still accepted unchecked. A single noise pulse on SCLK still shifts the bitstream; the exact-bit-count check rejects that.
 
-**Timing (0.6.3, measured):** a screen cycle — transfer 58 ms, 30 ms of silence, the panel's partial refresh — is about **0.6 s** (about 1 s before).
+**Timing (0.6.3, measured):** a screen cycle — transfer 58 ms, 30 ms of silence, the panel's partial refresh — is about **0.6 s** (about 1 s before). Since 0.8.6 the Inkplate logs where each frame's time goes, one line per frame on the USB serial log: `>> TIMING: transfer 52 | silence 31 | draw 8 | refresh 420 (P) | settle 105 | total 616 ms` (draw = building the image, refresh = the panel update, P partial / F full / - none, settle = the fixed 100 ms pause and the panel power-off after each refresh).
 
 ### **Key firmware constants**
 ```cpp
