@@ -18,6 +18,7 @@ Inkplate display(INKPLATE_1BIT);
 // Handshake
 #define PIN_HANDSHAKE IO_PIN_B0 // P1-0 expander pin
 #define FRAME_SILENCE_US 30000UL  // clock silence that ends a frame (600 ms until 0.3.1, 150 ms until 0.6.3; see loop())
+#define FRAME_DONE_GAP_US 2000   // a complete 2048-bit frame ends after 2 ms of quiet (see loop())
 #define FRAME_CHECKED 0xA5         // first byte of a checked frame: [0xA5, crc8(bytes 3..255), 0x02|0x04, text...]
 #define FRAME_START_FULL 0x04      // ... byte 2 = 0x04: the Radxa asks for a full refresh (a new feature, the lock screen)
 bool full_requested = false;       // set for the one frame being handled
@@ -38,7 +39,7 @@ volatile bool transfer_complete = false;
 
 // Per-screen timing, for the ">> TIMING" line after each frame (microseconds; 0 = that step did not happen):
 // draw = building the image, refresh = the panel update, settle = the pause and panel power-off after it.
-static uint32_t tm_draw_us = 0, tm_refresh_us = 0, tm_settle_us = 0;
+static uint32_t tm_draw_us = 0, tm_refresh_us = 0, tm_settle_us = 0, tm_power_us = 0;   // power = the panel's power-up
 static char tm_kind = '-';                      // P partial, F full, - no refresh (a LIGHT or a book text frame)
 static uint32_t tm_frame_first = 0, tm_transfer_us = 0, tm_silence_us = 0;   // first clock edge; clocking; the quiet
 volatile uint32_t last_sclk_time = 0;
@@ -1330,7 +1331,10 @@ void handle_command(char* text) {
         tm_draw_us = micros() - t0;
         if (refresh != UI_READER_NONE) {
             unsigned long now_ms = millis();
+            uint32_t tp = micros();
+            display.einkOn();               // (measured separately, as above)
             uint32_t t1 = micros();
+            tm_power_us = t1 - tp;
             if (refresh == UI_READER_FULL || !did_boot_full_refresh || now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS) {
                 display.display();
                 last_full_refresh_ms  = now_ms;
@@ -1393,8 +1397,11 @@ void handle_command(char* text) {
         // ghosting while idle — on a lock screen redraw once 10 minutes have passed. Everything else is partial, so a
         // key press inside a feature never gets the slow flashing refresh.
         unsigned long now_ms = millis();
+        uint32_t tp = micros();
+        display.einkOn();                   // the update would do this itself; done here only so its time is measured
         uint32_t t1 = micros();
-        tm_draw_us = t1 - t0;
+        tm_power_us = t1 - tp;
+        tm_draw_us = tp - t0;
         bool ghost_clear = strncmp(text, "LOCK|", 5) == 0 && now_ms - last_full_refresh_ms >= FULL_REFRESH_INTERVAL_MS;
         if (full_requested || !did_boot_full_refresh || ghost_clear) {
             display.display();
@@ -1457,7 +1464,11 @@ void loop() {
     // 256-byte frame continuously (about 52 ms at 40 kHz, gaps well under a millisecond), so the silence only has
     // to be clearly longer than the gaps; it was 600 ms, then 150 ms, and every frame of a book page paid it.
     if (!transfer_complete && snap_bits > 0) {
-        if (now_us - snap_sclk > FRAME_SILENCE_US) {
+        // A frame with exactly its 2048 bits ends after FRAME_DONE_GAP_US (80 bit times at 40 kHz) instead of the full
+        // silence: long enough to see any extra bit that would make it an overflow, ~28 ms sooner per screen (0.8.10).
+        // A short frame still waits out FRAME_SILENCE_US before it is reported and dropped.
+        uint32_t gap = (snap_bits == TOTAL_BITS) ? FRAME_DONE_GAP_US : FRAME_SILENCE_US;
+        if (now_us - snap_sclk > gap) {
             uint32_t elapsed_us = now_us - snap_first;
             if (snap_bits == TOTAL_BITS) {
                 transfer_complete = true;
@@ -1487,7 +1498,7 @@ void loop() {
         bit_counter = 0;
         
         Serial.println(">> MESSAGE CAPTURED!");
-        tm_draw_us = tm_refresh_us = tm_settle_us = 0;   // (a USB preview drawn since the last frame is not this frame's)
+        tm_draw_us = tm_refresh_us = tm_settle_us = tm_power_us = 0;   // (a USB preview drawn since the last frame is not this frame's)
         tm_kind = '-';
 
         int offset = -1;
@@ -1562,11 +1573,12 @@ void loop() {
         done_processing:
         display.expander2.digitalWrite(8, HIGH, true);
         // One line per frame: where the time went, first clock edge to "ready" again (milliseconds).
-        Serial.printf(">> TIMING: transfer %lu | silence %lu | draw %lu | refresh %lu (%c) | settle %lu | total %lu ms\n",
+        Serial.printf(">> TIMING: transfer %lu | silence %lu | draw %lu | power %lu | refresh %lu (%c) | settle %lu | total %lu ms\n",
                       (unsigned long)(tm_transfer_us / 1000), (unsigned long)(tm_silence_us / 1000),
-                      (unsigned long)(tm_draw_us / 1000), (unsigned long)(tm_refresh_us / 1000), tm_kind,
+                      (unsigned long)(tm_draw_us / 1000), (unsigned long)(tm_power_us / 1000),
+                      (unsigned long)(tm_refresh_us / 1000), tm_kind,
                       (unsigned long)(tm_settle_us / 1000), (unsigned long)((micros() - tm_frame_first) / 1000));
-        tm_draw_us = tm_refresh_us = tm_settle_us = 0;
+        tm_draw_us = tm_refresh_us = tm_settle_us = tm_power_us = 0;
         tm_kind = '-';
     }
 }
