@@ -3,7 +3,7 @@
 One bullet per change that is on the phone but not yet confirmed. Newest first. A confirmed bullet moves to Done.
 
 ## To test
-- **Speed fix 2 (frames end sooner):** use the phone normally for a few minutes, including turning book pages. Nothing should be blank, half-drawn or stuck; screens about 30 ms quicker. Then say so, and the timing (including the panel power-up) is read.
+- **0.8.10 speed fix 2 (frames end sooner):** use the phone normally for a few minutes, including turning book pages. Nothing should be blank, half-drawn or stuck; screens about 30 ms quicker. Then say so, and the timing (including the panel power-up) is read.
 - **0.8.8 trackpad in both modes:** swipe with the trackpad light steady and with it pulsing (its scroll-wheel mode). Each swipe moves one step either way.
 - **0.8.7 speed fix 1a (no 100 ms pause):** use the phone normally for a few minutes. Screens should feel a bit quicker, with no blank, half-drawn or stuck screens. Then say so, and the new timing is read from the log.
 - **0.8.7 keyboard buttons:** ○ goes home from anywhere (a note you were typing is kept), △ goes up one level, ✕ locks the phone and any key brings you back where you were, □ still switches TO/MESSAGE in New Message.

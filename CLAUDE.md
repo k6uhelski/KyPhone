@@ -83,12 +83,12 @@ CS (Pin 15) is unreliable on the Inkplate PCB (see §5), so `SCLK` does double d
 **The spec is `docs/02-design/design_handoff_os_0_2/`** — the design doc, `GEOMETRY.md`, the prototype (`KyPhone UI v4.dc.html`) and 600×600 captures. When the prose and the prototype disagree, the prototype wins (it has behaviours the README does not list). **The build log — status, decisions, deviations, rollbacks — is `planning/os-0.2.1-build-plan.md`.**
 
 ### **Versioning**
-**Current version: 0.8.9**
+**Current version: 0.8.10**
 **Design library: 0.2.1** (`docs/02-design/design_handoff_os_0_2/`; recorded as `DESIGN` in `version.py` and checked against the handoff's own title)
 
 One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and shown everywhere from there:
 *   **MINOR** — a new feature you can see or use (a screen, an app) or a new design generation; **PATCH** — fixes and refinements; **MAJOR** — stays 0 until KyPhone is a daily-driver phone (cellular, battery, enclosure), which is 1.0.
-*   **Where it shows:** the lock screen (bottom left, "OS 0.8.9" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
+*   **Where it shows:** the lock screen (bottom left, "OS 0.8.10" — the Radxa sends it in the `LOCK` command, so it is always the version of the software actually running), the terminal banner at start-up, the firmware's boot log (`>> KyPhone firmware 0.3.1`, from the generated `Inkplate_SPI_Peripheral/version.h`), and the "Current version" line in this file and in `README.md`.
 *   **A mismatch is visible:** if the Radxa reports a different version from the firmware's own, the firmware prints `>> WARNING: the Radxa runs OS x but this firmware is y` on its serial log. After a deploy, the lock screen should read the new version; if it is blank or old, the Radxa's Python is old (a firmware that sees no version draws no label).
 *   **To change it:** edit `VERSION` in `version.py`; run `python3 spi_bridge/tools/make_version.py`; update the "Current version" line here and in `README.md`; flash the firmware and deploy the Python together. `test_version.py` fails if the header, the docs, the banner, the lock screen or the design handoff disagree with `version.py`.
 *   **Not yet in the design library:** the library and reader (READ), the music screens (LISTEN: album list, tracks, now-playing) and the home menu's equalizer mark, the settings screens (SETTINGS: the Wi-Fi/Bluetooth picker, the password box, the connect/pair result, the screen light), Notes, Add from a computer, the chapter menu, the full-screen message view, emoji in bubbles, the home menu's icons-and-words grid and its scroll arrows, plus the newer stop alerts and the call-log rows. They follow the 0.2.1 look but were laid out by us, so the next design handoff should cover them; when it does, bump `DESIGN`.
@@ -131,7 +131,8 @@ One number, `MAJOR.MINOR.PATCH`, defined once in **`spi_bridge/version.py`** and
 | 0.8.6 | the Inkplate logs a **timing line per frame** (transfer, silence, draw, refresh, settle, total) to find where a screen's time goes; nothing on screen changes | `main`; flashed and deployed 2026-10-04 |
 | 0.8.7 | the keyboard's **coloured buttons** work (○ home, △ up a level, ✕ lock); the fixed 100 ms pause after every refresh is gone (speed fix 1a) | `main`; flashed and deployed 2026-10-04 |
 | 0.8.8 | trackpad swipes work in the keyboard's **scroll-wheel mode** too (pulsing light) | `main`; deployed 2026-10-04 |
-| **0.8.9** | the keyboard's ○ button goes to the **lock screen** (the next key opens home); ✕ still locks and returns where you were | `main`; deployed 2026-10-04 |
+| 0.8.9 | the keyboard's ○ button goes to the **lock screen** (the next key opens home); ✕ still locks and returns where you were | `main`; deployed 2026-10-04 |
+| **0.8.10** | speed fix 2: a complete frame ends after 2 ms of quiet instead of 30 ms; the timing line shows the panel's power-up separately | `main`; flashed and deployed 2026-10-04 |
 
 ### **State machine**
 `kyphone_os.py` is the production entry point. One `state['screen']` string drives all rendering; every mutable value lives in the single `state` dict behind one lock.
@@ -246,7 +247,7 @@ All commands: `PREFIX|field|field|…`, sub-fields split on `·`, latin-1 bytes,
 
 | Screen | Command |
 | :--- | :--- |
-| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version\|mark\|light` — the version (e.g. `0.8.9`) is drawn as "OS 0.8.9" bottom left (none sent = no label); `mark` `*` = new activity (an unread text or a missed call not yet seen on the call list), drawn right of the clock; `light` 0–8 is carried but no longer applied (0.6.4: the light follows key presses via `LIGHT\|n`; the lock screen redraws every minute) |
+| Lock | `LOCK\|time\|DAY, MON DD\|quote\|attribution\|version\|mark\|light` — the version (e.g. `0.8.10`) is drawn as "OS 0.8.10" bottom left (none sent = no label); `mark` `*` = new activity (an unread text or a missed call not yet seen on the call list), drawn right of the clock; `light` 0–8 is carried but no longer applied (0.6.4: the light follows key presses via `LIGHT\|n`; the lock screen redraws every minute) |
 | Add from a computer | `UPLOAD\|address\|code\|received·received·…` — ≤3 received lines (file names, or `Contacts: 3 added, …`) |
 | Light only | `LIGHT\|level` — switches the front light, draws nothing (sent on the first key press after the light went off, and `LIGHT\|0` after 5 s with no key); it has its own slot in the sender, so it never replaces a screen |
 | Screen light | `LIGHTSET\|level` — 0 (off) to 8, as a bar; the Inkplate also sets its front light to it (`level*63/8` of the TEMPERA's 0–63) |
