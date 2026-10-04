@@ -45,14 +45,9 @@ KYPHONE_DATA_DIR=$(mktemp -d) python3 spi_bridge/kyphone_os.py --sim     # a scr
 # Music: put audio files in the music/ folder of the data folder, then LISTEN. Keys: space = play/pause, right/left = next/previous,
 #        up/down or + / - = volume, . and , = seek 15 s, esc = back (the music keeps playing). No sound in the emulator: it keeps time silently.
 
-# Tests (name the files; do not point pytest at the whole tests/ folder)
-pip3 install pytest
-KYPHONE_DATA_DIR=$(mktemp -d) python3 -m pytest spi_bridge/tests/test_state_machine.py \
-  spi_bridge/tests/test_reader_state.py spi_bridge/tests/test_reader_epub.py \
-  spi_bridge/tests/test_reader_fonts.py spi_bridge/tests/test_reader_layout.py \
-  spi_bridge/tests/test_music_library.py spi_bridge/tests/test_music_player.py spi_bridge/tests/test_music_state.py \
-  spi_bridge/tests/test_simulator.py spi_bridge/tests/test_firmware_host.py spi_bridge/tests/test_version.py \
-  spi_bridge/tests/test_network_control.py spi_bridge/tests/test_modem.py spi_bridge/tests/test_upload_server.py spi_bridge/tests/test_scenarios.py spi_bridge/tests/test_link_report.py   # expect 980 passed
+# Tests: every spi_bridge/tests/test_*.py suite, in a scratch data folder; fails if anything is skipped
+pip3 install pytest pygame
+python3 spi_bridge/tools/run_tests.py
 ```
 The emulator and the tests read and write the `data/` folder beside `spi_bridge/`; set `KYPHONE_DATA_DIR` to a scratch folder (as above) to keep your real contacts and messages out of it. Full technical detail — wire protocol, firmware, deploy and rollback steps — is in [`CLAUDE.md`](CLAUDE.md). The design spec is `docs/02-design/design_handoff_os_0_2/` and the build log is `planning/os-0.2.1-build-plan.md`.
 

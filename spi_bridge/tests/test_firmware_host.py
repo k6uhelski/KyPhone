@@ -441,7 +441,9 @@ class FirmwareMatchesEmulator(unittest.TestCase):
              'edit_delete', 'home_settings', 'settings', 'netlist_wifi', 'netlist_bt', 'netlist_empty',
              'netlist_scanning', 'netlist_sections', 'netlist_off', 'netlist_pair', 'lightset_off', 'lightset_mid', 'home_notes',
              'notes', 'notes_empty', 'note', 'note_back', 'note_delete', 'note_save', 'note_long', 'thread_call', 'chapters', 'upload_empty',
-             'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail']
+             'upload_got', 'netpass', 'netpass_back', 'netstate_working', 'netstate_ok', 'netstate_fail',
+             'thread_selected', 'thread_selected_sent', 'thread_tall_selected', 'thread_emoji', 'message_page',
+             'message_single', 'home_both_top', 'home_both_middle', 'home_both_bottom', 'texts_emoji']
 
     @classmethod
     def setUpClass(cls):

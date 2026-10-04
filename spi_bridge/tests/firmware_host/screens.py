@@ -51,6 +51,19 @@ SCREENS = {
     'thread_retry': ('THREAD2|Pip Okonkwo|||' + '|'.join([
         r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now'), r('Y3', '6:55 PM', 'still here?')]),
         '03_thread_not_sent_selected_retry.png'),
+    'thread_selected': ('THREAD2|Pip Okonkwo||S|' + '|'.join([
+        r('Y1', '6:53 PM', 'yeah leaving now'), r('R', '6:52 PM', 'you close?')]), None),
+    'thread_selected_sent': ('THREAD2|Pip Okonkwo||S|' + '|'.join([
+        r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now')]), None),
+    'thread_tall_selected': ('THREAD2|6700||S|' + r('R', 'Yesterday', ' '.join(['word'] * 55)), None),
+    'thread_emoji': ('THREAD2|Pip Okonkwo|||' + r('R', '6:52 PM', 'happy birthday \x96\x7f\x8a\x7f love you \x81\x7f'), None),
+    'message_page': ('MESSAGE|6700|Yesterday|1/2|' + O.join(['Thanks for choosing Example', 'Mobile. To easily manage your',
+                                                          'plan, check balances & more,']), None),
+    'message_single': ('MESSAGE|Pip Okonkwo|SENT 6:53 PM||yeah leaving now', None),
+    'home_both_top': ('HOME2|12:44 PM|0|3|B|0|4', None),
+    'home_both_middle': ('HOME2|12:44 PM|4|0|B|1|2', None),
+    'home_both_bottom': ('HOME2|12:44 PM|6|0|B|0|0', None),
+    'texts_emoji': ('TEXTS|-1|' + r('Pip Okonkwo', 'happy \x96\x7f\x8a\x7f', '1', '6:57 PM'), None),
     'thread_notsent': ('THREAD2|Pip Okonkwo|||' + '|'.join([
         r('R', '6:52 PM', 'you close?'), r('Y1', '6:53 PM', 'yeah leaving now'), r('Y2', '6:55 PM', 'still here?')]), None),
     'thread_long': ('THREAD2|Pip Okonkwo|...seat near the window if you can, the back row is impossible to|B|' + '|'.join([

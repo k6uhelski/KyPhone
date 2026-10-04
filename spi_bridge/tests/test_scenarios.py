@@ -643,7 +643,7 @@ class RandomKeys(PhoneCase):
             visited |= self.run_keys(seed, 700)
         must = {'home', 'texts_list', 'thread', 'compose', 'calls_list', 'dial', 'library', 'reader', 'music',
                 'tracks', 'nowplaying', 'contacts_pick', 'contact', 'contact_edit', 'notes_list', 'note',
-                'settings', 'wifi', 'bluetooth'}
+                'settings', 'wifi', 'bluetooth', 'message'}
         self.assertTrue(must <= visited, 'never reached: %s' % sorted(must - visited))
 
 
