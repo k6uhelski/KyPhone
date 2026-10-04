@@ -26,7 +26,8 @@ NAV_KEYS = {
 SHIFT_KEYS = {'KEY_LEFTSHIFT', 'KEY_RIGHTSHIFT'}
 
 # The BBQ10 keyboard's four coloured buttons (found on the real keyboard, 2026-10-04: its firmware sends these codes)
-# and what KyPhone makes them (Kyle's choice): circle home, triangle up one level, cross lock. Square sends Tab, which
+# and what KyPhone makes them (Kyle's choice): circle the lock screen (unlocking to home), triangle up one level, cross
+# lock (unlocking where you were). Square sends Tab, which
 # is already a navigation key.
 BUTTON_KEYS = {
     'KEY_CAPSLOCK': 'KEY_HOME',     # circle

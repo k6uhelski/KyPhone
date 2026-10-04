@@ -376,9 +376,11 @@ class Scenarios(PhoneCase):
         self.home('NOTES')
         self.key('CHAR:+')
         self.type('buy milk')
-        self.key('KEY_HOME')                                        # circle, mid-note
-        self.assertEqual(self.st['screen'], 'home')
+        self.key('KEY_HOME')                                        # circle, mid-note: the lock screen
+        self.assertEqual(self.st['screen'], 'lock')
         self.assertEqual(self.st['notes'][0]['text'], 'buy milk')    # saved on the way out
+        self.key('KEY_DOWN')
+        self.assertEqual(self.st['screen'], 'home')                  # and the next key unlocks to home
         self.home('TEXT')
         self.key('CHAR:+')
         self.type('5550100047')

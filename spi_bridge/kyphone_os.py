@@ -1543,8 +1543,8 @@ def handle_key(keycode):
 
 
 def _home_or_lock(keycode, screen):
-    """The keyboard's circle (KEY_HOME) and cross (KEY_LOCK) buttons, from any screen: home, or the lock screen (the
-    next key returns where you were, as after auto-lock). A note is saved and the upload page shut first, as leaving
+    """The keyboard's circle (KEY_HOME) and cross (KEY_LOCK) buttons, from any screen: both show the lock screen.
+    After circle the next key unlocks to the home menu; after cross it returns where you were (as after auto-lock). A note is saved and the upload page shut first, as leaving
     them normally does; a connection in progress returns to Settings. A call owns the screen, so both are ignored."""
     if screen in ('outgoing', 'incoming', 'in_call'):
         return
@@ -1558,11 +1558,12 @@ def _home_or_lock(keycode, screen):
     elif screen == 'netstate':
         back_to = 'settings'
     if keycode == 'KEY_HOME':
+        # Circle: back to the lock screen as a fresh start; the next key unlocks to the home menu (Kyle, 2026-10-04).
         with state['lock']:
-            state['screen']      = 'home'
+            state['screen']      = 'lock'
             state['home_index']  = 0
             state['locked_from'] = None
-        push_home2()
+        push_lock()
     else:
         with state['lock']:
             if screen != 'lock':
