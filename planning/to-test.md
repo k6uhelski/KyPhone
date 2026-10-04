@@ -3,6 +3,7 @@
 One bullet per change that is on the phone but not yet confirmed. Newest first. A confirmed bullet moves to Done.
 
 ## To test
+- **Keyboard buttons:** ○ goes home from anywhere (a note you were typing is kept), △ goes up one level, ✕ locks the phone and any key brings you back where you were, □ still switches TO/MESSAGE in New Message.
 - **0.8.6 timing:** use the phone for a minute or two (scroll the home menu and a list, open and scroll a conversation, turn a few book pages), then say "done" so the timing numbers can be read.
 - **0.8.5 signal bars:** the home screen's top right shows real bars (3 at today's signal), not the old fixed look.
 - **0.8.4 scroll arrows:** on the home menu, select LISTEN, CONTACTS and NOTES. The down arrow stays visible (white on the selected row) and disappears at SETTINGS; an up arrow appears once the top row is cut off.

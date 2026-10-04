@@ -176,6 +176,8 @@ Selection convention: a list's `*_index` is an absolute position, `-1` = the hea
 
 `Q`/`W`/`A`/`S`/`D` act as Esc and the arrows on screens where letters are not being typed.
 
+**The keyboard's coloured buttons** (Kyle, 2026-10-04; the BBQ10's firmware sends Caps Lock, Meta, Back and Tab for them, found by listening on the Radxa): **○ = Home** from any screen (`KEY_HOME`), **△ = up one level** (Esc), **✕ = Lock** now (`KEY_LOCK`; the next key returns where you were, as after auto-lock), **□ = Tab** (unchanged). Mapped in `input_handler.BUTTON_KEYS`; `_home_or_lock()` saves a note and shuts the upload page first, sends a connection in progress back to Settings, and does nothing during a call. In the emulator: Home and End.
+
 ### **Sending**
 `send_reply()` stores the message as **SENDING…** and returns; a worker thread hands it to `_transport_send()` so the keyboard never waits on the network. `_transport_send` hands it to the real cellular modem (below), or raises `no service` when there is none, so without a modem (or with no signal) a send ends as **NOT SENT**, which is a normal outcome, not an error case. The phone has had a working modem and SIM since 2026-09-26. In the simulator, `KYPHONE_SIM_SEND=sent` makes the fake radio succeed (default: not sent, like the phone) — the simulator never touches the real modem code, only this one env var.
 

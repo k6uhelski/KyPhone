@@ -1443,6 +1443,10 @@ def handle_key(keycode):
     elif keycode.startswith('CHAR:') and not can_draw(keycode[5:]):
         return    # the panel cannot draw it (or it is a field separator): ignored, silently
 
+    if keycode in ('KEY_HOME', 'KEY_LOCK'):
+        _home_or_lock(keycode, screen)
+        return
+
     if screen == 'lock':
         _from_lock(keycode)
 
@@ -1536,6 +1540,35 @@ def handle_key(keycode):
                 target = state['stub_return']
                 state['screen'] = target
             _push_for_screen(target)
+
+
+def _home_or_lock(keycode, screen):
+    """The keyboard's circle (KEY_HOME) and cross (KEY_LOCK) buttons, from any screen: home, or the lock screen (the
+    next key returns where you were, as after auto-lock). A note is saved and the upload page shut first, as leaving
+    them normally does; a connection in progress returns to Settings. A call owns the screen, so both are ignored."""
+    if screen in ('outgoing', 'incoming', 'in_call'):
+        return
+    back_to = screen
+    if screen == 'note':
+        _close_note()                                       # saves it, as leaving a note always does
+        back_to = 'notes_list'
+    elif screen == 'upload':
+        _stop_upload()
+        back_to = 'settings'
+    elif screen == 'netstate':
+        back_to = 'settings'
+    if keycode == 'KEY_HOME':
+        with state['lock']:
+            state['screen']      = 'home'
+            state['home_index']  = 0
+            state['locked_from'] = None
+        push_home2()
+    else:
+        with state['lock']:
+            if screen != 'lock':
+                state['locked_from'] = back_to
+            state['screen'] = 'lock'
+        push_lock()
 
 
 def _from_lock(keycode):

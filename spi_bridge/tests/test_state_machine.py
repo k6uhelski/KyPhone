@@ -449,6 +449,17 @@ class TestSignalBars(unittest.TestCase):
         self.assertEqual(kyphone_os.state['signal_bars'], 0)
 
 
+class TestColouredButtons(unittest.TestCase):
+    def test_the_keyboard_maps_its_buttons_as_kyle_chose(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('real_input_handler',
+                                                      os.path.join(os.path.dirname(kyphone_os.__file__), 'input_handler.py'))
+        mod = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'evdev': MagicMock()}):
+            spec.loader.exec_module(mod)
+        self.assertEqual(mod.BUTTON_KEYS, {'KEY_CAPSLOCK': 'KEY_HOME', 'KEY_LEFTMETA': 'KEY_ESC', 'KEY_BACK': 'KEY_LOCK'})
+
+
 class TestInputDevicesLogOnce(unittest.TestCase):
     def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
         import io

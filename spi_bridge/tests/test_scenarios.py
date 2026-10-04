@@ -371,6 +371,38 @@ class Scenarios(PhoneCase):
         # 👍🏽 loses its skin tone; ❤️‍🔥 (joined) shows its first emoji; a flag and 🧿 (not in the set) are '?'
         self.assertIn('Happy birthday %s%s %s %s ? ?' % (cake + PAD, party + PAD, thumbs + PAD, heart + PAD), self.wire)
 
+    def test_the_coloured_buttons_go_home_lock_and_back_up_from_anywhere(self):
+        # circle = KEY_HOME, cross = KEY_LOCK, triangle = KEY_ESC (input_handler.BUTTON_KEYS)
+        self.home('NOTES')
+        self.key('CHAR:+')
+        self.type('buy milk')
+        self.key('KEY_HOME')                                        # circle, mid-note
+        self.assertEqual(self.st['screen'], 'home')
+        self.assertEqual(self.st['notes'][0]['text'], 'buy milk')    # saved on the way out
+        self.home('TEXT')
+        self.key('CHAR:+')
+        self.type('5550100047')
+        self.key('KEY_LOCK')                                        # cross
+        self.assertEqual(self.st['screen'], 'lock')
+        self.assertTrue(self.wire.startswith('LOCK|'))
+        self.key('KEY_DOWN')                                        # any key: back where it was
+        self.assertEqual((self.st['screen'], self.st['compose_to']), ('compose', '5550100047'))
+        self.key('KEY_ESC')                                         # triangle = up one level (here: discard?)
+        self.assertEqual(self.st['screen'], 'confirm')
+
+    def test_the_buttons_shut_the_upload_page_and_leave_a_call_alone(self):
+        self.home('SETTINGS')
+        self.st['settings_index'] = 4
+        self.key('KEY_ENTER')
+        self.assertEqual(self.st['screen'], 'upload')
+        self.key('KEY_LOCK')
+        self.assertIsNone(kyphone_os._upload)                        # the page is shut while locked
+        self.key('KEY_ENTER')
+        self.assertEqual(self.st['screen'], 'settings')
+        self.st['screen'] = 'in_call'
+        self.key('KEY_HOME', 'KEY_LOCK')
+        self.assertEqual(self.st['screen'], 'in_call')
+
     def test_a_long_text_is_read_by_selecting_it_and_paging(self):
         body = ' '.join('word%d' % i for i in range(160)) + ' \U0001F602'
         self.incoming('6700', body)
@@ -609,11 +641,11 @@ KEYS = (['KEY_UP'] * 6 + ['KEY_DOWN'] * 6 + ['KEY_LEFT'] * 3 + ['KEY_RIGHT'] * 3
 class RandomKeys(PhoneCase):
     """Thousands of random keys from every starting point: nothing may raise, and every frame must be valid."""
 
-    def run_keys(self, seed, steps):
+    def run_keys(self, seed, steps, keys=KEYS):
         rng = random.Random(seed)
         visited = set()
         for i in range(steps):
-            key = rng.choice(KEYS)
+            key = rng.choice(keys)
             try:
                 kyphone_os.handle_key(key)
             except Exception as e:                                # report where it happened
@@ -625,6 +657,18 @@ class RandomKeys(PhoneCase):
             if i % 211 == 0 and self.st['screen'] == 'home':
                 self.st['home_index'] = rng.randrange(len(kyphone_os.HOME_MENU))
         return visited
+
+    def test_random_keys_with_the_home_and_lock_buttons_never_break_anything(self):
+        self.add_book()
+        self.add_album()
+        visited = set()
+        for seed in range(100, 108):
+            self.reset_state()
+            self.st['screen'] = 'home'
+            self.st['home_index'] = seed % len(kyphone_os.HOME_MENU)
+            kyphone_os.handle_key('KEY_ENTER')
+            visited |= self.run_keys(seed, 500, keys=KEYS + ['KEY_HOME', 'KEY_LOCK'] * 2)
+        self.assertTrue({'home', 'lock'} <= visited)
 
     def test_random_keys_reach_every_part_of_the_phone_without_a_crash(self):
         self.add_book()

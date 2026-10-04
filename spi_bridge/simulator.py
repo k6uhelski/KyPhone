@@ -80,6 +80,8 @@ class Simulator:
         pygame.K_BACKSPACE: 'KEY_BACKSPACE',
         pygame.K_ESCAPE:    'KEY_ESC',
         pygame.K_TAB:       'KEY_TAB',
+        pygame.K_HOME:      'KEY_HOME',     # the keyboard's circle button
+        pygame.K_END:       'KEY_LOCK',     # the cross button (triangle is Esc)
     }
 
     def __init__(self, on_key):

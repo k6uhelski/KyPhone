@@ -6,7 +6,7 @@ for every key press. Runs in a daemon thread so it doesn't block the app.
 
 Keycodes sent to on_key():
   Navigation : KEY_UP / KEY_DOWN / KEY_LEFT / KEY_RIGHT / KEY_ENTER /
-               KEY_BACKSPACE / KEY_ESC / KEY_TAB
+               KEY_BACKSPACE / KEY_ESC / KEY_TAB, and from the coloured buttons KEY_HOME / KEY_LOCK
   Printable  : CHAR:<character>   e.g. CHAR:a  CHAR:+  CHAR:
 
 Install dependency on Radxa:
@@ -24,6 +24,15 @@ NAV_KEYS = {
 }
 
 SHIFT_KEYS = {'KEY_LEFTSHIFT', 'KEY_RIGHTSHIFT'}
+
+# The BBQ10 keyboard's four coloured buttons (found on the real keyboard, 2026-10-04: its firmware sends these codes)
+# and what KyPhone makes them (Kyle's choice): circle home, triangle up one level, cross lock. Square sends Tab, which
+# is already a navigation key.
+BUTTON_KEYS = {
+    'KEY_CAPSLOCK': 'KEY_HOME',     # circle
+    'KEY_LEFTMETA': 'KEY_ESC',      # triangle
+    'KEY_BACK':     'KEY_LOCK',     # cross
+}
 
 # Unshifted punctuation / special chars
 _CHAR_UNSHIFT = {
@@ -139,7 +148,9 @@ class KeyboardHandler:
                         continue
 
                     if key_event.keystate == key_event.key_down:
-                        if keycode in NAV_KEYS:
+                        if keycode in BUTTON_KEYS:
+                            self.on_key(BUTTON_KEYS[keycode])
+                        elif keycode in NAV_KEYS:
                             self.on_key(keycode)
                         else:
                             char = _keycode_to_char(keycode, shift_held)
