@@ -424,7 +424,8 @@ state = {
     'light':          0,            # the screen light, 0 (off) .. LIGHT_LEVELS — saved in settings.json
     'light_lit':      False,        # the light is on right now (it goes off LIGHT_IDLE_SECONDS after the last key)
     'last_key_at':    0.0,
-    'locked_from':    None,         # the screen auto-lock left (the next key returns there); None = unlock to home
+    'locked_from':    None,
+    'signal_bars':    0,            # 0-4 from the modem's signal strength (signal_bars_for); 0 = no modem or network         # the screen auto-lock left (the next key returns there); None = unlock to home
     'activity_mark':  True,         # a * by the lock screen's clock for an unread text or an unseen missed call
     'settings_wifi':  None,         # network_control.WifiStatus, refreshed when SETTINGS opens or a connect succeeds
     'settings_bt':    None,         # network_control.BtStatus, same
@@ -981,7 +982,9 @@ def push_home2():
         unread = sum(1 for m in state['messages'] if not m['read'])
         home_index = state['home_index']
     playing = 1 if (_music is not None and _music.playing) else 0        # the equalizer mark on the music row
-    push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}|{playing}")
+    with state['lock']:
+        bars = state['signal_bars']
+    push_screen(f"HOME2|{time_str}|{home_index}|{unread}|{HOME_STYLE}|{playing}|{bars}")
 
 
 def _settle_texts_selection(threads):
@@ -2605,6 +2608,7 @@ def save_messages():
 
 _modem = None    # a modem.SerialModem once _init_modem() succeeds; None = no dongle (yet)
 MODEM_RETRY_SECONDS = 10   # how often a missing or silent modem is tried again
+SIGNAL_EVERY        = 30   # polls between signal readings (about a minute at a 2 s poll)
 MODEM_REOPEN_AFTER  = 5    # failed polls in a row before the modem is closed and opened afresh
 
 
@@ -2637,6 +2641,29 @@ def _init_modem(quiet=False):
     except modem.ModemError:
         pass
     return True
+
+
+def signal_bars_for(csq, registered=True):
+    """The home menu's signal bars, 0-4, for an AT+CSQ reading (0-31, None = unknown): the usual thresholds, under 10
+    marginal (1), 10-14 OK (2), 15-19 good (3), 20 and up excellent (4). Off the network, or no reading: 0."""
+    if csq is None or not registered:
+        return 0
+    return 1 if csq < 10 else 2 if csq < 15 else 3 if csq < 20 else 4
+
+
+def _update_signal():
+    """Read the modem's signal and, if the bar count changed, redraw the home menu when it is showing."""
+    m = _modem
+    try:
+        bars = signal_bars_for(m.signal_quality(), m.registered()) if m is not None else 0
+    except Exception:
+        bars = 0
+    with state['lock']:
+        changed = bars != state['signal_bars']
+        state['signal_bars'] = bars
+        on_home = state['screen'] == 'home'
+    if changed and on_home:
+        push_home2()
 
 
 def _drop_modem():
@@ -4324,8 +4351,11 @@ def modem_sms_loop():
     if _modem is None and not _modem_wanted():
         return
     print(f"Polling the modem for texts every {SMS_POLL_INTERVAL}s...")
-    failures, next_try = 0, 0.0
+    failures, next_try, polls = 0, 0.0, 0
     while state['running']:
+        if polls % SIGNAL_EVERY == 0:
+            _update_signal()                                   # the home menu's bars, about once a minute
+        polls += 1
         if _modem is None:
             now = time.monotonic()
             if now >= next_try:

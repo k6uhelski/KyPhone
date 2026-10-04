@@ -210,9 +210,9 @@ static void ui_header(const char* title, bool back_sel, bool plus_sel, bool show
     }
 }
 
-// ─── HOME2|time|index|unread ──────────────────────────────────────────────────
+// ─── HOME2|time|index|unread|style|playing|bars ─────────────────────────────────
 
-static void ui_status_group(uint16_t fg, int mid_y) {
+static void ui_status_group(uint16_t fg, int mid_y, int bars) {   // bars: 0-4 filled signal bars (the rest outlined)
     const int batt_pct = 82;
     char pct_str[8];
     snprintf(pct_str, sizeof(pct_str), "%d%%", batt_pct);
@@ -236,20 +236,23 @@ static void ui_status_group(uint16_t fg, int mid_y) {
     int sig_bottom = mid_y + sig_heights[3] / 2;
     for (int i = 0; i < 4; i++) {
         int h = sig_heights[i];
-        if (i == 3) display.drawRect(x, sig_bottom - h, sig_w, h, fg);
-        else        display.fillRect(x, sig_bottom - h, sig_w, h, fg);
+        if (i < bars) display.fillRect(x, sig_bottom - h, sig_w, h, fg);
+        else          display.drawRect(x, sig_bottom - h, sig_w, h, fg);
         x += sig_w + sig_gap;
     }
 }
 
 static void ui_home(char* data) {
-    char* f[6];
-    int n = ui_split(data, '|', f, 6);
+    char* f[7];
+    int n = ui_split(data, '|', f, 7);
     const char* time_str = ui_fld(f, n, 0);
     int home_index = ui_fld_int(f, n, 1, 0);
     int unread     = ui_fld_int(f, n, 2, 0);
     char style     = ui_fld(f, n, 3)[0];            // B icons and words (the default), I icons, W words
     bool playing   = ui_fld_int(f, n, 4, 0) == 1;   // music is playing
+    int bars       = ui_fld_int(f, n, 5, 3);        // signal bars 0-4 from the modem (an older Radxa sends none: 3)
+    if (bars < 0) bars = 0;
+    if (bars > 4) bars = 4;
     bool show_icon  = (style != 'W');
     bool show_label = (style == 'B' || style == 'W');
 
@@ -258,7 +261,7 @@ static void ui_home(char* data) {
     uint16_t fg = header_sel ? WHITE : BLACK;
     if (header_sel) display.fillRect(0, 0, 600, header_h, BLACK);
     ui_put(time_str, 24, 18, 3, fg);
-    ui_status_group(fg, header_h / 2);
+    ui_status_group(fg, header_h / 2, bars);
     ui_hline(header_h, 2);
 
     // TEXT, CALL, READ, LISTEN, CONTACTS, SETTINGS — the first three are on screen

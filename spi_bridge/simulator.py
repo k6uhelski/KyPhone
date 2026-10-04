@@ -335,6 +335,8 @@ class Simulator:
             unread = 0
         style = parts[3] if len(parts) > 3 and parts[3] in ('I', 'B', 'W') else 'B'
         playing = len(parts) > 4 and parts[4] == '1'         # music is playing: a small mark by the LISTEN row
+        bars = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 3     # signal bars from the modem
+        bars = max(0, min(4, bars))
 
         header_h   = 60
         header_sel = home_index == -1
@@ -345,7 +347,7 @@ class Simulator:
         header_fg = WHITE if header_sel else BLACK
         header_bg = BLACK if header_sel else WHITE
         self._text(time_str, 24, 18, 3, header_fg)
-        self._draw_status_group(header_fg, header_bg, mid_y=header_h // 2)
+        self._draw_status_group(header_fg, header_bg, mid_y=header_h // 2, bars=bars)
         self._line(header_h, weight=2)
 
         # 5-row menu (TEXT/CALL/CONTACTS/READ/LISTEN), scrolling: the first three
@@ -446,7 +448,7 @@ class Simulator:
 
     HOME_MENU = ['TEXT', 'CALL', 'READ', 'LISTEN', 'CONTACTS', 'NOTES', 'SETTINGS']   # must match kyphone_os.HOME_MENU (a test asserts it)
 
-    def _draw_status_group(self, fg, bg, mid_y):
+    def _draw_status_group(self, fg, bg, mid_y, bars=3):
         """Battery block + percentage + 4-bar signal staircase, right-aligned
         in the home header. No real telemetry exists yet — fixed placeholder
         values, swappable for real readings later."""
@@ -477,11 +479,11 @@ class Simulator:
         self._text(pct_str, x, mid_y - 3 * 8 // 2, 3, fg)
         x += pct_w + 14
 
-        # Signal staircase — last bar is an outline only
+        # Signal staircase — `bars` filled (from the modem), the rest outlined
         sig_bottom = mid_y + sig_heights[-1] // 2
         for i, h in enumerate(sig_heights):
             rect = (x, sig_bottom - h, sig_w, h)
-            if i == len(sig_heights) - 1:
+            if i >= bars:
                 pygame.draw.rect(self._surface, fg, rect, 1)
             else:
                 pygame.draw.rect(self._surface, fg, rect)

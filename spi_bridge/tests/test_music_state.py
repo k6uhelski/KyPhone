@@ -72,7 +72,8 @@ class MusicCase(unittest.TestCase):
         kyphone_os._music_lengths.clear()
         kyphone_os.state.update(screen='home', home_index=kyphone_os.HOME_MENU.index('LISTEN'), music_lib=None, music_index=0,
                                 music_start=0, album=None, tracks_index=0, tracks_start=0, music_return='music',
-                                music_last=None, messages=[], stub_key='', stub_text=None, stub_return='home')
+                                music_last=None, messages=[], stub_key='', stub_text=None, stub_return='home',
+                                signal_bars=0)
 
     # helpers
     @property
@@ -356,15 +357,15 @@ class Background(MusicCase):
         self.key('KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         self.assertEqual(self.st['screen'], 'home')
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|B|1'))
+        self.assertTrue(self.last.endswith('|B|1|0'))
 
     def test_no_mark_when_paused_or_never_played(self):
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|B|0'))
+        self.assertTrue(self.last.endswith('|B|0|0'))
         self.play_track(0)
         self.key('CHAR: ', 'KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         kyphone_os.push_home2()
-        self.assertTrue(self.last.endswith('|B|0'))
+        self.assertTrue(self.last.endswith('|B|0|0'))
 
     def test_playback_continues_and_advances_while_you_do_other_things_without_redrawing_anything(self):
         self.play_track(0)
@@ -380,7 +381,7 @@ class Background(MusicCase):
         self.key('KEY_ESC', 'KEY_ESC', 'KEY_ESC')
         self.tick(31)
         self.assertEqual(kyphone_os._music.now().state, 'stopped')
-        self.assertTrue(self.last.startswith('HOME2|') and self.last.endswith('|B|0'))
+        self.assertTrue(self.last.startswith('HOME2|') and self.last.endswith('|B|0|0'))
 
     def test_when_the_album_ends_on_the_now_playing_screen_it_shows_stopped(self):
         self.play_track(2)

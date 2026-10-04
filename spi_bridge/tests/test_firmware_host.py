@@ -412,6 +412,16 @@ class FirmwareFrames(unittest.TestCase):
         self.assertEqual([cue(frames['r%d' % k], 582) for k in range(7)],
                          [True, True, True, True, True, True, False])                # down: until the last item
 
+    def test_the_signal_bars_are_the_count_the_radxa_sends(self):
+        frames = self.render({'b%d' % k: 'HOME2|9:41 AM|0|0|B|0|%d' % k for k in range(5)})
+        frames['old'] = self.render({'old': 'HOME2|9:41 AM|0|0|B|0'})['old']           # an older Radxa: three
+
+        def filled(f):        # the four bars sit at the right of the header, 4px wide, 3px apart, bottom at y 38
+            x0 = 600 - 24 - (4 * 4 + 3 * 3)
+            return sum(all(f[y * W + x0 + 7 * i + 1] == 0 for y in range(34, 37)) for i in range(4))
+        self.assertEqual([filled(frames['b%d' % k]) for k in range(5)], [0, 1, 2, 3, 4])
+        self.assertEqual(filled(frames['old']), 3)
+
     def test_words_style_draws_no_icon(self):
         self.assertFalse(self.icon_matches(self.frames['home_words'], 'TEXT', 272, 62 + 39, True))
 

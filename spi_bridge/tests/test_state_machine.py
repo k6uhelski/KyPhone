@@ -41,6 +41,7 @@ def reset_state(**overrides):
     defaults = {
         'screen': 'lock',
         'locked_from': None,
+        'signal_bars': 0,
         'home_index': 0,
         'texts_index': 0,
         'texts_start': 0,
@@ -402,6 +403,50 @@ class TestScrollingAConversation(unittest.TestCase):
             with patch.object(kyphone_os, '_last_screen_pushed', before):
                 kyphone_os.state['screen'] = after
                 self.assertEqual(kyphone_os._wants_full_refresh(), full, (before, after))
+
+
+class TestSignalBars(unittest.TestCase):
+    """The home menu's signal bars come from the modem (they were a fixed three until 0.8.5)."""
+
+    def setUp(self):
+        self.wires = []
+        p = patch.object(kyphone_os, 'push_screen', self.wires.append)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(setattr, kyphone_os, '_modem', None)
+        reset_state(screen='home', home_index=0, signal_bars=0, messages=[])
+
+    def test_the_usual_thresholds(self):
+        f = kyphone_os.signal_bars_for
+        self.assertEqual([f(q) for q in (0, 9, 10, 14, 15, 19, 20, 31)], [1, 1, 2, 2, 3, 3, 4, 4])
+        self.assertEqual((f(None), f(25, registered=False)), (0, 0))
+
+    def test_a_reading_that_changes_the_bars_redraws_the_home_menu(self):
+        fake = md.SimModem(signal=21)
+        kyphone_os._modem = fake
+        kyphone_os._update_signal()
+        self.assertTrue(self.wires[-1].startswith('HOME2|') and self.wires[-1].endswith('|4'))
+        n = len(self.wires)
+        kyphone_os._update_signal()
+        self.assertEqual(len(self.wires), n)                       # unchanged: no redraw
+        fake._registered = False
+        kyphone_os._update_signal()
+        self.assertTrue(self.wires[-1].endswith('|0'))             # off the network: no bars
+
+    def test_no_modem_means_no_bars_and_no_redraw_off_the_home_menu(self):
+        kyphone_os.state['signal_bars'] = 3
+        kyphone_os.state['screen'] = 'texts_list'
+        kyphone_os._update_signal()
+        self.assertEqual(kyphone_os.state['signal_bars'], 0)
+        self.assertEqual(self.wires, [])
+
+    def test_a_modem_error_reads_as_no_bars(self):
+        fake = md.SimModem(signal=21)
+        fake.signal_quality = MagicMock(side_effect=md.ModemError('read failed'))
+        kyphone_os._modem = fake
+        kyphone_os.state['signal_bars'] = 2
+        kyphone_os._update_signal()
+        self.assertEqual(kyphone_os.state['signal_bars'], 0)
 
 
 class TestInputDevicesLogOnce(unittest.TestCase):
@@ -2917,10 +2962,9 @@ class TestHomeStyle(unittest.TestCase):
 
     def test_the_wire_carries_the_style_and_icons_with_words_are_the_default(self):
         self.assertEqual(kyphone_os.HOME_STYLE, 'B')                        # Kyle's pick, 2026-10-03
-        self.assertTrue(self.wire().endswith('|B|0'))                       # style, then the "music is playing" flag
-        self.assertTrue(self.wire('I').endswith('|I|0'))
-        self.assertTrue(self.wire('B').endswith('|B|0'))
-        self.assertTrue(self.wire('W').endswith('|W|0'))
+        self.assertTrue(self.wire().endswith('|B|0|0'))                     # style, music playing, signal bars
+        self.assertTrue(self.wire('I').endswith('|I|0|0'))
+        self.assertTrue(self.wire('W').endswith('|W|0|0'))
 
     def test_the_setting_names_map_to_the_wire_letters(self):
         self.assertEqual(kyphone_os.HOME_STYLES, {'icons': 'I', 'both': 'B', 'words': 'W'})
