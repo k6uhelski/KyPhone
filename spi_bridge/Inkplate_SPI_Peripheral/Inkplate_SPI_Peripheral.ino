@@ -1304,8 +1304,7 @@ void handle_command(char* text) {
         display.clearDisplay();
         render_home(text + 10);
         display.partialUpdate();
-        delay(100);
-        display.einkOff();
+        display.einkOff();              // (already off: the library powers the panel down after an update)
         reclaim_spi_pins_for_gpio();
     } else if (strncmp(text, "MSG_LIST_FAST|", 14) == 0) {
         strncpy(current_screen, "MSG_LIST", sizeof(current_screen) - 1);
@@ -1321,8 +1320,7 @@ void handle_command(char* text) {
         display.clearDisplay();
         render_msg_list(after, sel);
         display.partialUpdate();
-        delay(100);
-        display.einkOff();
+        display.einkOff();              // (already off: the library powers the panel down after an update)
         reclaim_spi_pins_for_gpio();
     } else if (ui_is_reader_frame(text)) {
         // Book page: RTEXT frames only draw (they must not clear or refresh); RFOOT ends the page and refreshes.
@@ -1344,8 +1342,7 @@ void handle_command(char* text) {
                 tm_kind = 'P';
             }
             uint32_t t2 = micros();
-            delay(100);
-            display.einkOff();
+            display.einkOff();          // (already off: the library powers the panel down after an update)
             reclaim_spi_pins_for_gpio();
             tm_refresh_us = t2 - t1;
             tm_settle_us  = micros() - t2;
@@ -1410,8 +1407,7 @@ void handle_command(char* text) {
             tm_kind = 'P';
         }
         uint32_t t2 = micros();
-        delay(100);
-        display.einkOff();
+        display.einkOff();              // (already off: the library powers the panel down after an update)
         reclaim_spi_pins_for_gpio();
         tm_refresh_us = t2 - t1;
         tm_settle_us  = micros() - t2;
