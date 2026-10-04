@@ -460,6 +460,52 @@ class TestColouredButtons(unittest.TestCase):
         self.assertEqual(mod.BUTTON_KEYS, {'KEY_CAPSLOCK': 'KEY_HOME', 'KEY_LEFTMETA': 'KEY_ESC', 'KEY_BACK': 'KEY_LOCK'})
 
 
+class TestTrackpadModes(unittest.TestCase):
+    """The BBQ10 trackpad sends mouse motion (steady light) or scroll-wheel clicks (pulsing light); both must step the
+    selection once per swipe (found on the phone, 2026-10-04: in wheel mode nothing moved)."""
+
+    def run_events(self, events):
+        import importlib.util
+        from types import SimpleNamespace as E
+        spec = importlib.util.spec_from_file_location('real_trackpad_handler',
+                                                      os.path.join(os.path.dirname(kyphone_os.__file__), 'trackpad_handler.py'))
+        mod = importlib.util.module_from_spec(spec)
+        ev = MagicMock()
+        ec = type('ec', (), dict(EV_REL=2, EV_KEY=1, REL_X=0, REL_Y=1, REL_HWHEEL=6, REL_WHEEL=8, BTN_LEFT=272))
+        ev.ecodes = ec
+        with patch.dict(sys.modules, {'evdev': ev}):
+            spec.loader.exec_module(mod)
+        mod.ecodes = ec
+        fired, clock = [], [0.0]
+        device = MagicMock()
+
+        def stop_after(seq):
+            for item in seq:
+                if item is None:
+                    raise KeyboardInterrupt
+                clock[0] += 0.01
+                yield item
+        device.read_loop = lambda: stop_after([E(type=t, code=c, value=v) for t, c, v in events] + [None])
+        handler = mod.TrackpadHandler.__new__(mod.TrackpadHandler)
+        handler.on_key = fired.append
+        with patch.object(mod, 'find_trackpad', return_value=device), \
+                patch.object(mod.time, 'monotonic', lambda: clock[0]), patch('builtins.print'), \
+                self.assertRaises(KeyboardInterrupt):
+            handler._run()
+        return fired
+
+    def test_scroll_wheel_mode_steps_once_per_swipe(self):
+        W, H = 8, 6
+        self.assertEqual(self.run_events([(2, W, -1), (2, W, -1)]), ['KEY_DOWN'])         # one swipe, two clicks
+        self.assertEqual(self.run_events([(2, W, 1)]), ['KEY_UP'])
+        self.assertEqual(self.run_events([(2, H, 1)]), ['KEY_RIGHT'])
+        self.assertEqual(self.run_events([(2, H, -1)]), ['KEY_LEFT'])
+
+    def test_mouse_mode_still_works(self):
+        self.assertEqual(self.run_events([(2, 1, -9), (2, 1, -16)]), ['KEY_UP'])
+        self.assertEqual(self.run_events([(1, 272, 1)]), ['KEY_ENTER'])
+
+
 class TestInputDevicesLogOnce(unittest.TestCase):
     def test_a_missing_keyboard_or_trackpad_is_logged_once_not_every_3s(self):
         import io

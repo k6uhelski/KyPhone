@@ -2,7 +2,8 @@
 trackpad_handler.py — BLE trackpad reader for KyPhone navigation.
 
 Finds the first relative-pointing evdev device (BTN_LEFT + REL_X/REL_Y) and
-translates swipes into discrete nav keys, and clicks into Enter.
+translates swipes into discrete nav keys, and clicks into Enter. It works in both of the BBQ10 trackpad's modes:
+mouse (steady light: REL_X/REL_Y motion) and scroll wheel (pulsing light: REL_WHEEL/REL_HWHEEL clicks).
 
 A "swipe" is a continuous burst of motion events with no pause longer than
 GESTURE_GAP_SECONDS between them. At most one KEY_UP/DOWN/LEFT/RIGHT fires
@@ -85,6 +86,13 @@ class TrackpadHandler:
                             accum_x += event.value
                         elif event.code == ecodes.REL_Y:
                             accum_y += event.value
+                        # Scroll-wheel mode (the BBQ10's trackpad light pulses; found on the phone, 2026-10-04): the
+                        # trackpad sends wheel clicks instead of motion. One click counts as a full swipe, so either
+                        # mode steps once per swipe. Wheel up is positive, screen-down motion is positive: hence -=.
+                        elif event.code == ecodes.REL_WHEEL:
+                            accum_y -= event.value * SWIPE_THRESHOLD
+                        elif event.code == ecodes.REL_HWHEEL:
+                            accum_x += event.value * SWIPE_THRESHOLD
 
                         if not fired_this_burst and (
                             abs(accum_x) >= SWIPE_THRESHOLD or abs(accum_y) >= SWIPE_THRESHOLD
