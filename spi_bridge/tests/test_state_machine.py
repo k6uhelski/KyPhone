@@ -1745,12 +1745,28 @@ class TestContactPage(ContactBase):
         self.key('KEY_DOWN');  self.assertEqual(kyphone_os.state['contact_sel'], 'call')
         self.key('KEY_DOWN');  self.assertEqual(kyphone_os.state['contact_sel'], 'call')
 
+    def test_down_reaches_create_contact_on_its_own_line_and_up_comes_back(self):
+        reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
+        self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')            # info -> the unsaved number's page
+        self.assertEqual(kyphone_os.state['screen'], 'contact')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'call')         # it opens on CALL
+        self.key('KEY_DOWN')                                              # CREATE CONTACT, the line below
+        self.assertEqual(kyphone_os.state['contact_sel'], 'save')
+        self.key('KEY_DOWN')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'save')         # nothing below it
+        self.key('KEY_UP')
+        self.assertEqual(kyphone_os.state['contact_sel'], 'call')
+        self.key('KEY_RIGHT', 'KEY_DOWN')                                 # from TEXT too
+        self.assertEqual(kyphone_os.state['contact_sel'], 'save')
+        self.key('KEY_ENTER')
+        self.assertEqual(kyphone_os.state['screen'], 'contact_edit')
+
     def test_unsaved_page_row_has_three_buttons(self):
         reset_state(screen='thread', thread_id='+15550199002', messages=[_inbound('hi', peer='+15550199002')])
         self.key('KEY_UP', 'KEY_UP', 'KEY_RIGHT', 'KEY_ENTER')
         self.key('KEY_RIGHT', 'KEY_RIGHT')
         self.assertEqual(kyphone_os.state['contact_sel'], 'save')
-        self.key('KEY_UP')
+        self.key('KEY_UP', 'KEY_UP')                                         # CREATE CONTACT -> CALL -> the header
         self.assertEqual(kyphone_os.state['contact_sel'], 'back')           # no EDIT on an unsaved page
 
     def test_esc_returns_to_where_the_page_was_opened_from(self):

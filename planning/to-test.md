@@ -3,6 +3,7 @@
 One bullet per change that is on the phone but not yet confirmed. Newest first. A confirmed bullet moves to Done.
 
 ## To test
+- **Create contact with ↓:** open a conversation with a number that isn't saved, then its `i` page. ↓ from CALL or TEXT reaches CREATE CONTACT, and ↑ comes back.
 - **Trackpad left/right in scroll mode:** with the trackpad light pulsing, swipe left and the selection goes left; swipe right and it goes right.
 
 ## Done

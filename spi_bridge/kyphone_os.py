@@ -2206,6 +2206,12 @@ def _from_contact(keycode):
         with state['lock']:
             state['screen'] = ret
         _push_for_screen(ret)
+    # An unsaved number's CREATE CONTACT is too wide for the row, so it is drawn on a line of its own below CALL and
+    # TEXT: Down reaches it and Up comes back (found on the phone, 2026-10-04: Down did nothing there).
+    elif keycode == 'KEY_UP' and sel == 'save':
+        go('call')
+    elif keycode == 'KEY_DOWN' and kind == 'U' and sel in ('call', 'text'):
+        go('save')
     elif keycode == 'KEY_UP':
         go(sel if in_top else top[min(row.index(sel), len(top) - 1)])
     elif keycode == 'KEY_DOWN':
