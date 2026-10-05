@@ -3,10 +3,11 @@
 One bullet per change that is on the phone but not yet confirmed. Newest first. A confirmed bullet moves to Done.
 
 ## To test
-- **0.8.11 create contact with ↓:** open a conversation with a number that isn't saved, then its `i` page. ↓ from CALL or TEXT reaches CREATE CONTACT, and ↑ comes back.
-- **0.8.11 trackpad left/right in scroll mode:** with the trackpad light pulsing, swipe left and the selection goes left; swipe right and it goes right.
+(nothing waiting)
 
 ## Done
+- 0.8.11 create contact with ↓ (confirmed 2026-10-04)
+- 0.8.11 trackpad left/right in scroll mode (confirmed 2026-10-04)
 - 0.8.10 speed fix 2 (frames end sooner) (confirmed 2026-10-04)
 - 0.8.8 trackpad in both modes (confirmed 2026-10-04)
 - 0.8.7 speed fix 1a (no 100 ms pause) (confirmed 2026-10-04)
