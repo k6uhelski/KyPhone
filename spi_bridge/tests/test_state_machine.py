@@ -498,8 +498,8 @@ class TestTrackpadModes(unittest.TestCase):
         W, H = 8, 6
         self.assertEqual(self.run_events([(2, W, -1), (2, W, -1)]), ['KEY_DOWN'])         # one swipe, two clicks
         self.assertEqual(self.run_events([(2, W, 1)]), ['KEY_UP'])
-        self.assertEqual(self.run_events([(2, H, 1)]), ['KEY_RIGHT'])
-        self.assertEqual(self.run_events([(2, H, -1)]), ['KEY_LEFT'])
+        self.assertEqual(self.run_events([(2, H, -1)]), ['KEY_RIGHT'])     # this keyboard's horizontal wheel is reversed
+        self.assertEqual(self.run_events([(2, H, 1)]), ['KEY_LEFT'])
 
     def test_mouse_mode_still_works(self):
         self.assertEqual(self.run_events([(2, 1, -9), (2, 1, -16)]), ['KEY_UP'])

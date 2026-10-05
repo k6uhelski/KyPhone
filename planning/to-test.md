@@ -3,7 +3,7 @@
 One bullet per change that is on the phone but not yet confirmed. Newest first. A confirmed bullet moves to Done.
 
 ## To test
-(nothing waiting)
+- **Trackpad left/right in scroll mode:** with the trackpad light pulsing, swipe left and the selection goes left; swipe right and it goes right.
 
 ## Done
 - 0.8.10 speed fix 2 (frames end sooner) (confirmed 2026-10-04)

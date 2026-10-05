@@ -89,10 +89,12 @@ class TrackpadHandler:
                         # Scroll-wheel mode (the BBQ10's trackpad light pulses; found on the phone, 2026-10-04): the
                         # trackpad sends wheel clicks instead of motion. One click counts as a full swipe, so either
                         # mode steps once per swipe. Wheel up is positive, screen-down motion is positive: hence -=.
+                        # The horizontal wheel runs the other way on this keyboard (a finger moving right sends a
+                        # negative click; found on the phone, 2026-10-04), so it is subtracted too.
                         elif event.code == ecodes.REL_WHEEL:
                             accum_y -= event.value * SWIPE_THRESHOLD
                         elif event.code == ecodes.REL_HWHEEL:
-                            accum_x += event.value * SWIPE_THRESHOLD
+                            accum_x -= event.value * SWIPE_THRESHOLD
 
                         if not fired_this_burst and (
                             abs(accum_x) >= SWIPE_THRESHOLD or abs(accum_y) >= SWIPE_THRESHOLD
