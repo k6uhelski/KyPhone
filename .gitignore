@@ -44,3 +44,7 @@ data/
 !data/contacts.example.json
 spi_bridge/tests/Signal_Detector_34.ino
 .claude/
+
+# Mac mini deploy scripts (local paths; kept off GitHub)
+deploy_macmini.sh
+rollback_macmini.sh
