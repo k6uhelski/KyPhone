@@ -635,6 +635,162 @@ class Scenarios(PhoneCase):
         self.assertEqual(self.wire.split('|')[-2:], ['*', '1'])  # the mark and the light came back too
 
 
+class MoreScenarios(PhoneCase):
+    """The journeys the first set left out: every form alert, every kind of call, a connection abandoned half way,
+    the ends of a book, the upload page stopping by itself, the typing limits, and what a text arriving redraws."""
+
+    def test_every_contact_form_alert_returns_to_the_field_to_fix(self):
+        self.contacts.append({'first': 'Pip', 'last': '', 'number': '(555) 010-0101'})
+        cases = [('', '', 'NEED_FIRST', 0), ('Bo', '', 'NEED_NUMBER', 2), ('Bo', '12', 'BAD_NUMBER', 2),
+                 ('Bo', '5550100101', 'DUP_NUMBER', 2)]
+        for first, number, alert, field in cases:
+            self.home('CONTACTS')
+            self.key('CHAR:+')
+            self.type(first)
+            self.key('KEY_DOWN', 'KEY_DOWN')
+            self.type(number)
+            self.key('KEY_DOWN', 'KEY_ENTER')
+            self.assertEqual((self.st['screen'], self.st['stub_key']), ('stub', alert))
+            self.key('KEY_ENTER')
+            self.assertEqual((self.st['screen'], self.st['edit_index']), ('contact_edit', field), alert)
+            self.assertEqual((self.st['edit_first'], self.st['edit_number']), (first, number), 'nothing typed is lost')
+        self.assertEqual(len(self.contacts), 1)
+
+    def test_answered_cancelled_missed_and_short_number_calls_are_each_logged_right(self):
+        self.contacts.append({'first': 'Ann', 'last': 'Lee', 'number': '(555) 010-0103'})
+        self.home('CALL')
+        self.key('KEY_ENTER')
+        self.type('5550100102')
+        self.key('KEY_ENTER', 'KEY_ESC')                          # cancelled while ringing
+        self.key('KEY_ENTER')
+        self.type('123')                                          # a number that cannot be dialed for real
+        self.key('KEY_ENTER', 'KEY_ENTER')
+        self.clock.t += 75
+        with patch.object(kyphone_os.time, 'time', return_value=kyphone_os.time.time() + 75):
+            self.key('KEY_ESC')                                   # hung up after 1:15
+        self.key('KEY_ESC', 'CHAR:i', 'KEY_ENTER', 'KEY_ESC')     # Ann calls; answered; hung up
+        self.key('KEY_ESC', 'CHAR:i', 'KEY_ESC')                  # Ann calls again; missed
+        log = [(c['tag'], c.get('number'), c['duration']) for c in self.st['calls']]
+        self.assertEqual(log[0], ('MISS', '(555) 010-0103', ''))
+        self.assertEqual(log[1][:2], ('IN', '(555) 010-0103'))
+        self.assertEqual(log[2], ('OUT', None, '1:15'))           # no number: it could never be called back
+        self.assertEqual(log[3], ('OUT', '(555) 010-0102', ''))
+        self.home('CALL')
+        self.key('KEY_DOWN', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')  # the 123 row redials by name
+        self.assertEqual((self.st['screen'], self.st['call_name']), ('outgoing', '123'))
+
+    def test_a_connection_left_while_working_is_dropped_when_it_answers(self):
+        waiting = []
+        with patch.object(kyphone_os, '_run_async', waiting.append):
+            self.home('SETTINGS')
+            self.key('KEY_ENTER')                                 # Wi-Fi (its search waits too)
+            waiting.pop()()
+            self.key('KEY_DOWN', 'KEY_ENTER')                     # Birch_5G: the password box
+            self.type('hunter22')
+            self.key('KEY_ENTER')
+            self.assertTrue(self.wire.startswith('NETSTATE|W|WORKING|'))
+            self.key('CHAR:q')                                    # cancel while it works
+            self.assertEqual(self.st['screen'], 'wifi')
+            drawn = len(self.screens)
+            waiting.pop()()                                       # the late answer arrives
+        self.assertEqual(self.st['screen'], 'wifi')
+        self.assertEqual(len(self.screens), drawn, 'a dropped result draws nothing')
+
+    def test_wifi_switched_off_and_on_and_a_network_forgotten(self):
+        self.home('SETTINGS')
+        self.key('KEY_ENTER', 'KEY_UP', 'KEY_ENTER')              # the switch: off
+        self.assertFalse(self.net.wifi_on)
+        self.assertIn('Wi-Fi is off', self.wire)
+        self.key('KEY_ENTER')                                     # on again: the joined network is back
+        self.assertTrue(self.net.wifi_on)
+        self.assertIn('Maple', self.wire)
+        self.st['net_index'] = 1
+        self.key('KEY_ENTER', 'KEY_LEFT', 'KEY_ENTER')            # FORGET Maple
+        self.assertEqual(self.st['screen'], 'wifi')
+        self.assertIsNone(self.net.current)
+        self.key('KEY_ESC')
+        self.assertIn('Not connected', self.wire)
+
+    def test_a_book_with_no_chapter_list_a_broken_book_and_the_last_page(self):
+        make_epub(os.path.join(self.books, 'plain.epub'),
+                  [('c.xhtml', b'<html><body><p>Only one short page.</p></body></html>')], title='Plain')
+        with open(os.path.join(self.books, 'broken.epub'), 'wb') as f:
+            f.write(b'this is not a zip file')
+        self.home('READ')
+        titles = [b['title'] for b in self.st['library_books']]
+        self.key(*['KEY_DOWN'] * titles.index('broken'), 'KEY_ENTER')
+        self.assertTrue(self.wire.startswith('STUB|READ|THIS BOOK CANNOT BE OPENED'))
+        self.key('KEY_ENTER')
+        self.assertEqual(self.st['screen'], 'library')
+        self.st['library_index'] = titles.index('Plain')
+        self.key('KEY_ENTER', 'CHAR:c')
+        self.assertTrue(self.wire.startswith('STUB|READ|THIS BOOK HAS NO LIST'))
+        self.key('KEY_ENTER', 'KEY_RIGHT')                        # the one page was the last
+        self.assertTrue(self.wire.startswith('STUB|READ|THAT WAS THE LAST PAGE'))
+        self.key('KEY_ESC')
+        self.assertEqual(self.st['screen'], 'reader')
+
+    def test_the_upload_page_stops_by_itself_and_says_why(self):
+        for reason, words in (('idle', 'STOPPED AFTER 10 MINUTES'), ('codes', 'TOO MANY WRONG CODES')):
+            self.home('SETTINGS')
+            self.st['settings_index'] = 4
+            self.key('KEY_ENTER')
+            kyphone_os._upload.on_stopped(reason)
+            self.assertIn(words, self.wire)
+            self.key('KEY_ENTER')
+            self.assertEqual(self.st['screen'], 'settings')
+            self.assertIsNone(kyphone_os._upload)
+        with patch.object(kyphone_os.upload_server, 'lan_address', return_value=None):
+            self.key('KEY_ENTER')
+        self.assertTrue(self.wire.startswith('STUB|SETTINGS|THE PHONE IS NOT ON A NETWORK'))
+        self.key('KEY_ESC')
+        self.assertEqual(self.st['screen'], 'settings')
+
+    def test_a_note_and_the_to_field_stop_taking_keys_at_their_limits(self):
+        self.home('NOTES')
+        self.key('KEY_ENTER')
+        self.st['note_text'] = 'x' * (kyphone_os.NOTE_MAX - 1)
+        self.type('ab')
+        self.assertEqual(len(self.st['note_text']), kyphone_os.NOTE_MAX)
+        self.assertTrue(self.st['note_text'].endswith('xa'))
+        self.key('KEY_ENTER')                                     # a new line would not fit either
+        self.assertEqual(len(self.st['note_text']), kyphone_os.NOTE_MAX)
+        self.home('TEXT')
+        self.key('CHAR:+')
+        self.type('1' * 30)
+        self.assertEqual(len(self.st['compose_to']), kyphone_os.COMPOSE_TO_MAX)
+
+    def test_a_text_arriving_redraws_only_the_list_or_conversation_on_screen(self):
+        self.incoming('+15550100044', 'first')
+        self.home('NOTES')
+        drawn = len(self.screens)
+        self.incoming('+15550100044', 'while writing a note')
+        self.assertEqual((self.st['screen'], len(self.screens)), ('notes_list', drawn), 'the notes are left alone')
+        self.home('TEXT')
+        self.incoming('+15550100055', 'a new conversation')
+        self.assertTrue(self.wire.startswith('TEXTS|'))
+        self.assertEqual(self.st['texts_index'], 0)
+        self.key('KEY_DOWN', 'KEY_ENTER')                         # the older conversation
+        drawn = len(self.screens)
+        self.incoming('+15550100055', 'from the other one')
+        self.assertEqual(len(self.screens), drawn, 'another conversation does not redraw this one')
+        self.incoming('+15550100044', 'from this one')
+        self.assertIn('from this one', self.wire)
+
+    def test_music_ending_while_on_the_home_menu_takes_the_mark_away(self):
+        self.add_album()
+        self.home('LISTEN')
+        self.key('KEY_ENTER', 'KEY_DOWN', 'KEY_DOWN', 'KEY_ENTER')   # the last track
+        self.key('KEY_ESC', 'KEY_ESC', 'KEY_ESC')
+        self.assertEqual(self.st['screen'], 'home')
+        self.assertEqual(self.wire.split('|')[5], '1')
+        self.clock.t += 30
+        kyphone_os._music_tick()
+        self.assertEqual(self.st['screen'], 'home')
+        self.assertTrue(self.wire.startswith('HOME2|'))
+        self.assertEqual(self.wire.split('|')[5], '0', 'the home menu redrew without the mark')
+
+
 KEYS = (['KEY_UP'] * 6 + ['KEY_DOWN'] * 6 + ['KEY_LEFT'] * 3 + ['KEY_RIGHT'] * 3 + ['KEY_ENTER'] * 6 +
         ['KEY_ESC'] * 3 + ['KEY_BACKSPACE'] * 2 + ['KEY_TAB'] +
         ['CHAR:' + c for c in 'qwasdciabz +-=.,5019@!'] + ['CHAR:+'] * 2)
