@@ -2,7 +2,8 @@
 """Run every test suite: each spi_bridge/tests/test_*.py, and nothing else in that folder (the hardware diagnostics
 there have other names and run on import). A scratch KYPHONE_DATA_DIR is made unless one is set, so the real data/
 is never touched. A skipped test fails the run, because a skip here means a missing tool (pygame, clang++), not a
-passing test.
+passing test. Started under Rosetta (an x86_64 shell on Apple Silicon, as a remote session's shell can be), pytest is
+run as arm64, since the venv's pygame is arm64 only.
 
     ~/.venvs/kyphone/bin/python spi_bridge/tools/run_tests.py              # everything
     ~/.venvs/kyphone/bin/python spi_bridge/tools/run_tests.py -k emoji     # extra arguments go to pytest
@@ -22,15 +23,26 @@ def suites():
     return sorted(glob.glob(os.path.join(TESTS, 'test_*.py')))
 
 
+def under_rosetta():
+    if sys.platform != 'darwin':
+        return False
+    try:
+        return subprocess.run(['sysctl', '-n', 'sysctl.proc_translated'], capture_output=True,
+                              text=True).stdout.strip() == '1'
+    except OSError:
+        return False
+
+
 def main(argv):
     allow_skips = '--allow-skips' in argv
     extra = [a for a in argv if a != '--allow-skips']
     env = dict(os.environ)
     env.setdefault('KYPHONE_DATA_DIR', tempfile.mkdtemp(prefix='kyphone-tests-'))
-    done = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-rs'] + suites() + extra,
+    python = ['arch', '-arm64', sys.executable] if under_rosetta() else [sys.executable]
+    done = subprocess.run(python + ['-m', 'pytest', '-q', '-rs'] + suites() + extra,
                           env=env, capture_output=True, text=True)
     out = done.stdout + done.stderr
-    summary = (out.strip().splitlines() or [''])[-1]
+    summary = (done.stdout.strip().splitlines() or [''])[-1]     # a test's stray stderr line must not stand in for it
     if done.returncode != 0:
         print('\n'.join(out.splitlines()[-40:]))
         return done.returncode
