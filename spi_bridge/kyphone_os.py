@@ -49,6 +49,7 @@ import network_control as netctl
 import upload_server
 import version
 import emoji_table
+import cat_poses
 
 VERSION = version.VERSION
 
@@ -960,7 +961,8 @@ def push_lock():
     mark  = '*' if _new_activity() else ''
     with state['lock']:
         light = state['light']
-    tail  = f"|{VERSION}|{mark}|{light}"
+    pose  = cat_poses.pose_for(now.hour)      # the cat in the corner changes through the day (tools/make_cats.py)
+    tail  = f"|{VERSION}|{mark}|{light}|{pose}"
     max_quote = PAYLOAD_BYTES - 3 - len("LOCK|") - len(time_str) - len(date_str) - len("- THICH NHAT HANH") - len(tail) - 4
     push_screen(f"LOCK|{time_str}|{date_str}|{quote[:max_quote]}|- THICH NHAT HANH{tail}")
 

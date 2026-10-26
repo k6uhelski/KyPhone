@@ -9,9 +9,11 @@ Runs without hardware (SPI/GPIO) or a display. All SPI sends are mocked.
 import os
 import sys
 import json
+import re
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 # ── Mock hardware modules before importing kyphone_os ─────────────────────────
@@ -86,15 +88,33 @@ class TestLockScreenVersion(unittest.TestCase):
             with patch.object(kyphone_os, 'push_screen') as ps:
                 kyphone_os.push_lock()
             wire = _wire(ps)
-            self.assertTrue(wire.endswith('|- THICH NHAT HANH|' + version.VERSION + '|*|8'), wire[-40:])
+            self.assertRegex(wire, r'\|- THICH NHAT HANH\|' + re.escape(version.VERSION) + r'\|\*\|8\|\d$')
             self.assertLessEqual(len(wire), kyphone_os.MAX_COMMAND_CHARS, i)
+
+
+class TestLockScreenCat(unittest.TestCase):
+    """The cat in the lock screen's corner changes through the day: the Radxa sends the pose for the hour."""
+
+    def test_each_hour_sends_the_pose_that_starts_at_or_before_it(self):
+        import cat_poses
+        starts = [p[0] for p in cat_poses.POSES]
+        self.assertEqual(starts[0], 0)                                       # every hour has a cat
+        for hour in range(24):
+            reset_state(screen='lock', messages=[], calls=[])
+            with patch.object(kyphone_os, 'datetime') as dt, patch.object(kyphone_os, 'push_screen') as ps:
+                dt.now.return_value = datetime(2026, 10, 26, hour, 30)
+                kyphone_os.push_lock()
+            pose = int(_wire(ps).split('|')[8])
+            self.assertEqual(pose, max(n for n, s in enumerate(starts) if s <= hour), hour)
+        self.assertEqual([cat_poses.pose_for(h) for h in (0, 5, 6, 7, 8, 12, 14, 15, 20, 21, 23)],
+                         [0, 0, 1, 1, 2, 4, 4, 5, 6, 7, 7])
 
 
 class TestActivityMark(unittest.TestCase):
     def lock_tail(self):
         with patch.object(kyphone_os, 'push_screen') as ps:
             kyphone_os.push_lock()
-        return _wire(ps).split('|')[-2:]                                          # [mark, light]
+        return _wire(ps).split('|')[-3:-1]                                        # [mark, light]
 
     def setUp(self):
         reset_state(screen='lock', messages=[], calls=[], light=0, activity_mark=True)
@@ -156,7 +176,7 @@ class TestActivityMark(unittest.TestCase):
                 patch.object(kyphone_os, 'push_screen') as ps:
             kyphone_os.modem_sms_loop()
         self.assertTrue(_wire(ps).startswith('LOCK|'))
-        self.assertEqual(_wire(ps).split('|')[-2], '*')
+        self.assertEqual(_wire(ps).split('|')[-3], '*')
 
 
 class TestSavingSafely(unittest.TestCase):
@@ -3105,7 +3125,8 @@ class TestDataDirOverride(unittest.TestCase):
             os.makedirs(os.path.join(tmp, 'spi_bridge'))
             for src in ([os.path.join(here, 'kyphone_os.py'), os.path.join(here, 'version.py'),
                          os.path.join(here, 'network_control.py'), os.path.join(here, 'modem.py'),
-                         os.path.join(here, 'upload_server.py'), os.path.join(here, 'emoji_table.py')]
+                         os.path.join(here, 'upload_server.py'), os.path.join(here, 'emoji_table.py'),
+                         os.path.join(here, 'cat_poses.py')]
                         + glob.glob(os.path.join(here, 'reader_*.py')) + glob.glob(os.path.join(here, 'music_*.py'))):
                 shutil.copy(src, os.path.join(tmp, 'spi_bridge', os.path.basename(src)))      # the module and what it imports
             for unset in (None, ''):                  # an empty value means "not set"
@@ -3713,7 +3734,7 @@ class TestSettingsScreen(SettingsBase):
         reset_state(screen='lock', light=6, messages=[], calls=[])
         with patch.object(kyphone_os, 'push_screen') as ps:
             kyphone_os.push_lock()
-        self.assertEqual(_wire(ps).split('|')[-1], '6')
+        self.assertEqual(_wire(ps).split('|')[-2], '6')
 
     def test_esc_returns_home_on_settings(self):
         reset_state(screen='home', home_index=kyphone_os.HOME_MENU.index('SETTINGS'))

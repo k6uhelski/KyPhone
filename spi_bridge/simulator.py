@@ -14,6 +14,7 @@ import pygame
 
 from home_icons import ICONS, ICON_SIZE
 import emoji_table
+import cat_poses
 import reader_layout as rl
 from reader_fonts import FONTS as READER_FONTS
 
@@ -267,8 +268,8 @@ class Simulator:
     # ── OS 0.1 Screen Renderers ───────────────────────────────────────
 
     def _draw_lock(self, data):
-        # data = "time_str|date_str|quote|attribution|version|mark|light"  mark '*' = new activity; light is for the
-        # panel's front light only (nothing to draw)
+        # data = "time_str|date_str|quote|attribution|version|mark|light|pose"  mark '*' = new activity; light is for
+        # the panel's front light only (nothing to draw); pose = which cat (cat_poses.py), none = asleep
         parts = data.split('|')
         time_str = parts[0] if len(parts) > 0 else ''
         date_str = parts[1] if len(parts) > 1 else ''
@@ -276,25 +277,16 @@ class Simulator:
         attr     = parts[3] if len(parts) > 3 else ''
         version  = parts[4] if len(parts) > 4 else ''
         mark     = parts[5] if len(parts) > 5 else ''
+        pose     = int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 0
+        if pose >= len(cat_poses.POSES):
+            pose = 0
 
         # OS version, as the Radxa reports it (see version.py) — bottom left, textSize 2 (18px design token)
         if version:
             self._text('OS ' + version, 10, self.HEIGHT - 8 - 2 * 8, 2)
 
-        # ASCII cat — bottom right (fixed bitmap on device; unchanged since 0.1)
-        cat = [
-            r"   )\._.,--....,'``.",
-            r"  /,   _.. \   _\  (`._ ,.",
-            r" `._.-(,_..'--(,_..'`-.;.'",
-        ]
-        cat_font = pygame.font.SysFont('courier', 12, bold=True)
-        lh       = 18
-        max_w    = max(cat_font.size(l)[0] for l in cat)
-        cat_x    = self.WIDTH - max_w - 8
-        cat_y    = self.HEIGHT - (lh * len(cat)) - 6  # bottom margin, computed from content height
-        for i, line in enumerate(cat):
-            img = cat_font.render(line, True, BLACK)
-            self._surface.blit(img, (cat_x, cat_y + i * lh))
+        # The cat — bottom right, the pose for this part of the day: the firmware's own bitmap, pixel for pixel
+        self._cat(pose, self.WIDTH - cat_poses.POSES[pose][2] - 6, self.HEIGHT - cat_poses.POSES[pose][3] - 6)
 
         # Clock — textSize 8, centered, top:159
         self._text_centered(time_str, 159, 8, clock=True)
@@ -305,12 +297,17 @@ class Simulator:
         # Date — textSize 3, centered, top:243
         self._text_centered(date_str, 243, 3)
 
-        # Quote — textSize 3, centered, wrapped, top:356, line-height 34
+        # Quote — textSize 3, centered, wrapped, top:356, line-height 34. A quote long enough that its attribution would
+        # reach the cat moves up by just that much (never above 290, clear of the date), as on the panel.
         quote_y  = 356
         margin   = 60
         max_px   = self.WIDTH - margin * 2
         lines    = self._wrap_lines(quote, 3, max_px)
         line_h   = 34
+        attr_bottom = quote_y + len(lines) * line_h + 12 + 16
+        cat_top  = self.HEIGHT - cat_poses.POSES[pose][3] - 6
+        if attr_bottom > cat_top - 6:
+            quote_y = max(290, quote_y - (attr_bottom - (cat_top - 6)))
         for line in lines:
             w    = len(line) * self._char_w(3)
             x    = (self.WIDTH - w) // 2
@@ -531,6 +528,14 @@ class Simulator:
             for col in range(16):
                 if bits >> (15 - col) & 1:
                     pygame.draw.rect(self._surface, color, (x + col * scale, y + r * scale, scale, scale))
+
+    def _cat(self, pose, x, y):
+        _hour, _name, w, h, data = cat_poses.POSES[pose]
+        per_row = (w + 7) // 8
+        for r in range(h):
+            for col in range(w):
+                if data[r * per_row + col // 8] >> (7 - col % 8) & 1:
+                    self._surface.set_at((x + col, y + r), BLACK)
 
     BUTTON_H = 36     # every small button: border + 6-7px padding + an 18px line
 

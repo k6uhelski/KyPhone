@@ -288,7 +288,7 @@ class Scenarios(PhoneCase):
         self.incoming('5550100042', 'Yes!\nSee you there')     # a reply, national format, two lines
         self.assertIn('Yes! See you there', self.wire)            # joins this conversation, redraws
         kyphone_os.push_lock()
-        self.assertEqual(self.wire.split('|')[-2], '')            # read as it arrived: no lock-screen mark
+        self.assertEqual(self.wire.split('|')[-3], '')            # read as it arrived: no lock-screen mark
         kyphone_os.push_thread2()
         self.type('Great')
         self.key('KEY_ENTER')
@@ -424,12 +424,12 @@ class Scenarios(PhoneCase):
     def test_a_text_arriving_while_locked_shows_the_mark_and_reading_clears_it(self):
         kyphone_os.push_lock()
         self.incoming('+15550100044', 'Are you around?')
-        self.assertEqual(self.wire.split('|')[-2], '*')          # the lock screen redrew with the mark
+        self.assertEqual(self.wire.split('|')[-3], '*')          # the lock screen redrew with the mark
         self.home('TEXT')
         self.key('KEY_ENTER')                                     # open the conversation (marks it read)
         self.assertEqual(self.st['screen'], 'thread')
         kyphone_os.push_lock()
-        self.assertEqual(self.wire.split('|')[-2], '')
+        self.assertEqual(self.wire.split('|')[-3], '')
 
     def test_contacts_create_find_edit_and_delete(self):
         self.home('CONTACTS')
@@ -481,7 +481,7 @@ class Scenarios(PhoneCase):
         self.assertEqual(self.st['screen'], 'incoming')
         self.key('CHAR:q')                                        # not answered
         kyphone_os.push_lock()
-        self.assertEqual(self.wire.split('|')[-2], '*')          # a missed call marks the lock screen
+        self.assertEqual(self.wire.split('|')[-3], '*')          # a missed call marks the lock screen
         self.home('CALL')
         self.key('KEY_DOWN', 'KEY_ENTER')                         # the missed call → Ann's page
         self.assertEqual(self.st['screen'], 'contact')
@@ -494,7 +494,7 @@ class Scenarios(PhoneCase):
         self.assertEqual(self.st['screen'], 'thread')
         self.assertIn('LAST CALL: MISSED', self.wire)             # the conversation shows the call
         kyphone_os.push_lock()
-        self.assertEqual(self.wire.split('|')[-2], '')           # seen
+        self.assertEqual(self.wire.split('|')[-3], '')           # seen
 
     def test_reading_turning_pages_size_chapters_and_resuming(self):
         self.add_book()
@@ -632,7 +632,7 @@ class Scenarios(PhoneCase):
         self.assertEqual(self.st['light'], 1)
         self.assertEqual((self.st['calls'][0]['tag'], self.st['calls'][0]['number']), ('MISS', '(555) 010-0101'))
         kyphone_os.push_lock()
-        self.assertEqual(self.wire.split('|')[-2:], ['*', '1'])  # the mark and the light came back too
+        self.assertEqual(self.wire.split('|')[-3:-1], ['*', '1'])  # the mark and the light came back too
 
 
 class MoreScenarios(PhoneCase):

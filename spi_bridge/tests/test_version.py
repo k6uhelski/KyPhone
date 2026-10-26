@@ -56,7 +56,7 @@ class Everywhere(unittest.TestCase):
         src = read('spi_bridge', 'kyphone_os.py')
         self.assertIn('VERSION = version.VERSION', src)
         self.assertIn('KyPhone OS {VERSION}', src)
-        self.assertIn('tail  = f"|{VERSION}|{mark}|{light}"', src)
+        self.assertIn('tail  = f"|{VERSION}|{mark}|{light}|{pose}"', src)
         self.assertRegex(src, r'LOCK\|\{time_str\}\|\{date_str\}\|\{quote\[:max_quote\]\}\|- THICH NHAT HANH\{tail\}')
 
     def test_no_drawing_code_has_a_version_typed_in(self):

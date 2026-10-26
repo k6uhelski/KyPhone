@@ -688,6 +688,51 @@ class MusicPixels(unittest.TestCase):
         self.assertEqual(without, 0)                                                        # an old Radxa sends none: no label
         self.assertNotEqual(with_version, other)                                            # it draws what it is told
 
+    # ── the lock screen cat ──────────────────────────────────────────────────
+    def test_the_cat_in_the_corner_is_the_pose_it_is_sent_pixel_for_pixel(self):
+        import cat_poses
+        lock = 'LOCK|12:00 PM|SATURDAY, SEPTEMBER 19|Smile.|- THICH NHAT HANH|0.9.0||0|%s'
+
+        def corner(w, h):
+            x0, y0 = 600 - w - 6, 600 - h - 6
+            return tuple(self.px(x0 + x, y0 + y) == BLACK for y in range(h) for x in range(w))
+        seen = set()
+        for n, (_hour, name, w, h, data) in enumerate(cat_poses.POSES):
+            self.draw(lock % n)
+            per_row = (w + 7) // 8
+            wanted = tuple(bool(data[y * per_row + x // 8] >> (7 - x % 8) & 1) for y in range(h) for x in range(w))
+            self.assertEqual(corner(w, h), wanted, name)                                   # exactly the firmware's bitmap
+            seen.add(wanted)
+        self.assertEqual(len(seen), len(cat_poses.POSES))                                   # every pose is a different cat
+        _hour, _name, w, h, _data = cat_poses.POSES[0]
+        self.draw(lock % 0)
+        asleep = corner(w, h)
+        for wire in (lock[:lock.rindex('|')], lock % '', lock % 'x', lock % 99):            # none sent (an older Radxa),
+            self.draw(wire)                                                                 # or nonsense: asleep
+            self.assertEqual(corner(w, h), asleep, wire)
+
+    def test_no_quote_runs_into_any_cat(self):
+        # The longest quote wraps to four lines; with a four-line cat its attribution ran into the cat's ears, so a long
+        # quote moves up. Every quote, every pose: the cat's corner holds the cat and nothing else.
+        import cat_poses
+        for mod in ('spidev', 'gpiod', 'input_handler', 'evdev'):
+            sys.modules.setdefault(mod, MagicMock())
+        sys.argv = ['test', '--sim']
+        import kyphone_os
+        for quote in kyphone_os.QUOTES:
+            for n, (_hour, name, w, h, data) in enumerate(cat_poses.POSES):
+                self.draw('LOCK|10:55 PM|WEDNESDAY, SEPTEMBER 30|%s|- THICH NHAT HANH|0.9.0||0|%d' % (quote, n))
+                x0, y0, per_row = 600 - w - 6, 600 - h - 6 - 6, (w + 7) // 8      # and 6 px of air above it
+                for y in range(h + 6):
+                    for x in range(w):
+                        ink = y >= 6 and bool(data[(y - 6) * per_row + x // 8] >> (7 - x % 8) & 1)
+                        if (self.px(x0 + x, y0 + y) == BLACK) != ink:
+                            self.fail('%s runs into the %s cat' % (quote[:30], name))
+
+    def test_the_cats_are_up_to_date_with_the_generator(self):
+        import make_cats
+        self.assertEqual(make_cats.main(['--check']), 0)
+
     # ── the home menu mark ───────────────────────────────────────────────────
     def test_the_playing_mark_stands_beside_the_music_icon_and_only_when_playing(self):
         self.draw('HOME2|12:44 PM|3|0|I|1')                                                 # LISTEN selected: white on black

@@ -42,7 +42,9 @@ def main(argv):
     done = subprocess.run(python + ['-m', 'pytest', '-q', '-rs'] + suites() + extra,
                           env=env, capture_output=True, text=True)
     out = done.stdout + done.stderr
-    summary = (done.stdout.strip().splitlines() or [''])[-1]     # a test's stray stderr line must not stand in for it
+    # pytest's own summary line ("987 passed, 2 skipped in 30s"), found by what it says: a test's background thread can
+    # print after it, so the last line is not always the summary.
+    summary = next((l for l in reversed(done.stdout.splitlines()) if re.search(r'\d+ (passed|failed|error)', l)), '')
     if done.returncode != 0:
         print('\n'.join(out.splitlines()[-40:]))
         return done.returncode
